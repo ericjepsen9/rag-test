@@ -1,6 +1,6 @@
 import json
 from typing import List, Dict
-from rag_media_config import MEDIA_FILE
+from rag_runtime_config import MEDIA_FILE
 
 
 def load_media_items() -> List[Dict]:

@@ -101,5 +101,8 @@ QUESTION_TYPE_CONFIG = {
     "combo":             {"k": 10, "threshold": 0.30},
 }
 
+# ===== 媒体 =====
+MEDIA_FILE = BASE_DIR / "media.json"
+
 # ===== 测试 =====
 REGRESSION_CASES_FILE = BASE_DIR / "regression_cases.json"

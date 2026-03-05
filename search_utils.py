@@ -153,14 +153,24 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
     return scored[:top_k]
 
 
+def _hit_key(h: Dict) -> str:
+    """生成检索结果的唯一键（优先用 source_file+chunk_id，兜底用 text）"""
+    meta = h.get("meta", {})
+    src = meta.get("source_file", "")
+    cid = meta.get("chunk_id", "")
+    if src and cid:
+        return f"{src}#{cid}"
+    return h.get("text", "")
+
+
 def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, kw: float, top_k: int) -> List[Dict]:
     merged = {}
     for h in vector_hits:
-        key = h.get("text", "")
+        key = _hit_key(h)
         merged[key] = dict(h)
         merged[key]["hybrid_score"] = float(h.get("score", 0.0)) * vw
     for h in keyword_hits:
-        key = h.get("text", "")
+        key = _hit_key(h)
         if key not in merged:
             merged[key] = dict(h)
             merged[key]["score"] = 0.0

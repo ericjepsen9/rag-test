@@ -86,19 +86,11 @@
       <h1>本地 RAG 对话测试</h1>
       <div class="row">
         <div>
-          <label>产品 ID（可选）</label>
-          <input id="productId" value="feiluoao" placeholder="例如：feiluoao" />
-        </div>
-        <div>
           <label>模式</label>
           <select id="mode">
             <option value="full" selected>full（答全）</option>
             <option value="brief">brief（简洁）</option>
           </select>
-        </div>
-        <div>
-          <label>K（可选）</label>
-          <input id="k" type="number" min="1" max="30" value="8" />
         </div>
         <div>
           <label>Debug</label>
@@ -159,9 +151,7 @@
       const body = {
         question,
         mode: $("mode").value,
-        k: Number($("k").value || 8),
         debug: $("debug").value === "true",
-        product_id: $("productId").value.trim() || null
       };
 
       $("askBtn").disabled = true;
@@ -179,9 +169,9 @@
         const data = await res.json();
 
         if (data.ok) {
-          $("status").innerHTML = `<span class="ok">成功</span> | return_code=${data.return_code} | mode=${data.mode}`;
+          $("status").innerHTML = `<span class="ok">成功</span>`;
         } else {
-          $("status").innerHTML = `<span class="err">失败</span> | return_code=${data.return_code}`;
+          $("status").innerHTML = `<span class="err">失败</span>`;
         }
 
         $("answer").textContent = data.answer || "";

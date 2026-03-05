@@ -500,10 +500,11 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8) -> List[str]:
     return uniq(lines)
 
 
-def answer_one(question: str, mode: str) -> str:
+def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
     product = detect_product(question)
     route = detect_route(question)
-    rewrite = rewrite_query(question)
+    if rewrite is None:
+        rewrite = rewrite_query(question)
 
     # 根据问题类型使用不同的检索参数
     route_cfg = QUESTION_TYPE_CONFIG.get(route, {})
@@ -553,7 +554,8 @@ def answer_one(question: str, mode: str) -> str:
             return text
 
     text = format_structured_answer(route, body_lines, build_evidence(hits), add_risk_note=(route == "risk"))
-    text = openai_rewrite_answer(text, route)
+    if USE_OPENAI:
+        text = openai_rewrite_answer(text, route)
     log_qa(question, text, rewritten_query=rewrite["expanded"],
            matched_sources=build_evidence(hits), hit=True,
            meta={"product": product, "route": route, "mode": mode,
@@ -566,7 +568,9 @@ def answer_question(question: str, mode: str) -> str:
     outputs = []
     seen = set()
     for subq in rewrite["sub_questions"][:4]:
-        ans = answer_one(subq, mode)
+        # 如果子问题与原问题相同，复用已有的 rewrite 结果
+        sub_rewrite = rewrite if subq == rewrite["original"] else None
+        ans = answer_one(subq, mode, rewrite=sub_rewrite)
         key = ans.strip()
         if key and key not in seen:
             seen.add(key)
