@@ -167,11 +167,17 @@ def merge_paragraphs_to_chunks(paragraphs: List[str], chunk_size: int, overlap: 
     return dedup
 
 
+def _is_separator(para: str) -> bool:
+    """判断是否为纯分隔线（====, ----, 空白符号行）"""
+    return bool(re.fullmatch(r"[=\-_\s]+", para.strip()))
+
+
 def chunk_text(text: str) -> List[str]:
     t = normalize_text(text)
     if not t:
         return []
     paras = split_into_paragraphs(t)
+    paras = [p for p in paras if not _is_separator(p)]
     return merge_paragraphs_to_chunks(paras, CHUNK_SIZE, CHUNK_OVERLAP)
 
 
@@ -213,6 +219,8 @@ def collect_product_records(product: str):
         if not f.exists():
             continue
         text = read_text_auto(f)
+        # 清除纯分隔线
+        text = re.sub(r"^[=\-_]{3,}\s*$", "", text, flags=re.MULTILINE).strip()
         # alias 不切块，整体入库
         chunks = [text] if stype == "alias" else chunk_text(text)
         print(f"[OK] {product}/{fname}: {len(chunks)} chunks")
