@@ -16,7 +16,7 @@ from rag_runtime_config import KNOWLEDGE_DIR, STORE_ROOT
 
 MODEL_NAME = "BAAI/bge-m3"
 CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "420"))
-CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
+CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "50"))
 _model = None
 _np = None
 _faiss = None

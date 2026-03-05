@@ -7,10 +7,11 @@ from search_utils import detect_terms, uniq, split_multi_question
 
 # 路由专属检索扩展词：当检测到某路由时，补充高区分度关键词帮助 BM25 命中正确 chunk
 _ROUTE_EXPANSION = {
-    "ingredient": ["PCL", "聚己内酯", "透明质酸", "生长因子"],
-    "anti_fake":  ["HiddenTag", "防伪", "正品认证"],
-    "combo":      ["联合", "间隔", "搭配"],
-    "risk":       ["红肿", "不良反应", "就医"],
+    "ingredient":       ["PCL", "聚己内酯", "透明质酸", "生长因子"],
+    "anti_fake":        ["HiddenTag", "防伪", "正品认证"],
+    "combo":            ["联合", "间隔", "搭配"],
+    "risk":             ["红肿", "不良反应", "就医"],
+    "contraindication": ["禁忌", "妊娠", "哺乳", "禁忌人群"],
 }
 
 

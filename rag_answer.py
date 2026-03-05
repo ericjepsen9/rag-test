@@ -177,12 +177,15 @@ def detect_route(question: str) -> str:
     if not matched:
         return "basic"
 
-    # 消歧：当 risk 和 contraindication 同时命中时，
-    # 含 "体质/人群/可以用/可以打/适合" 等倾向禁忌
-    if "risk" in matched and "contraindication" in matched:
-        contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打"]
-        if any(s in q for s in contra_signals):
-            return "contraindication"
+    # 消歧：禁忌适用性信号 → 优先 contraindication
+    contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
+                      "能做", "可以做", "能不能"]
+    has_contra_signal = any(s in q for s in contra_signals)
+
+    if "contraindication" in matched and has_contra_signal:
+        return "contraindication"
+    if "risk" in matched and "contraindication" in matched and has_contra_signal:
+        return "contraindication"
 
     # 按优先级返回第一个命中的 route
     for route in order:

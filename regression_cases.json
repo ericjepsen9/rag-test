@@ -98,5 +98,25 @@
     "q": "正品标签长什么样",
     "expect_any": ["标签", "防伪", "HiddenTag", "正品"],
     "route": "anti_fake"
+  },
+  {
+    "q": "孕妇能打吗",
+    "expect_any": ["妊娠", "禁忌", "哺乳", "不适合"],
+    "route": "contraindication"
+  },
+  {
+    "q": "怀孕可以打吗",
+    "expect_any": ["妊娠", "禁忌", "哺乳"],
+    "route": "contraindication"
+  },
+  {
+    "q": "备孕期间能做吗",
+    "expect_any": ["妊娠", "禁忌", "哺乳"],
+    "route": "contraindication"
+  },
+  {
+    "q": "疗程怎么安排",
+    "expect_any": ["疗程", "注射", "间隔", "次"],
+    "route": "operation"
   }
 ]
