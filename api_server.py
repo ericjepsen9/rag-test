@@ -123,6 +123,7 @@ def ask(req: AskRequest):
                 "expanded_query": rw["expanded"],
                 "context_resolved": rw["context_resolved"],
                 "history_summary": rw.get("history_summary") or None,
+                "history_pairs_count": len(rw.get("history_pairs", [])),
                 "latency_ms": latency_ms,
             }
         return AskResponse(

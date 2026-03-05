@@ -32,6 +32,11 @@ _OFFTOPIC_PATTERNS = re.compile(
     r"(天气|新闻|股票|电影|音乐|美食|旅游|游戏|足球|篮球|奥运)"
 )
 
+# 产品切换意图：用户想问另一个/不同的产品，不应继承历史产品
+_SWITCH_PATTERNS = re.compile(
+    r"(换一个|另一个|另一款|其他产品|别的产品|不同的产品|有没有其他|还有什么产品)"
+)
+
 # 隐含关联模式：问题本身是关于某个主题但缺少产品主语
 # 例如 "安全吗" "效果怎样" "多少钱" "要恢复多久"
 # 注意：避免过于宽泛的词（"需要""注意"），用更具体的搭配
@@ -137,6 +142,10 @@ def _resolve_context(question: str, history_ctx: Dict[str, Any]) -> str:
     if _OFFTOPIC_PATTERNS.search(q):
         return q
 
+    # 排除产品切换意图（"换一个""另一款"等）——不应继承历史产品
+    if _SWITCH_PATTERNS.search(q):
+        return q
+
     # 构建补全前缀：产品名 + 历史中的项目名（如果当前问题中没有）
     prefix_parts = [history_product]
     if not detect_terms(q, PROJECT_ALIASES):
@@ -193,6 +202,29 @@ def _build_history_summary(history: List[Dict], max_turns: int = 3) -> str:
     return " → ".join(recent)
 
 
+def _build_history_pairs(history: List[Dict], max_pairs: int = 3) -> List[Dict]:
+    """从对话历史中提取最近 max_pairs 轮完整 Q&A 对，供 LLM 理解完整上下文。
+
+    返回 [{"user": "...", "assistant": "..."}, ...] 格式的列表。
+    助手回复截断到 200 字以免超长。
+    """
+    pairs: List[Dict] = []
+    current_user = ""
+    for item in history:
+        role = item.get("role", "")
+        content = (item.get("content") or "").strip()
+        if role == "user":
+            current_user = content
+        elif role == "assistant" and current_user:
+            pairs.append({
+                "user": current_user,
+                "assistant": content[:200],
+            })
+            current_user = ""
+    # 取最近 max_pairs 轮
+    return pairs[-max_pairs:] if len(pairs) > max_pairs else pairs
+
+
 def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
     raw = (question or "").strip()
 
@@ -228,9 +260,11 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
 
     # 构建多轮历史摘要供 LLM 使用
     history_summary = ""
+    history_pairs: List[Dict] = []
     last_user_q = ""
     if history and context_resolved:
         history_summary = _build_history_summary(history)
+        history_pairs = _build_history_pairs(history)
         last_user_q = history_ctx.get("last_user_q", "")
 
     return {
@@ -244,5 +278,6 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
         "symptoms": uniq(symptoms),
         "sub_questions": sub_questions,
         "history_summary": history_summary,   # 多轮摘要，供 LLM prompt
+        "history_pairs": history_pairs,       # 完整 Q&A 对，供 LLM 深度理解
         "last_user_q": last_user_q,           # 上一轮用户问题，供路由继承
     }

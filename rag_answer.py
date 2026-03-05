@@ -440,12 +440,12 @@ def _get_openai_client():
 
 
 def llm_generate_answer(question: str, context: str, route: str, mode: str,
-                        history_summary: str = "") -> str:
+                        history_summary: str = "",
+                        history_pairs: list = None) -> str:
     """基于检索 context 用 LLM 生成答案（真正的 RAG）。
 
-    当 history_summary 非空时，将对话历史纳入 prompt，帮助 LLM 理解用户
-    在多轮对话中的真实意图（例如前文问成分，本轮追问"安全吗"，LLM 能
-    理解是在问该产品成分的安全性）。
+    当 history_pairs 非空时，将完整 Q&A 对纳入 prompt，帮助 LLM 理解
+    用户在多轮对话中的真实意图。history_summary 作为简洁的话题脉络辅助。
     """
     client = _get_openai_client()
     if client is None:
@@ -463,7 +463,19 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
     }
 
     history_block = ""
-    if history_summary:
+    if history_pairs:
+        # 完整 Q&A 对让 LLM 理解对话全貌
+        pairs_text = "\n".join(
+            f"   用户：{p['user']}\n   助手：{p['assistant']}"
+            for p in history_pairs
+        )
+        history_block = (
+            "7. 以下是之前的对话记录，请结合上下文理解用户当前问题的真实意图，\n"
+            "   不要重复回答用户已经问过的内容，聚焦当前问题：\n"
+            f"{pairs_text}\n"
+        )
+    elif history_summary:
+        # 降级：只有问题摘要时用箭头形式
         history_block = (
             "7. 用户之前的对话脉络如下，请结合对话上下文理解用户当前问题的真实意图，\n"
             "   不要重复回答用户已经问过的内容，聚焦当前问题：\n"
@@ -572,8 +584,10 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         context = _build_context(hits)
         if context:
             history_summary = rewrite.get("history_summary", "") if rewrite else ""
+            history_pairs = rewrite.get("history_pairs", []) if rewrite else []
             llm_answer = llm_generate_answer(question, context, route, mode,
-                                             history_summary=history_summary)
+                                             history_summary=history_summary,
+                                             history_pairs=history_pairs)
             if llm_answer:
                 log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
                        matched_sources=build_evidence(hits), hit=True,
