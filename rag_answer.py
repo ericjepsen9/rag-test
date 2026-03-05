@@ -439,8 +439,14 @@ def _get_openai_client():
         return None
 
 
-def llm_generate_answer(question: str, context: str, route: str, mode: str) -> str:
-    """基于检索 context 用 LLM 生成答案（真正的 RAG）"""
+def llm_generate_answer(question: str, context: str, route: str, mode: str,
+                        history_summary: str = "") -> str:
+    """基于检索 context 用 LLM 生成答案（真正的 RAG）。
+
+    当 history_summary 非空时，将对话历史纳入 prompt，帮助 LLM 理解用户
+    在多轮对话中的真实意图（例如前文问成分，本轮追问"安全吗"，LLM 能
+    理解是在问该产品成分的安全性）。
+    """
     client = _get_openai_client()
     if client is None:
         return ""
@@ -456,6 +462,13 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str) -> s
         "basic": "介绍产品基本信息。",
     }
 
+    history_block = ""
+    if history_summary:
+        history_block = (
+            "7. 用户之前的对话上下文如下，请结合上下文理解用户当前问题的真实意图：\n"
+            f"   用户此前问过：「{history_summary}」\n"
+        )
+
     system_prompt = (
         "你是一位医美产品知识库问答助手。请严格基于以下检索到的知识库片段回答用户问题。\n"
         "规则：\n"
@@ -465,6 +478,7 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str) -> s
         '4. 末尾加上"以上信息仅供参考，具体请咨询专业医师。"\n'
         f"5. 回答要求：{length_hint}\n"
         f"6. {route_hints.get(route, '')}\n"
+        f"{history_block}"
     )
 
     user_prompt = f"知识库检索结果：\n{context}\n\n用户问题：{question}"
@@ -548,7 +562,9 @@ def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
     if hits and USE_OPENAI:
         context = _build_context(hits)
         if context:
-            llm_answer = llm_generate_answer(question, context, route, mode)
+            history_summary = rewrite.get("history_summary", "") if rewrite else ""
+            llm_answer = llm_generate_answer(question, context, route, mode,
+                                             history_summary=history_summary)
             if llm_answer:
                 log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
                        matched_sources=build_evidence(hits), hit=True,
@@ -590,6 +606,27 @@ def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
 _NO_MATCH_REPLY = "抱歉，暂时无法回答该问题。请尝试询问产品成分、术后护理、禁忌人群等相关问题。"
 
 
+def _detect_route_with_history(question: str, rewrite: dict) -> str:
+    """路由检测：优先用当前问题检测，若结果为 basic 且有历史上下文，
+    尝试从历史中继承更精确的路由。
+
+    典型场景：用户先问"菲罗奥术后注意什么"(aftercare)，再问"还有别的吗"，
+    当前问题被补全为"菲罗奥 还有别的吗"，路由检测可能落入 basic，
+    但用户真实意图是继续问 aftercare。
+    """
+    route = detect_route(question)
+    if route != "basic":
+        return route
+
+    # 当前路由为 basic 且发生了上下文补全 → 尝试从历史继承路由
+    if rewrite.get("context_resolved") and rewrite.get("history_summary"):
+        history_route = detect_route(rewrite["history_summary"])
+        if history_route != "basic":
+            return history_route
+
+    return route
+
+
 def answer_question(question: str, mode: str, history: list = None) -> str:
     q = (question or "").strip()
     if not q:
@@ -600,7 +637,7 @@ def answer_question(question: str, mode: str, history: list = None) -> str:
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
         # 如果子问题与原问题相同，复用已有的 rewrite 结果
         sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq)
-        route = detect_route(subq)
+        route = _detect_route_with_history(subq, sub_rewrite)
         # 同路由的子问题只回答一次（避免重复检索相同 chunk）
         if route in seen_routes:
             continue

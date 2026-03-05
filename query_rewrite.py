@@ -27,14 +27,70 @@ _FOLLOWUP_PATTERNS = re.compile(
     r"(呢|吗|怎么样|有哪些|是什么|是多少|怎么办)$"
 )
 
+# 隐含关联模式：问题本身是关于某个主题但缺少产品主语
+# 例如 "安全吗" "效果怎样" "多少钱" "要恢复多久"
+_IMPLICIT_TOPIC_PATTERNS = re.compile(
+    r"(安全|效果|价格|多少钱|持续|维持|恢复|疗程|几次|多久|保质期|保存"
+    r"|区别|对比|优势|好处|原理|机制|作用|功效"
+    r"|痛|疼|会不会|能不能|可不可以|需要|注意)"
+)
+
+# 所有路由关键词汇集，用于判断问题是否包含领域词
+_ALL_ROUTE_KEYWORDS = set()
+for _kws in QUESTION_ROUTES.values():
+    _ALL_ROUTE_KEYWORDS.update(kw.lower() for kw in _kws)
+
+
+def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
+    """从对话历史中提取结构化上下文信息。
+
+    返回:
+        product: 最近提到的产品标准中文名
+        product_id: 产品 ID
+        route: 最近的路由主题
+        last_user_q: 最近的用户问题原文
+    """
+    ctx: Dict[str, Any] = {
+        "product": "", "product_id": "", "route": "", "last_user_q": ""
+    }
+    for item in reversed(history):
+        content = item.get("content", "")
+        if item.get("role") != "user":
+            continue
+
+        if not ctx["last_user_q"]:
+            ctx["last_user_q"] = content
+
+        if not ctx["product"]:
+            products = detect_terms(content, PRODUCT_ALIASES)
+            if products:
+                pid = products[0]
+                aliases = PRODUCT_ALIASES.get(pid, [])
+                if aliases:
+                    ctx["product"] = aliases[0]
+                    ctx["product_id"] = pid
+
+        if not ctx["route"]:
+            content_lower = content.lower()
+            for route, keywords in QUESTION_ROUTES.items():
+                if any(kw.lower() in content_lower for kw in keywords):
+                    ctx["route"] = route
+                    break
+
+        if ctx["product"] and ctx["route"]:
+            break
+    return ctx
+
 
 def _resolve_context(question: str, history: Optional[List[Dict]]) -> str:
     """基于对话历史解析指代和省略，补全当前问题的上下文。
 
-    策略：
-    1. 如果当前问题已包含产品名 → 不需要补全
-    2. 如果当前问题含指代词（它/这个/那个）→ 从历史中提取产品名替换
-    3. 如果当前问题是追问（"那成分呢"）→ 从历史中继承产品名
+    策略（从高优先级到低）：
+    1. 当前问题已包含产品名 → 不需要补全
+    2. 指代词（它/这个/那个）→ 从历史替换为具体产品名
+    3. 追问句式（"…呢/吗/怎么样"）→ 补充产品名
+    4. 隐含关联（含领域词但无主语，如"安全吗""效果怎样"）→ 补充产品名
+    5. 纯领域词问题（含路由关键词但无产品名）→ 补充产品名
     """
     if not history:
         return question
@@ -45,22 +101,8 @@ def _resolve_context(question: str, history: Optional[List[Dict]]) -> str:
     if detect_terms(q, PRODUCT_ALIASES):
         return q
 
-    # 从历史中提取最近的产品名和路由上下文
-    history_product = ""
-    history_topic = ""
-    for item in reversed(history):
-        content = item.get("content", "")
-        if item.get("role") == "user":
-            products = detect_terms(content, PRODUCT_ALIASES)
-            if products and not history_product:
-                # 找到产品的中文名
-                for pid in products:
-                    aliases = PRODUCT_ALIASES.get(pid, [])
-                    if aliases:
-                        history_product = aliases[0]  # 取第一个别名（标准中文名）
-                        break
-            if not history_topic:
-                history_topic = content
+    ctx = _extract_history_context(history)
+    history_product = ctx["product"]
 
     if not history_product:
         return q
@@ -71,7 +113,17 @@ def _resolve_context(question: str, history: Optional[List[Dict]]) -> str:
         return resolved
 
     # 模式2: 追问补全 — "成分呢" / "禁忌人群有哪些" → 补充产品名
-    if _FOLLOWUP_PATTERNS.search(q) and len(q) <= 15:
+    if _FOLLOWUP_PATTERNS.search(q):
+        return f"{history_product} {q}"
+
+    # 模式3: 隐含关联 — "安全吗" "效果怎样" "需要几次" → 补充产品名
+    if _IMPLICIT_TOPIC_PATTERNS.search(q) and len(q) <= 30:
+        return f"{history_product} {q}"
+
+    # 模式4: 含路由关键词但无产品名 — "术后能洗脸吗" "注射深度多少"
+    q_lower = q.lower()
+    has_route_keyword = any(kw in q_lower for kw in _ALL_ROUTE_KEYWORDS)
+    if has_route_keyword and len(q) <= 40:
         return f"{history_product} {q}"
 
     return q
@@ -88,10 +140,11 @@ def _detect_route_for_expansion(q: str) -> List[str]:
 
 
 def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
-    q = (question or "").strip()
+    raw = (question or "").strip()
 
     # 上下文补全：解析指代词和省略
-    q = _resolve_context(q, history)
+    q = _resolve_context(raw, history)
+    context_resolved = (q != raw)  # 标记是否发生了上下文补全
 
     products = detect_terms(q, PRODUCT_ALIASES)
     projects = detect_terms(q, PROJECT_ALIASES)
@@ -114,12 +167,22 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([q] + expanded_terms))
 
+    # 提取历史摘要供 LLM 使用
+    history_summary = ""
+    if history and context_resolved:
+        ctx = _extract_history_context(history)
+        if ctx["last_user_q"]:
+            history_summary = ctx["last_user_q"]
+
     return {
         "original": q,
+        "raw_input": raw,
+        "context_resolved": context_resolved,
         "expanded": expanded_query,
         "products": products,
         "projects": projects,
         "times": uniq(times),
         "symptoms": uniq(symptoms),
         "sub_questions": sub_questions,
+        "history_summary": history_summary,
     }
