@@ -380,17 +380,17 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
         if not any("医" in x for x in items):
             items.append("术后如有任何异常，请及时联系操作医生。")
 
-    # 各路由的条目数限制
+    # 各路由的条目数限制 (brief, full)
     limits = {
-        "aftercare":       (20, 28),
-        "operation":       (16, 24),
-        "contraindication": (12, 18),
-        "risk":            (12, 20),
-        "combo":           (10, 16),
-        "ingredient":      (16, 24),
-        "basic":           (14, 22),
+        "aftercare":       (10, 28),
+        "operation":       (10, 24),
+        "contraindication": (8,  18),
+        "risk":            (8,  20),
+        "combo":           (8,  16),
+        "ingredient":      (10, 24),
+        "basic":           (10, 22),
     }
-    brief_lim, full_lim = limits.get(route, (12, 20))
+    brief_lim, full_lim = limits.get(route, (8, 20))
     limit = brief_lim if mode == "brief" else full_lim
 
     return items[:limit]

@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
@@ -46,6 +47,7 @@ class AskResponse(BaseModel):
     ok: bool
     answer: str
     media: List[MediaItem] = []
+    latency_ms: Optional[int] = None
     debug: Optional[Dict[str, Any]] = None
 
 
@@ -91,20 +93,34 @@ def ask(req: AskRequest):
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
+    t0 = time.monotonic()
     try:
         answer = answer_question(question, req.mode)
+        latency_ms = int((time.monotonic() - t0) * 1000)
         media = [MediaItem(**m) for m in find_media(question)]
         debug = None
         if req.debug:
-            debug = {"question": question, "mode": req.mode}
+            from rag_answer import detect_route, detect_product
+            from query_rewrite import rewrite_query
+            rw = rewrite_query(question)
+            debug = {
+                "question": question,
+                "mode": req.mode,
+                "route": detect_route(question),
+                "product": detect_product(question),
+                "expanded_query": rw["expanded"],
+                "latency_ms": latency_ms,
+            }
         return AskResponse(
             ok=True,
             answer=answer,
             media=media,
+            latency_ms=latency_ms,
             debug=debug,
         )
     except Exception as e:
-        log_error("api_ask", repr(e), meta={"question": question[:200]})
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        log_error("api_ask", repr(e), meta={"question": question[:200], "latency_ms": latency_ms})
         return AskResponse(
             ok=False,
             answer="接口执行异常，请稍后重试",
