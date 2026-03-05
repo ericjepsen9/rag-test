@@ -1,3 +1,4 @@
+import math
 import re
 from typing import List, Dict, Tuple
 
@@ -77,28 +78,78 @@ def _extract_terms(query: str) -> List[str]:
     return list(set(terms))
 
 
-def keyword_score(query: str, text: str) -> float:
+def _count_term(term: str, text: str) -> int:
+    """统计 term 在 text 中出现的次数"""
+    count = 0
+    start = 0
+    while True:
+        idx = text.find(term, start)
+        if idx == -1:
+            break
+        count += 1
+        start = idx + len(term)
+    return count
+
+
+def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
+               doc_freqs: Dict[str, int], k1: float = 1.5, b: float = 0.75) -> float:
+    """BM25 评分：考虑词频、文档长度、逆文档频率"""
     q_terms = _extract_terms(query)
     t = (text or "").lower()
-    if not q_terms:
+    dl = len(t)
+    if not q_terms or dl == 0:
         return 0.0
-    hit = 0
+
+    score = 0.0
     for term in q_terms:
-        if term in t:
-            hit += 1
-    return hit / max(len(q_terms), 1)
+        tf = _count_term(term, t)
+        if tf == 0:
+            continue
+        df = doc_freqs.get(term, 0)
+        # IDF: log((N - df + 0.5) / (df + 0.5) + 1)
+        idf = math.log((n_docs - df + 0.5) / (df + 0.5) + 1.0)
+        # TF normalization
+        tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1)))
+        score += idf * tf_norm
+    return score
 
 
 def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
+    if not docs:
+        return []
+
+    q_terms = _extract_terms(query)
+    if not q_terms:
+        return []
+
+    # 预计算文档频率和平均文档长度
+    texts = [(d.get("text") or "").lower() for d in docs]
+    n_docs = len(texts)
+    avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
+
+    doc_freqs: Dict[str, int] = {}
+    for term in q_terms:
+        df = sum(1 for t in texts if term in t)
+        doc_freqs[term] = df
+
     scored = []
-    for d in docs:
-        score = keyword_score(query, d.get("text", ""))
-        if score <= 0:
+    for i, d in enumerate(docs):
+        s = bm25_score(query, texts[i], avg_dl, n_docs, doc_freqs)
+        if s <= 0:
             continue
         x = dict(d)
-        x["keyword_score"] = score
+        x["keyword_score"] = s
         scored.append(x)
+
     scored.sort(key=lambda x: x.get("keyword_score", 0.0), reverse=True)
+
+    # 归一化到 [0, 1] 区间，使其与向量分数可比
+    if scored:
+        max_score = scored[0]["keyword_score"]
+        if max_score > 0:
+            for x in scored:
+                x["keyword_score"] = x["keyword_score"] / max_score
+
     return scored[:top_k]
 
 

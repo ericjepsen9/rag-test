@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import re
+import threading
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -31,6 +32,7 @@ _model = None
 _faiss = None
 _BGEM3 = None
 _store_cache = {}  # {product: (index, docs, mtime)} — 进程内缓存，避免每次请求重读文件
+_search_lock = threading.Lock()  # 保护 FAISS index.search（非线程安全）
 
 
 def get_faiss():
@@ -116,7 +118,8 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
     if index is None or not docs:
         return []
     qv = embed_query(query)
-    scores, ids = index.search(qv, min(top_k, len(docs)))
+    with _search_lock:
+        scores, ids = index.search(qv, min(top_k, len(docs)))
     hits = []
     for i, idx in enumerate(ids[0]):
         if idx < 0 or idx >= len(docs):
@@ -147,10 +150,28 @@ def detect_product(question: str) -> str:
 def detect_route(question: str) -> str:
     q = (question or "").lower()
     order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "basic"]
+
+    # 收集每个 route 的匹配关键词
+    matched = {}
     for route in order:
-        for kw in QUESTION_ROUTES.get(route, []):
-            if kw.lower() in q:
-                return route
+        hits = [kw for kw in QUESTION_ROUTES.get(route, []) if kw.lower() in q]
+        if hits:
+            matched[route] = hits
+
+    if not matched:
+        return "basic"
+
+    # 消歧：当 risk 和 contraindication 同时命中时，
+    # 含 "体质/人群/可以用/可以打/适合" 等倾向禁忌
+    if "risk" in matched and "contraindication" in matched:
+        contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打"]
+        if any(s in q for s in contra_signals):
+            return "contraindication"
+
+    # 按优先级返回第一个命中的 route
+    for route in order:
+        if route in matched:
+            return route
     return "basic"
 
 
@@ -327,21 +348,102 @@ def parse_answer(route: str, product: str, mode: str) -> List[str]:
     return parse_bullets_from_section(main_text, faq_text, route, mode)
 
 
-def openai_rewrite_answer(text: str, route: str) -> str:
+def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
+    """将检索结果拼接为 LLM context 字符串"""
+    parts = []
+    total = 0
+    for i, h in enumerate(hits, 1):
+        text = (h.get("text") or "").strip()
+        if not text:
+            continue
+        source = h.get("meta", {}).get("source_file", "unknown")
+        chunk_id = h.get("meta", {}).get("chunk_id", "?")
+        score = h.get("hybrid_score", h.get("score", 0.0))
+        header = f"[片段{i} | {source}#{chunk_id} | 相关度:{score:.2f}]"
+        part = f"{header}\n{text}"
+        if total + len(part) > max_chars:
+            break
+        parts.append(part)
+        total += len(part)
+    return "\n\n".join(parts)
+
+
+def _get_openai_client():
+    """获取 OpenAI client，失败返回 None"""
     if not USE_OPENAI:
-        return text
+        return None
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
-        return text
+        return None
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=key)
+        return OpenAI(api_key=key)
+    except Exception:
+        return None
+
+
+def llm_generate_answer(question: str, context: str, route: str, mode: str) -> str:
+    """基于检索 context 用 LLM 生成答案（真正的 RAG）"""
+    client = _get_openai_client()
+    if client is None:
+        return ""
+
+    length_hint = "简洁扼要，控制在300字以内" if mode == "brief" else "详细全面，可适当展开"
+    route_hints = {
+        "risk": "重点说明可能的不良反应、处理建议，并提醒需医生评估。",
+        "aftercare": "按时间线整理术后护理要点。",
+        "operation": "重点说明操作参数（深度、剂量、间距等）。",
+        "anti_fake": "按步骤说明防伪验证方法。",
+        "contraindication": "列出禁忌人群和情况，提醒需医生评估。",
+        "combo": "说明联合方案和间隔时间。",
+        "basic": "介绍产品基本信息。",
+    }
+
+    system_prompt = (
+        "你是一位医美产品知识库问答助手。请严格基于以下检索到的知识库片段回答用户问题。\n"
+        "规则：\n"
+        "1. 只使用知识库中的信息，不要编造或补充任何事实\n"
+        '2. 如果知识库中没有相关信息，明确说明"当前知识库未覆盖该问题"\n'
+        "3. 回答使用结构化格式（分点列出）\n"
+        '4. 末尾加上"以上信息仅供参考，具体请咨询专业医师。"\n'
+        f"5. 回答要求：{length_hint}\n"
+        f"6. {route_hints.get(route, '')}\n"
+    )
+
+    user_prompt = f"知识库检索结果：\n{context}\n\n用户问题：{question}"
+
+    try:
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+            max_tokens=1024 if mode == "brief" else 2048,
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
+def openai_rewrite_answer(text: str, route: str) -> str:
+    """Fallback: 当 LLM RAG 未启用时，用 LLM 润色规则提取的答案"""
+    client = _get_openai_client()
+    if client is None:
+        return text
+    try:
         prompt = (
             "请在不改变事实的前提下，将以下基于知识库的回答整理得更专业、更自然。"
             "不要新增事实。保留结构化格式。\n\n" + text
         )
-        resp = client.responses.create(model=OPENAI_MODEL, input=prompt)
-        return (resp.output_text or "").strip() or text
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1024,
+        )
+        return (resp.choices[0].message.content or "").strip() or text
     except Exception:
         return text
 
@@ -384,10 +486,23 @@ def answer_one(question: str, mode: str) -> str:
     # 过滤低于 threshold 的结果
     hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
 
+    # ---- 策略1: LLM RAG（优先）——检索结果作为 context 让 LLM 生成答案 ----
+    if hits and USE_OPENAI:
+        context = _build_context(hits)
+        if context:
+            llm_answer = llm_generate_answer(question, context, route, mode)
+            if llm_answer:
+                log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
+                       matched_sources=build_evidence(hits), hit=True,
+                       meta={"product": product, "route": route, "mode": mode,
+                              "method": "llm_rag"})
+                return llm_answer
+
+    # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
     body_lines = parse_answer(route, product, mode)
 
     if not body_lines:
-        # 规则提取失败时，用检索结果做 fallback
+        # 规则也提取失败，从检索结果中摘要
         fallback_lines = _fallback_from_hits(hits)
         if fallback_lines:
             body_lines = fallback_lines
@@ -400,14 +515,16 @@ def answer_one(question: str, mode: str) -> str:
             text = format_structured_answer(route, fallback, build_evidence(hits), add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=build_evidence(hits), hit=False,
-                   meta={"product": product, "route": route, "mode": mode})
+                   meta={"product": product, "route": route, "mode": mode,
+                          "method": "no_hit"})
             return text
 
     text = format_structured_answer(route, body_lines, build_evidence(hits), add_risk_note=(route == "risk"))
     text = openai_rewrite_answer(text, route)
     log_qa(question, text, rewritten_query=rewrite["expanded"],
            matched_sources=build_evidence(hits), hit=True,
-           meta={"product": product, "route": route, "mode": mode})
+           meta={"product": product, "route": route, "mode": mode,
+                  "method": "rule_extract"})
     return text
 
 

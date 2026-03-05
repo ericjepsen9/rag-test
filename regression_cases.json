@@ -1,35 +1,102 @@
 [
   {
     "q": "非罗奥 怎么验真伪",
-    "expect_any": [
-      "HiddenTag",
-      "防伪",
-      "正品"
-    ]
+    "expect_any": ["HiddenTag", "防伪", "正品"],
+    "route": "anti_fake"
   },
   {
     "q": "禁忌人群",
-    "expect_any": [
-      "妊娠",
-      "过敏",
-      "免疫"
-    ]
+    "expect_any": ["妊娠", "过敏", "免疫"],
+    "route": "contraindication"
   },
   {
     "q": "注射深度 0.8mm",
-    "expect_any": [
-      "0.8mm",
-      "1.0mm",
-      "针头"
-    ]
+    "expect_any": ["0.8mm", "1.0mm", "针头"],
+    "route": "operation"
   },
   {
     "q": "非罗奥 术后护理",
-    "expect_any": [
-      "术后",
-      "洗脸",
-      "面膜",
-      "保湿"
-    ]
+    "expect_any": ["术后", "洗脸", "面膜", "保湿"],
+    "route": "aftercare"
+  },
+  {
+    "q": "菲罗奥是什么产品",
+    "expect_any": ["产品", "成分", "菲罗奥", "CELLOFILL"],
+    "route": "basic"
+  },
+  {
+    "q": "赛罗菲 成分",
+    "expect_any": ["产品", "成分", "基础"],
+    "route": "basic"
+  },
+  {
+    "q": "术后可以洗脸吗",
+    "expect_any": ["洗脸", "术后", "护理"],
+    "route": "aftercare"
+  },
+  {
+    "q": "注射后出现红肿怎么办",
+    "expect_any": ["红肿", "反应", "医生", "正常"],
+    "route": "risk"
+  },
+  {
+    "q": "哺乳期可以打吗",
+    "expect_any": ["哺乳", "禁忌", "不适合", "医生"],
+    "route": "contraindication"
+  },
+  {
+    "q": "水光和微针可以一起做吗",
+    "expect_any": ["联合", "间隔", "搭配", "水光", "微针"],
+    "route": "combo"
+  },
+  {
+    "q": "怎么下载 HiddenTag",
+    "expect_any": ["HiddenTag", "APP", "下载", "应用商店"],
+    "route": "anti_fake"
+  },
+  {
+    "q": "术后多久可以敷面膜",
+    "expect_any": ["面膜", "术后", "天"],
+    "route": "aftercare"
+  },
+  {
+    "q": "注射量是多少",
+    "expect_any": ["注射", "ml", "剂量"],
+    "route": "operation"
+  },
+  {
+    "q": "菲罗奥 备案信息",
+    "expect_any": ["备案", "产品", "基础"],
+    "route": "basic"
+  },
+  {
+    "q": "术后有硬块正常吗",
+    "expect_any": ["硬块", "正常", "医生", "反应"],
+    "route": "risk"
+  },
+  {
+    "q": "非罗奥可以和光电一起做吗",
+    "expect_any": ["联合", "间隔", "光电", "搭配"],
+    "route": "combo"
+  },
+  {
+    "q": "过敏体质可以用吗",
+    "expect_any": ["过敏", "禁忌", "医生", "评估"],
+    "route": "contraindication"
+  },
+  {
+    "q": "MTS操作参数",
+    "expect_any": ["MTS", "微针", "深度", "参数"],
+    "route": "operation"
+  },
+  {
+    "q": "术后能喝酒吗",
+    "expect_any": ["禁酒", "酒", "术后"],
+    "route": "aftercare"
+  },
+  {
+    "q": "正品标签长什么样",
+    "expect_any": ["标签", "防伪", "HiddenTag", "正品"],
+    "route": "anti_fake"
   }
 ]
