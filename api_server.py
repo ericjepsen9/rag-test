@@ -31,9 +31,15 @@ MAX_QUESTION_LEN = 500
 
 # ===== 数据模型 =====
 
+class HistoryItem(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    content: str = Field(..., max_length=500)
+
+
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=MAX_QUESTION_LEN)
     mode: Literal["brief", "full"] = "brief"
+    history: List[HistoryItem] = Field(default_factory=list, max_length=10)
     debug: bool = False
 
 
@@ -95,7 +101,8 @@ def ask(req: AskRequest):
 
     t0 = time.monotonic()
     try:
-        answer = answer_question(question, req.mode)
+        history = [{"role": h.role, "content": h.content} for h in req.history[-6:]]
+        answer = answer_question(question, req.mode, history=history)
         latency_ms = int((time.monotonic() - t0) * 1000)
         media = [MediaItem(**m) for m in find_media(question)]
         debug = None

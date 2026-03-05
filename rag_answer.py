@@ -590,11 +590,11 @@ def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
 _NO_MATCH_REPLY = "抱歉，暂时无法回答该问题。请尝试询问产品成分、术后护理、禁忌人群等相关问题。"
 
 
-def answer_question(question: str, mode: str) -> str:
+def answer_question(question: str, mode: str, history: list = None) -> str:
     q = (question or "").strip()
     if not q:
         return _NO_MATCH_REPLY
-    rewrite = rewrite_query(q)
+    rewrite = rewrite_query(q, history=history)
     outputs = []
     seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
