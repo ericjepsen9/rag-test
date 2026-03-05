@@ -52,11 +52,13 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
     返回:
         product: 最近提到的产品标准中文名
         product_id: 产品 ID
+        projects: 最近提到的项目名列表（水光/微针等）
         route: 最近的路由主题
         last_user_q: 最近的用户问题原文
     """
     ctx: Dict[str, Any] = {
-        "product": "", "product_id": "", "route": "", "last_user_q": ""
+        "product": "", "product_id": "", "projects": [],
+        "route": "", "last_user_q": "",
     }
     for item in reversed(history):
         content = item.get("content", "")
@@ -74,6 +76,17 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
                 if aliases:
                     ctx["product"] = aliases[0]
                     ctx["product_id"] = pid
+
+        if not ctx["projects"]:
+            projects = detect_terms(content, PROJECT_ALIASES)
+            if projects:
+                # 取每个项目的标准中文名
+                proj_names = []
+                for pj in projects:
+                    aliases = PROJECT_ALIASES.get(pj, [])
+                    if aliases:
+                        proj_names.append(aliases[0])
+                ctx["projects"] = proj_names
 
         if not ctx["route"]:
             content_lower = content.lower()
@@ -113,24 +126,31 @@ def _resolve_context(question: str, history_ctx: Dict[str, Any]) -> str:
     if _OFFTOPIC_PATTERNS.search(q):
         return q
 
+    # 构建补全前缀：产品名 + 历史中的项目名（如果当前问题中没有）
+    prefix_parts = [history_product]
+    if not detect_terms(q, PROJECT_ALIASES):
+        for pj in history_ctx.get("projects", []):
+            prefix_parts.append(pj)
+    prefix = " ".join(prefix_parts)
+
     # 模式1: 指代词替换 — "它的成分呢" → "菲罗奥的成分呢"
     if _PRONOUN_PATTERNS.search(q):
-        resolved = _PRONOUN_PATTERNS.sub(history_product, q, count=1)
+        resolved = _PRONOUN_PATTERNS.sub(prefix, q, count=1)
         return resolved
 
-    # 模式2: 追问/延续补全 — "还有别的吗" "成分呢" "禁忌人群有哪些" → 补充产品名
+    # 模式2: 追问/延续补全 — "还有别的吗" "成分呢" "禁忌人群有哪些" → 补充上下文
     if _FOLLOWUP_PATTERNS.search(q):
-        return f"{history_product} {q}"
+        return f"{prefix} {q}"
 
-    # 模式3: 隐含关联 — "安全吗" "效果怎样" "需要几次" → 补充产品名
+    # 模式3: 隐含关联 — "安全吗" "效果怎样" "需要几次" → 补充上下文
     if _IMPLICIT_TOPIC_PATTERNS.search(q) and len(q) <= 30:
-        return f"{history_product} {q}"
+        return f"{prefix} {q}"
 
     # 模式4: 含路由关键词但无产品名 — "术后能洗脸吗" "注射深度多少"
     q_lower = q.lower()
     has_route_keyword = any(kw in q_lower for kw in _ALL_ROUTE_KEYWORDS)
     if has_route_keyword and len(q) <= 40:
-        return f"{history_product} {q}"
+        return f"{prefix} {q}"
 
     return q
 

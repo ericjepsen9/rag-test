@@ -546,6 +546,13 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     if rewrite is None:
         rewrite = rewrite_query(question)
 
+    # 日志基础 meta：包含上下文补全信息便于生产调试
+    raw_input = rewrite.get("raw_input", "")
+    _log_meta = {"product": product, "route": route, "mode": mode}
+    if raw_input and raw_input != rewrite.get("original", ""):
+        _log_meta["raw_input"] = raw_input
+        _log_meta["resolved_question"] = rewrite["original"]
+
     # 根据问题类型使用不同的检索参数
     route_cfg = QUESTION_TYPE_CONFIG.get(route, {})
     route_top_k = route_cfg.get("k", DEFAULT_TOP_K)
@@ -570,8 +577,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             if llm_answer:
                 log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
                        matched_sources=build_evidence(hits), hit=True,
-                       meta={"product": product, "route": route, "mode": mode,
-                              "method": "llm_rag"})
+                       meta={**_log_meta, "method": "llm_rag"})
                 return llm_answer
 
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
@@ -591,8 +597,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             text = format_structured_answer(route, fallback, build_evidence(hits), add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=build_evidence(hits), hit=False,
-                   meta={"product": product, "route": route, "mode": mode,
-                          "method": "no_hit"})
+                   meta={**_log_meta, "method": "no_hit"})
             return text
 
     text = format_structured_answer(route, body_lines, build_evidence(hits), add_risk_note=(route == "risk"))
@@ -600,8 +605,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         text = openai_rewrite_answer(text, route)
     log_qa(question, text, rewritten_query=rewrite["expanded"],
            matched_sources=build_evidence(hits), hit=True,
-           meta={"product": product, "route": route, "mode": mode,
-                  "method": "rule_extract"})
+           meta={**_log_meta, "method": "rule_extract"})
     return text
 
 
@@ -632,11 +636,13 @@ def _detect_route_with_history(question: str, rewrite: dict) -> str:
     return route
 
 
-def answer_question(question: str, mode: str, history: list = None) -> str:
+def answer_question(question: str, mode: str, history: list = None,
+                    rewrite: dict = None) -> str:
     q = (question or "").strip()
     if not q:
         return _NO_MATCH_REPLY
-    rewrite = rewrite_query(q, history=history)
+    if rewrite is None:
+        rewrite = rewrite_query(q, history=history)
     outputs = []
     seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
