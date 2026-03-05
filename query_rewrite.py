@@ -197,8 +197,10 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
 
     # 构建多轮历史摘要供 LLM 使用
     history_summary = ""
+    last_user_q = ""
     if history and context_resolved:
         history_summary = _build_history_summary(history)
+        last_user_q = history_ctx.get("last_user_q", "")
 
     return {
         "original": q,
@@ -210,5 +212,6 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
         "times": uniq(times),
         "symptoms": uniq(symptoms),
         "sub_questions": sub_questions,
-        "history_summary": history_summary,
+        "history_summary": history_summary,   # 多轮摘要，供 LLM prompt
+        "last_user_q": last_user_q,           # 上一轮用户问题，供路由继承
     }

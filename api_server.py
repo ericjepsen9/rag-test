@@ -102,15 +102,18 @@ def ask(req: AskRequest):
     t0 = time.monotonic()
     try:
         history = [{"role": h.role, "content": h.content} for h in req.history[-6:]]
+        # 预先做一次 rewrite，获取上下文补全后的问题，供 media/debug 复用
+        from query_rewrite import rewrite_query
+        rw = rewrite_query(question, history=history)
+        resolved_q = rw["original"]  # 上下文补全后的问题
+
         answer = answer_question(question, req.mode, history=history)
         latency_ms = int((time.monotonic() - t0) * 1000)
-        media = [MediaItem(**m) for m in find_media(question)]
+        # 用补全后的问题匹配媒体（如指代词已替换为产品名）
+        media = [MediaItem(**m) for m in find_media(resolved_q)]
         debug = None
         if req.debug:
             from rag_answer import detect_route, detect_product
-            from query_rewrite import rewrite_query
-            rw = rewrite_query(question, history=history)
-            resolved_q = rw["original"]
             debug = {
                 "question": question,
                 "resolved_question": resolved_q if rw["context_resolved"] else None,

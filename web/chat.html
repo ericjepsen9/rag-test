@@ -78,6 +78,25 @@
     .ok {
       color: #166534;
     }
+    .bubble {
+      padding: 10px 14px;
+      border-radius: 10px;
+      margin: 6px 0;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-width: 85%;
+    }
+    .bubble-user {
+      background: #2563eb;
+      color: #fff;
+      margin-left: auto;
+      text-align: right;
+    }
+    .bubble-bot {
+      background: #f1f5f9;
+      color: #222;
+    }
   </style>
 </head>
 <body>
@@ -113,10 +132,13 @@
       <div class="small">当前页面会向 <code>/ask</code> 发送请求。</div>
     </div>
 
-    <div class="card">
-      <div><strong>结果</strong></div>
+    <div class="card" id="chatCard">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <strong>对话记录</strong>
+        <button id="clearBtn" style="width:auto;padding:4px 12px;background:#94a3b8;font-size:12px;">清空对话</button>
+      </div>
+      <div id="chatLog" style="margin-top:10px;max-height:500px;overflow-y:auto;"></div>
       <div id="status" class="small"></div>
-      <div id="answer" class="msg" style="margin-top:10px;">（等待请求）</div>
     </div>
 
     <div class="card">
@@ -128,16 +150,34 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
+    // 对话历史（发送给后端的 history 字段）
+    let chatHistory = [];
+    const MAX_HISTORY = 10;
+
+    function addBubble(text, role) {
+      const el = document.createElement("div");
+      el.className = "bubble " + (role === "user" ? "bubble-user" : "bubble-bot");
+      el.textContent = text;
+      $("chatLog").appendChild(el);
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    }
+
+    function clearChat() {
+      chatHistory = [];
+      $("chatLog").innerHTML = "";
+      $("debugBox").textContent = "（无）";
+      $("status").textContent = "";
+    }
+
     async function callHealth() {
       $("status").textContent = "请求 /health ...";
       try {
         const res = await fetch("/health");
         const data = await res.json();
         $("status").innerHTML = '<span class="ok">/health 正常</span>';
-        $("answer").textContent = JSON.stringify(data, null, 2);
+        addBubble(JSON.stringify(data, null, 2), "bot");
       } catch (e) {
         $("status").innerHTML = '<span class="err">/health 失败</span>';
-        $("answer").textContent = String(e);
       }
     }
 
@@ -148,15 +188,19 @@
         return;
       }
 
+      // 显示用户气泡
+      addBubble(question, "user");
+      $("question").value = "";
+
       const body = {
         question,
         mode: $("mode").value,
         debug: $("debug").value === "true",
+        history: chatHistory.slice(-MAX_HISTORY),
       };
 
       $("askBtn").disabled = true;
       $("status").textContent = "请求中...";
-      $("answer").textContent = "";
       $("debugBox").textContent = "（无）";
 
       try {
@@ -168,11 +212,12 @@
 
         if (!res.ok) {
           $("status").innerHTML = `<span class="err">HTTP ${res.status}</span>`;
-          $("answer").textContent = await res.text();
+          addBubble("请求失败: HTTP " + res.status, "bot");
           return;
         }
 
         const data = await res.json();
+        const answer = data.answer || "（无回答）";
 
         if (data.ok) {
           $("status").innerHTML = `<span class="ok">成功</span>`;
@@ -180,20 +225,32 @@
           $("status").innerHTML = `<span class="err">失败</span>`;
         }
 
-        $("answer").textContent = data.answer || "";
+        // 显示回答气泡
+        addBubble(answer, "bot");
+
+        // 更新对话历史
+        chatHistory.push({ role: "user", content: question });
+        chatHistory.push({ role: "assistant", content: answer.slice(0, 300) });
+        // 保持历史在限制范围内
+        if (chatHistory.length > MAX_HISTORY * 2) {
+          chatHistory = chatHistory.slice(-MAX_HISTORY * 2);
+        }
+
         if (data.debug) {
           $("debugBox").textContent = JSON.stringify(data.debug, null, 2);
         }
       } catch (e) {
         $("status").innerHTML = '<span class="err">请求异常</span>';
-        $("answer").textContent = String(e);
+        addBubble("请求异常: " + String(e), "bot");
       } finally {
         $("askBtn").disabled = false;
+        $("question").focus();
       }
     }
 
     $("askBtn").addEventListener("click", ask);
     $("healthBtn").addEventListener("click", callHealth);
+    $("clearBtn").addEventListener("click", clearChat);
 
     // 回车发送（Shift+Enter 换行）
     $("question").addEventListener("keydown", (e) => {
