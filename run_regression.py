@@ -13,27 +13,9 @@ CASES = json.loads((BASE_DIR / "regression_cases.json").read_text(encoding="utf-
 
 
 def test_route_detection():
-    """测试路由检测是否准确（仅依赖轻量模块）"""
-    from rag_runtime_config import QUESTION_ROUTES
+    """测试路由检测是否准确（使用 rag_answer 中的实际 detect_route）"""
+    from rag_answer import detect_route
 
-    def detect_route(question: str) -> str:
-        q = (question or "").lower()
-        order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "ingredient", "basic"]
-        matched = {}
-        for route in order:
-            hits = [kw for kw in QUESTION_ROUTES.get(route, []) if kw.lower() in q]
-            if hits:
-                matched[route] = hits
-        if not matched:
-            return "basic"
-        if "risk" in matched and "contraindication" in matched:
-            contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打"]
-            if any(s in q for s in contra_signals):
-                return "contraindication"
-        for route in order:
-            if route in matched:
-                return route
-        return "basic"
     ok = 0
     total = 0
     for case in CASES:
