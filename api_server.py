@@ -1,4 +1,3 @@
-import traceback
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
@@ -13,6 +12,7 @@ from rag_runtime_config import KNOWLEDGE_DIR
 
 BASE_DIR = Path(__file__).resolve().parent
 ADMIN_PAGE = BASE_DIR / "admin_page.html"
+CHAT_PAGE = BASE_DIR / "web" / "chat.html"
 
 app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0")
 
@@ -42,6 +42,7 @@ class AskResponse(BaseModel):
 
 class RebuildRequest(BaseModel):
     product: str = Field(..., min_length=1, max_length=50)
+    timeout_sec: int = Field(default=120, ge=10, le=600)
 
 
 # ===== 问答接口 =====
@@ -53,6 +54,13 @@ def health():
         "base_dir": str(BASE_DIR),
         "knowledge_exists": KNOWLEDGE_DIR.exists(),
     }
+
+
+@app.get("/chat")
+def chat_page():
+    if not CHAT_PAGE.exists():
+        raise HTTPException(status_code=404, detail="chat.html 不存在")
+    return FileResponse(CHAT_PAGE, media_type="text/html")
 
 
 @app.post("/ask", response_model=AskResponse)

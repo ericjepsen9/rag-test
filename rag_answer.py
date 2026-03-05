@@ -33,6 +33,8 @@ _faiss = None
 _BGEM3 = None
 _store_cache = {}  # {product: (index, docs, mtime)} — 进程内缓存，避免每次请求重读文件
 _search_lock = threading.Lock()  # 保护 FAISS index.search（非线程安全）
+MAX_SUB_QUESTIONS = 4  # 单次问答最多拆分的子问题数
+MAX_EVIDENCE_CHUNKS = 6  # build_evidence 保留的最大片段数
 
 
 def get_faiss():
@@ -177,7 +179,7 @@ def detect_route(question: str) -> str:
 
 def build_evidence(hits: List[Dict]) -> List[Dict]:
     ev = []
-    for h in hits[:6]:
+    for h in hits[:MAX_EVIDENCE_CHUNKS]:
         ev.append({
             "meta": h.get("meta", {}),
             "text": (h.get("text") or "")[:200],
@@ -567,7 +569,7 @@ def answer_question(question: str, mode: str) -> str:
     rewrite = rewrite_query(question)
     outputs = []
     seen = set()
-    for subq in rewrite["sub_questions"][:4]:
+    for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
         # 如果子问题与原问题相同，复用已有的 rewrite 结果
         sub_rewrite = rewrite if subq == rewrite["original"] else None
         ans = answer_one(subq, mode, rewrite=sub_rewrite)
