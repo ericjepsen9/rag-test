@@ -34,10 +34,11 @@ _OFFTOPIC_PATTERNS = re.compile(
 
 # 隐含关联模式：问题本身是关于某个主题但缺少产品主语
 # 例如 "安全吗" "效果怎样" "多少钱" "要恢复多久"
+# 注意：避免过于宽泛的词（"需要""注意"），用更具体的搭配
 _IMPLICIT_TOPIC_PATTERNS = re.compile(
-    r"(安全|效果|价格|多少钱|持续|维持|恢复|疗程|几次|多久|保质期|保存"
+    r"(安全|效果|价格|多少钱|持续|维持|恢复期|疗程|几次|多久|保质期|保存"
     r"|区别|对比|优势|好处|原理|机制|作用|功效"
-    r"|痛|疼|会不会|能不能|可不可以|需要|注意)"
+    r"|痛不痛|疼不疼|会不会|能不能|可不可以|需要几|需要多|注意什么|注意事项)"
 )
 
 # 所有路由关键词汇集，用于判断问题是否包含领域词
@@ -46,8 +47,14 @@ for _kws in QUESTION_ROUTES.values():
     _ALL_ROUTE_KEYWORDS.update(kw.lower() for kw in _kws)
 
 
+_MAX_HISTORY_SCAN = 6  # 最多回溯的用户消息数，避免长历史全扫描
+
+
 def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
     """从对话历史中提取结构化上下文信息。
+
+    最多回溯 _MAX_HISTORY_SCAN 条用户消息。当 product + route + projects
+    全部找到时提前退出；否则扫完限额后返回已找到的部分。
 
     返回:
         product: 最近提到的产品标准中文名
@@ -60,10 +67,12 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
         "product": "", "product_id": "", "projects": [],
         "route": "", "last_user_q": "",
     }
+    user_count = 0
     for item in reversed(history):
         content = item.get("content", "")
         if item.get("role") != "user":
             continue
+        user_count += 1
 
         if not ctx["last_user_q"]:
             ctx["last_user_q"] = content
@@ -80,7 +89,6 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
         if not ctx["projects"]:
             projects = detect_terms(content, PROJECT_ALIASES)
             if projects:
-                # 取每个项目的标准中文名
                 proj_names = []
                 for pj in projects:
                     aliases = PROJECT_ALIASES.get(pj, [])
@@ -95,7 +103,10 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
                     ctx["route"] = route
                     break
 
+        # 全部找到 → 提前退出；否则扫完限额后退出
         if ctx["product"] and ctx["route"] and ctx["projects"]:
+            break
+        if user_count >= _MAX_HISTORY_SCAN:
             break
     return ctx
 
