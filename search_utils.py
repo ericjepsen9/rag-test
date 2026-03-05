@@ -238,17 +238,41 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
 
 
 def split_multi_question(question: str, separators: List[str] = None) -> List[str]:
-    # 移除 "。" 避免正常句号被误拆；只按真正表示"多个问题"的连接词拆分
-    separators = separators or ["；", ";", "，另外", "并且，", "同时，", "还有，"]
+    separators = separators or [
+        "？", "?",        # 问号分隔多个问题
+        "；", ";",        # 分号
+        "，另外", "，还有", "，同时",  # 连接词
+        "并且，", "同时，", "还有，",
+    ]
     parts = [question]
     for sep in separators:
         next_parts = []
         for p in parts:
             next_parts.extend(p.split(sep))
         parts = next_parts
-    # 过滤太短的碎片（避免无意义子问题）
-    parts = [p.strip().rstrip("。？?") for p in parts if len(p.strip()) >= 4]
-    return uniq(parts)
+
+    # "A和B分别是什么" → ["A是什么", "B是什么"]
+    expanded = []
+    for p in parts:
+        m = re.match(r"^(.+?)和(.+?)(分别|各自)?(是什么|有哪些|怎么样)$", p.strip())
+        if m:
+            suffix = m.group(4)
+            expanded.append(m.group(1).strip() + suffix)
+            expanded.append(m.group(2).strip() + suffix)
+        else:
+            expanded.append(p)
+
+    # 逗号分隔：仅当两侧都 ≥4 字符时才拆分（避免 "术后1天，可以洗脸" 被误拆）
+    final = []
+    for p in expanded:
+        comma_parts = re.split(r"[，,]", p)
+        if len(comma_parts) >= 2 and all(len(cp.strip()) >= 5 for cp in comma_parts):
+            final.extend(comma_parts)
+        else:
+            final.append(p)
+
+    result = [p.strip().rstrip("。？?") for p in final if len(p.strip()) >= 3]
+    return uniq(result)
 
 
 def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
