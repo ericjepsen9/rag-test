@@ -109,13 +109,17 @@ def ask(req: AskRequest):
         if req.debug:
             from rag_answer import detect_route, detect_product
             from query_rewrite import rewrite_query
-            rw = rewrite_query(question)
+            rw = rewrite_query(question, history=history)
+            resolved_q = rw["original"]
             debug = {
                 "question": question,
+                "resolved_question": resolved_q if rw["context_resolved"] else None,
                 "mode": req.mode,
-                "route": detect_route(question),
-                "product": detect_product(question),
+                "route": detect_route(resolved_q),
+                "product": detect_product(resolved_q),
                 "expanded_query": rw["expanded"],
+                "context_resolved": rw["context_resolved"],
+                "history_summary": rw.get("history_summary") or None,
                 "latency_ms": latency_ms,
             }
         return AskResponse(

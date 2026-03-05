@@ -87,8 +87,10 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
     return ctx
 
 
-def _resolve_context(question: str, history: Optional[List[Dict]]) -> str:
-    """基于对话历史解析指代和省略，补全当前问题的上下文。
+def _resolve_context(question: str, history_ctx: Dict[str, Any]) -> str:
+    """基于已提取的历史上下文解析指代和省略，补全当前问题。
+
+    参数 history_ctx 来自 _extract_history_context()，避免重复解析。
 
     策略（从高优先级到低）：
     1. 当前问题已包含产品名 → 不需要补全
@@ -97,19 +99,14 @@ def _resolve_context(question: str, history: Optional[List[Dict]]) -> str:
     4. 隐含关联（含领域词但无主语，如"安全吗""效果怎样"）→ 补充产品名
     5. 纯领域词问题（含路由关键词但无产品名）→ 补充产品名
     """
-    if not history:
-        return question
-
     q = question.strip()
+
+    history_product = history_ctx.get("product", "")
+    if not history_product:
+        return q
 
     # 当前问题已有明确产品名，不需要补全
     if detect_terms(q, PRODUCT_ALIASES):
-        return q
-
-    ctx = _extract_history_context(history)
-    history_product = ctx["product"]
-
-    if not history_product:
         return q
 
     # 排除明显的非领域问题（天气、新闻等）
@@ -148,12 +145,34 @@ def _detect_route_for_expansion(q: str) -> List[str]:
     return matched
 
 
+def _build_history_summary(history: List[Dict], max_turns: int = 3) -> str:
+    """从对话历史中构建多轮摘要，供 LLM 理解完整对话脉络。
+
+    提取最近 max_turns 轮用户问题，让 LLM 看到话题演变过程。
+    例如: "菲罗奥成分是什么 → 安全吗 → 术后注意什么"
+    """
+    user_qs = []
+    for item in history:
+        if item.get("role") == "user":
+            content = item.get("content", "").strip()
+            if content:
+                user_qs.append(content)
+    # 取最近 max_turns 轮
+    recent = user_qs[-max_turns:] if len(user_qs) > max_turns else user_qs
+    return " → ".join(recent)
+
+
 def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
     raw = (question or "").strip()
 
+    # 提取历史上下文（只解析一次，传给后续所有需要的函数）
+    history_ctx: Dict[str, Any] = {}
+    if history:
+        history_ctx = _extract_history_context(history)
+
     # 上下文补全：解析指代词和省略
-    q = _resolve_context(raw, history)
-    context_resolved = (q != raw)  # 标记是否发生了上下文补全
+    q = _resolve_context(raw, history_ctx) if history_ctx else raw
+    context_resolved = (q != raw)
 
     products = detect_terms(q, PRODUCT_ALIASES)
     projects = detect_terms(q, PROJECT_ALIASES)
@@ -176,12 +195,10 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([q] + expanded_terms))
 
-    # 提取历史摘要供 LLM 使用
+    # 构建多轮历史摘要供 LLM 使用
     history_summary = ""
     if history and context_resolved:
-        ctx = _extract_history_context(history)
-        if ctx["last_user_q"]:
-            history_summary = ctx["last_user_q"]
+        history_summary = _build_history_summary(history)
 
     return {
         "original": q,

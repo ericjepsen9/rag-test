@@ -465,8 +465,9 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
     history_block = ""
     if history_summary:
         history_block = (
-            "7. 用户之前的对话上下文如下，请结合上下文理解用户当前问题的真实意图：\n"
-            f"   用户此前问过：「{history_summary}」\n"
+            "7. 用户之前的对话脉络如下，请结合对话上下文理解用户当前问题的真实意图，\n"
+            "   不要重复回答用户已经问过的内容，聚焦当前问题：\n"
+            f"   对话脉络：「{history_summary}」\n"
         )
 
     system_prompt = (
@@ -538,9 +539,10 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8) -> List[str]:
     return uniq(lines)
 
 
-def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
+def answer_one(question: str, mode: str, rewrite: dict = None,
+               route_override: str = "") -> str:
     product = detect_product(question)
-    route = detect_route(question)
+    route = route_override or detect_route(question)
     if rewrite is None:
         rewrite = rewrite_query(question)
 
@@ -642,7 +644,7 @@ def answer_question(question: str, mode: str, history: list = None) -> str:
         if route in seen_routes:
             continue
         seen_routes.add(route)
-        ans = answer_one(subq, mode, rewrite=sub_rewrite)
+        ans = answer_one(subq, mode, rewrite=sub_rewrite, route_override=route)
         key = ans.strip()
         if key:
             outputs.append(ans)
