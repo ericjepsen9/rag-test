@@ -26,8 +26,8 @@
   },
   {
     "q": "赛罗菲 成分",
-    "expect_any": ["产品", "成分", "基础"],
-    "route": "basic"
+    "expect_any": ["PCL", "聚己内酯", "透明质酸", "胶原"],
+    "route": "ingredient"
   },
   {
     "q": "术后可以洗脸吗",

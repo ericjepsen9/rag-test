@@ -16,6 +16,7 @@ def format_structured_answer(
         "combo": "联合方案",
         "anti_fake": "防伪鉴别",
         "contraindication": "禁忌人群",
+        "ingredient": "核心成分与作用",
     }
     title = title_map.get(route, "回答")
     out = [f"{title}（资料提取）：", "结论："]

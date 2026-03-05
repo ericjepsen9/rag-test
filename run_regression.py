@@ -19,7 +19,7 @@ def test_route_detection():
 
     def detect_route(question: str) -> str:
         q = (question or "").lower()
-        order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "basic"]
+        order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "ingredient", "basic"]
         matched = {}
         for route in order:
             hits = [kw for kw in QUESTION_ROUTES.get(route, []) if kw.lower() in q]

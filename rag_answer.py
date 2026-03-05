@@ -149,7 +149,7 @@ def detect_product(question: str) -> str:
 
 def detect_route(question: str) -> str:
     q = (question or "").lower()
-    order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "basic"]
+    order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "ingredient", "basic"]
 
     # 收集每个 route 的匹配关键词
     matched = {}
@@ -289,8 +289,47 @@ def parse_anti_fake(main_text: str, faq_text: str, mode: str) -> List[str]:
     return out
 
 
+def _accept_line(clean: str, route: str) -> bool:
+    """判断一行是否应保留——按路由类型使用不同策略"""
+    # 小节标题始终保留
+    if re.match(r"^\d+[）\)]", clean):
+        return True
+    # 分隔线、纯标记跳过
+    if set(clean) <= {"=", "-", "_", " ", "—"}:
+        return False
+
+    # 各路由的关键词白名单
+    route_keywords = {
+        "aftercare": ["术后", "洗脸", "辛辣", "禁酒", "面膜", "保湿", "熬夜", "按摩",
+                       "洁面仪", "多喝水", "水果", "蔬菜", "冰敷", "清洁", "饮食",
+                       "睡眠", "面霜", "生活"],
+        "operation": ["针头", "深度", "注射", "0.8", "1.0", "0.3ml", "2cm", "MTS",
+                      "水光", "涂抹", "微针", "仪器", "全脸", "进针", "间距",
+                      "用量", "方式", "中胚层"],
+        "contraindication": ["免疫", "妊娠", "哺乳", "过敏", "18", "风湿", "皮肤疾病",
+                             "感染", "炎症", "禁忌"],
+        "risk": ["红肿", "疼痛", "结节", "硬块", "感染", "过敏", "淤青", "肿胀",
+                 "冰敷", "就医", "反应", "处理", "缓解", "发热", "化脓",
+                 "异常", "严重"],
+        "combo": ["联合", "搭配", "间隔", "水光", "微针", "光电", "填充", "同日",
+                  "恢复", "建议", "不建议", "周"],
+        "ingredient": ["PCL", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽", "肽",
+                       "生长因子", "矿物质", "聚乙二醇", "胶原", "抗氧化", "修复",
+                       "再生", "保湿", "提升", "弹性"],
+    }
+
+    keywords = route_keywords.get(route)
+    if keywords:
+        return any(k in clean for k in keywords)
+
+    # basic 和未知路由：保留较短的行
+    return len(clean) <= 80
+
+
 def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: str) -> List[str]:
-    rule = SECTION_RULES[route]
+    rule = SECTION_RULES.get(route)
+    if not rule:
+        return []
     block = section_block(main_text, rule["titles"], rule["stops"])
     if not block:
         block = section_block(faq_text, rule["titles"], [])
@@ -303,39 +342,33 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
         clean = ln.lstrip("-").strip()
         if not clean:
             continue
-        # 保留小节标题和条目
-        if re.match(r"^\d+[）\)]", clean):
-            items.append(clean)
-            continue
-        if any(k in clean for k in ["术后", "洗脸", "辛辣", "禁酒", "面膜", "保湿", "熬夜", "按摩", "洁面仪", "多喝水", "水果", "蔬菜", "针头", "深度", "注射量", "点间距", "微针", "水光", "过敏", "妊娠", "哺乳", "免疫"]):
-            items.append(clean)
-            continue
-        if route == "basic" and len(clean) <= 60:
+        if _accept_line(clean, route):
             items.append(clean)
 
     items = uniq(items)
 
+    # 路由特定后处理
     if route == "contraindication":
-        items = [x for x in items if not ("术后一周内不要" in x or "洁面仪" in x or "怎么验真伪" in x or "正品验证" in x)]
+        items = [x for x in items if not ("术后一周内不要" in x or "洁面仪" in x)]
         if "具体是否适用需由专业医生评估。" not in items:
             items.append("具体是否适用需由专业医生评估。")
 
-    if route == "operation":
-        filtered = []
-        for x in items:
-            if any(k in x for k in ["针头", "深度", "注射", "0.8", "1.0", "0.3ml", "2cm", "MTS", "水光", "涂抹"]):
-                filtered.append(x)
-        items = uniq(filtered)
+    if route == "risk":
+        if not any("医" in x for x in items):
+            items.append("术后如有任何异常，请及时联系操作医生。")
 
-    if route == "aftercare":
-        # brief 也尽量完整
-        limit = 20 if mode == "brief" else 28
-    elif route == "operation":
-        limit = 16 if mode == "brief" else 24
-    elif route == "contraindication":
-        limit = 12 if mode == "brief" else 18
-    else:
-        limit = 12 if mode == "brief" else 20
+    # 各路由的条目数限制
+    limits = {
+        "aftercare":       (20, 28),
+        "operation":       (16, 24),
+        "contraindication": (12, 18),
+        "risk":            (12, 20),
+        "combo":           (10, 16),
+        "ingredient":      (16, 24),
+        "basic":           (14, 22),
+    }
+    brief_lim, full_lim = limits.get(route, (12, 20))
+    limit = brief_lim if mode == "brief" else full_lim
 
     return items[:limit]
 
