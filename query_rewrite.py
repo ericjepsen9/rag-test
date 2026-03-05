@@ -15,16 +15,21 @@ _ROUTE_EXPANSION = {
     "contraindication": ["禁忌", "妊娠", "哺乳", "禁忌人群"],
 }
 
-# 指代词/省略句模式：命中时需要从历史中补全主语
+# 指代词模式：命中时用产品名**替换**指代词
 _PRONOUN_PATTERNS = re.compile(
     r"^(它|这个|那个|该产品|这款|那款)"
     r"|^(那|那么).{0,2}(呢|吗|怎么样)"
-    r"|^还有(别的|其他|吗)"
 )
 
-# 追问模式：保留当前问题但从历史补充产品/项目上下文
+# 追问/延续模式：命中时在问题前**补充**产品名
 _FOLLOWUP_PATTERNS = re.compile(
-    r"(呢|吗|怎么样|有哪些|是什么|是多少|怎么办)$"
+    r"^还有(别的|其他|吗)"
+    r"|(呢|吗|怎么样|有哪些|是什么|是多少|怎么办)$"
+)
+
+# 明确的非领域词：命中这些词的问题大概率与产品无关，不应补全
+_OFFTOPIC_PATTERNS = re.compile(
+    r"(天气|新闻|股票|电影|音乐|美食|旅游|游戏|足球|篮球|奥运)"
 )
 
 # 隐含关联模式：问题本身是关于某个主题但缺少产品主语
@@ -107,12 +112,16 @@ def _resolve_context(question: str, history: Optional[List[Dict]]) -> str:
     if not history_product:
         return q
 
+    # 排除明显的非领域问题（天气、新闻等）
+    if _OFFTOPIC_PATTERNS.search(q):
+        return q
+
     # 模式1: 指代词替换 — "它的成分呢" → "菲罗奥的成分呢"
     if _PRONOUN_PATTERNS.search(q):
         resolved = _PRONOUN_PATTERNS.sub(history_product, q, count=1)
         return resolved
 
-    # 模式2: 追问补全 — "成分呢" / "禁忌人群有哪些" → 补充产品名
+    # 模式2: 追问/延续补全 — "还有别的吗" "成分呢" "禁忌人群有哪些" → 补充产品名
     if _FOLLOWUP_PATTERNS.search(q):
         return f"{history_product} {q}"
 
