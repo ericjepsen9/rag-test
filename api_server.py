@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
@@ -61,9 +62,13 @@ def health():
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
+    # 每个请求使用独立的临时答案文件，避免并发覆盖
+    request_id = uuid.uuid4().hex[:12]
+    answer_file = BASE_DIR / f"answer_{request_id}.txt"
     cmd = [PYTHON_EXE, str(RAG_SCRIPT), req.question, req.mode]
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    env["RAG_ANSWER_FILE"] = str(answer_file)
     try:
         proc = subprocess.run(
             cmd,
@@ -75,7 +80,12 @@ def ask(req: AskRequest):
             timeout=max(5, req.timeout_sec),
             env=env,
         )
-        answer = read_text(ANSWER_FILE)
+        answer = read_text(answer_file)
+        # 清理临时文件
+        try:
+            answer_file.unlink(missing_ok=True)
+        except OSError:
+            pass
         media = [MediaItem(**m) for m in find_media(req.question)]
         debug = None
         if req.debug:
@@ -88,4 +98,9 @@ def ask(req: AskRequest):
             debug=debug,
         )
     except Exception as e:
+        # 清理临时文件
+        try:
+            answer_file.unlink(missing_ok=True)
+        except OSError:
+            pass
         return AskResponse(ok=False, answer="接口执行异常", stderr=repr(e))

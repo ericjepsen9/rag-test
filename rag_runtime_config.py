@@ -84,5 +84,16 @@ KEYWORD_TOP_K = 12
 HYBRID_VECTOR_WEIGHT = 0.65
 HYBRID_KEYWORD_WEIGHT = 0.35
 
+# ===== 按问题类型调整检索参数 =====
+QUESTION_TYPE_CONFIG = {
+    "basic":             {"k": 6,  "threshold": 0.30},
+    "operation":         {"k": 10, "threshold": 0.25},
+    "aftercare":         {"k": 8,  "threshold": 0.25},
+    "risk":              {"k": 8,  "threshold": 0.25},
+    "anti_fake":         {"k": 8,  "threshold": 0.20},
+    "contraindication":  {"k": 8,  "threshold": 0.25},
+    "combo":             {"k": 10, "threshold": 0.30},
+}
+
 # ===== 测试 =====
 REGRESSION_CASES_FILE = BASE_DIR / "regression_cases.json"

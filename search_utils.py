@@ -50,19 +50,35 @@ def section_block(text: str, titles: List[str], stops: List[str]) -> str:
             chosen = t
     if start is None:
         return ""
-    sub = txt[start:]
+    # 跳过标题行本身，从标题之后开始截取内容
+    # 这样 stops 搜索不会误匹配标题行中的关键词
+    title_end = start + len(chosen)
+    sub = txt[title_end:]
     end = None
     for s in stops:
         idx = sub.find(s)
-        if idx > 0 and (end is None or idx < end):
+        if idx >= 0 and (end is None or idx < end):
             end = idx
-    if end:
+    if end is not None and end > 0:
         sub = sub[:end]
     return sub.strip()
 
 
+def _extract_terms(query: str) -> List[str]:
+    """从查询中提取搜索词：先按空格/标点分割，再对中文长词做 bigram 切分"""
+    raw = [x for x in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if x]
+    terms = []
+    for w in raw:
+        terms.append(w)
+        # 对纯中文且长度>=3的词做 bigram 切分，提高部分匹配能力
+        if len(w) >= 3 and re.fullmatch(r"[\u4e00-\u9fff]+", w):
+            for i in range(len(w) - 1):
+                terms.append(w[i:i+2])
+    return list(set(terms))
+
+
 def keyword_score(query: str, text: str) -> float:
-    q_terms = [x for x in re.split(r"[\s,，;；]+", query.lower()) if x]
+    q_terms = _extract_terms(query)
     t = (text or "").lower()
     if not q_terms:
         return 0.0
@@ -105,14 +121,16 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
 
 
 def split_multi_question(question: str, separators: List[str] = None) -> List[str]:
-    separators = separators or ["；", ";", "。", "，另外", "并且", "同时", "还有"]
+    # 移除 "。" 避免正常句号被误拆；只按真正表示"多个问题"的连接词拆分
+    separators = separators or ["；", ";", "，另外", "并且，", "同时，", "还有，"]
     parts = [question]
     for sep in separators:
         next_parts = []
         for p in parts:
             next_parts.extend(p.split(sep))
         parts = next_parts
-    parts = [p.strip() for p in parts if p.strip()]
+    # 过滤太短的碎片（避免无意义子问题）
+    parts = [p.strip().rstrip("。？?") for p in parts if len(p.strip()) >= 4]
     return uniq(parts)
 
 

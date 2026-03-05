@@ -17,7 +17,7 @@ from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT, OUT_PATH, DEFAULT_MODE, DEFAULT_TOP_K,
     USE_OPENAI, OPENAI_MODEL, DEBUG, QUESTION_ROUTES, SECTION_RULES,
     PRODUCT_ALIASES, PROJECT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
-    HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT
+    HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG
 )
 from search_utils import (
     normalize_text, normalize_lines, uniq, is_faq_line, section_block,
@@ -25,6 +25,7 @@ from search_utils import (
 )
 from query_rewrite import rewrite_query
 from answer_formatter import format_structured_answer
+from rag_logger import log_qa
 
 _model = None
 _faiss = None
@@ -47,8 +48,16 @@ def get_bg_cls():
     return _BGEM3
 
 
+def _get_out_path() -> Path:
+    """支持通过环境变量 RAG_ANSWER_FILE 指定输出路径，避免并发覆盖"""
+    env_path = os.environ.get("RAG_ANSWER_FILE", "").strip()
+    if env_path:
+        return Path(env_path)
+    return OUT_PATH
+
+
 def save_answer(text: str):
-    OUT_PATH.write_text((text or "").strip() + "\n", encoding="utf-8-sig")
+    _get_out_path().write_text((text or "").strip() + "\n", encoding="utf-8-sig")
 
 
 def get_model():
@@ -140,7 +149,8 @@ def build_evidence(hits: List[Dict]) -> List[Dict]:
     ev = []
     for h in hits[:6]:
         ev.append({
-            "meta": h.get("meta", {})
+            "meta": h.get("meta", {}),
+            "text": (h.get("text") or "")[:200],
         })
     return ev
 
@@ -327,28 +337,67 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         return text
 
 
+def _fallback_from_hits(hits: List[Dict], max_lines: int = 8) -> List[str]:
+    """当规则提取失败时，从检索结果中提取文本作为 fallback 答案"""
+    lines = []
+    for h in hits:
+        text = (h.get("text") or "").strip()
+        if not text:
+            continue
+        # 取每个 chunk 的前几行作为摘要
+        for ln in text.split("\n"):
+            ln = ln.strip()
+            if ln and len(ln) > 4:
+                lines.append(ln)
+            if len(lines) >= max_lines:
+                break
+        if len(lines) >= max_lines:
+            break
+    return uniq(lines)
+
+
 def answer_one(question: str, mode: str) -> str:
     product = detect_product(question)
     route = detect_route(question)
     rewrite = rewrite_query(question)
 
+    # 根据问题类型使用不同的检索参数
+    route_cfg = QUESTION_TYPE_CONFIG.get(route, {})
+    route_top_k = route_cfg.get("k", DEFAULT_TOP_K)
+    route_threshold = route_cfg.get("threshold", 0.30)
+
     vector_hits = vector_search(product, rewrite["expanded"], VECTOR_TOP_K)
     _, docs = load_store(product)
     keyword_hits = keyword_search(rewrite["expanded"], docs, KEYWORD_TOP_K) if docs else []
-    hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, DEFAULT_TOP_K) if (vector_hits or keyword_hits) else []
+    hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, route_top_k) if (vector_hits or keyword_hits) else []
+    # 过滤低于 threshold 的结果
+    hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
 
     body_lines = parse_answer(route, product, mode)
 
     if not body_lines:
-        fallback = [
-            "当前知识库未覆盖该问题的直接结论。",
-            "可确认方向：请核对产品主文档、FAQ 或补充对应知识库章节。",
-            "该问题可能涉及医生判断范围，建议由专业医师评估。",
-        ]
-        return format_structured_answer(route, fallback, build_evidence(hits), add_risk_note=(route == "risk"))
+        # 规则提取失败时，用检索结果做 fallback
+        fallback_lines = _fallback_from_hits(hits)
+        if fallback_lines:
+            body_lines = fallback_lines
+        else:
+            fallback = [
+                "当前知识库未覆盖该问题的直接结论。",
+                "可确认方向：请核对产品主文档、FAQ 或补充对应知识库章节。",
+                "该问题可能涉及医生判断范围，建议由专业医师评估。",
+            ]
+            text = format_structured_answer(route, fallback, build_evidence(hits), add_risk_note=(route == "risk"))
+            log_qa(question, text, rewritten_query=rewrite["expanded"],
+                   matched_sources=build_evidence(hits), hit=False,
+                   meta={"product": product, "route": route, "mode": mode})
+            return text
 
     text = format_structured_answer(route, body_lines, build_evidence(hits), add_risk_note=(route == "risk"))
-    return openai_rewrite_answer(text, route)
+    text = openai_rewrite_answer(text, route)
+    log_qa(question, text, rewritten_query=rewrite["expanded"],
+           matched_sources=build_evidence(hits), hit=True,
+           meta={"product": product, "route": route, "mode": mode})
+    return text
 
 
 def answer_question(question: str, mode: str) -> str:
@@ -378,7 +427,7 @@ def main():
     ans = answer_question(question, mode)
     save_answer(ans)
     print("\n===== Answer saved =====")
-    print(f"Saved to: {OUT_PATH}")
+    print(f"Saved to: {_get_out_path()}")
 
 
 if __name__ == "__main__":
@@ -387,4 +436,4 @@ if __name__ == "__main__":
     except Exception as e:
         save_answer("ERROR: " + repr(e))
         print("\n===== Answer saved =====")
-        print(f"Saved to: {OUT_PATH}")
+        print(f"Saved to: {_get_out_path()}")
