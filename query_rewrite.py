@@ -95,7 +95,7 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
                     ctx["route"] = route
                     break
 
-        if ctx["product"] and ctx["route"]:
+        if ctx["product"] and ctx["route"] and ctx["projects"]:
             break
     return ctx
 

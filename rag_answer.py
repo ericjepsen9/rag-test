@@ -646,8 +646,10 @@ def answer_question(question: str, mode: str, history: list = None,
     outputs = []
     seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
-        # 如果子问题与原问题相同，复用已有的 rewrite 结果
-        sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq)
+        # 如果子问题与原问题相同，复用已有的 rewrite 结果；
+        # 否则用 history 重新 rewrite，使子问题也能继承上下文
+        # （如 "成分是什么？禁忌人群呢？" 拆分后 "禁忌人群呢" 需要产品名）
+        sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq, history=history)
         route = _detect_route_with_history(subq, sub_rewrite)
         # 同路由的子问题只回答一次（避免重复检索相同 chunk）
         if route in seen_routes:
