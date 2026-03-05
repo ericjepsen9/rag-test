@@ -30,6 +30,7 @@ from rag_logger import log_qa
 _model = None
 _faiss = None
 _BGEM3 = None
+_store_cache = {}  # {product: (index, docs, mtime)} — 进程内缓存，避免每次请求重读文件
 
 
 def get_faiss():
@@ -92,6 +93,13 @@ def load_store(product: str):
     docs_path = store_dir / "docs.jsonl"
     if not index_path.exists() or not docs_path.exists():
         return None, []
+
+    # 按 index.faiss 的修改时间判断是否需要重新加载
+    mtime = index_path.stat().st_mtime
+    cached = _store_cache.get(product)
+    if cached and cached[2] == mtime:
+        return cached[0], cached[1]
+
     index = get_faiss().read_index(str(index_path))
     docs = []
     with docs_path.open("r", encoding="utf-8") as f:
@@ -99,6 +107,7 @@ def load_store(product: str):
             line = line.strip()
             if line:
                 docs.append(json.loads(line))
+    _store_cache[product] = (index, docs, mtime)
     return index, docs
 
 
@@ -366,7 +375,9 @@ def answer_one(question: str, mode: str) -> str:
     route_top_k = route_cfg.get("k", DEFAULT_TOP_K)
     route_threshold = route_cfg.get("threshold", 0.30)
 
-    vector_hits = vector_search(product, rewrite["expanded"], VECTOR_TOP_K)
+    # 向量检索用原始查询（避免别名扩展稀释语义方向）
+    # 关键词检索用扩展查询（别名/同义词有助于 term 匹配）
+    vector_hits = vector_search(product, rewrite["original"], VECTOR_TOP_K)
     _, docs = load_store(product)
     keyword_hits = keyword_search(rewrite["expanded"], docs, KEYWORD_TOP_K) if docs else []
     hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, route_top_k) if (vector_hits or keyword_hits) else []

@@ -1,8 +1,10 @@
 import os
 import sys
+import re
 import json
 import argparse
 from pathlib import Path
+from typing import List
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 try:
@@ -15,9 +17,10 @@ import faiss
 from FlagEmbedding import BGEM3FlagModel
 
 from rag_runtime_config import KNOWLEDGE_DIR, STORE_ROOT
-from search_utils import normalize_text
 
 MODEL_NAME = "BAAI/bge-m3"
+CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "420"))
+CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
 _model = None
 
 
@@ -25,47 +28,163 @@ def get_model():
     global _model
     if _model is None:
         print(f"[INFO] 加载模型：{MODEL_NAME}")
-        _model = BGEM3FlagModel(MODEL_NAME, use_fp16=False)
+        _model = BGEM3FlagModel(MODEL_NAME, use_fp16=True)
     return _model
 
 
-def chunk_text(text: str, chunk_size: int = 600, overlap: int = 80):
-    text = normalize_text(text)
-    if not text:
-        return []
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = min(len(text), start + chunk_size)
-        piece = text[start:end].strip()
-        if piece:
-            chunks.append(piece)
-        if end >= len(text):
-            break
-        start = max(0, end - overlap)
-    return chunks
+# ====== 多编码读取 ======
 
+def read_text_auto(p: Path) -> str:
+    if not p.exists():
+        return ""
+    for enc in ("utf-8-sig", "utf-8", "gbk"):
+        try:
+            return p.read_text(encoding=enc)
+        except Exception:
+            continue
+    return p.read_text(errors="ignore")
+
+
+# ====== 段落感知切块 ======
+
+def normalize_text(text: str) -> str:
+    t = (text or "").replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def is_title_like(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return False
+    patterns = [
+        r"^[一二三四五六七八九十]+、",
+        r"^\d+[）\.\)]",
+        r"^第[一二三四五六七八九十0-9]+",
+        r"^STEP\s*\d+",
+        r"^【.+】$",
+        r"^#+\s*",
+        r"^=+$",
+        r"^-{3,}$",
+    ]
+    return any(re.match(p, s, flags=re.IGNORECASE) for p in patterns)
+
+
+def split_into_paragraphs(text: str) -> List[str]:
+    lines = [ln.rstrip() for ln in (text or "").split("\n")]
+    paras: List[str] = []
+    buf: List[str] = []
+
+    def flush():
+        nonlocal buf
+        if buf:
+            s = "\n".join(buf).strip()
+            if s:
+                paras.append(s)
+            buf = []
+
+    for line in lines:
+        s = line.strip()
+        if not s:
+            flush()
+            continue
+        if is_title_like(s):
+            flush()
+            paras.append(s)
+            continue
+        buf.append(s)
+
+    flush()
+    return paras
+
+
+def merge_paragraphs_to_chunks(paragraphs: List[str], chunk_size: int, overlap: int) -> List[str]:
+    chunks: List[str] = []
+    cur = ""
+
+    def add_chunk(x: str):
+        x = x.strip()
+        if x:
+            chunks.append(x)
+
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+
+        # 超长段落切分
+        if len(para) > int(chunk_size * 1.2):
+            if cur:
+                add_chunk(cur)
+                cur = ""
+            start = 0
+            step = max(1, chunk_size - overlap)
+            while start < len(para):
+                add_chunk(para[start:start + chunk_size])
+                start += step
+            continue
+
+        candidate = (cur + "\n" + para).strip() if cur else para
+        if len(candidate) <= chunk_size:
+            cur = candidate
+        else:
+            if cur:
+                add_chunk(cur)
+            if chunks and overlap > 0:
+                tail = chunks[-1][-overlap:]
+                cur = (tail + "\n" + para).strip()
+                if len(cur) > int(chunk_size * 1.3):
+                    cur = para
+            else:
+                cur = para
+
+    if cur:
+        add_chunk(cur)
+
+    # 去重
+    dedup: List[str] = []
+    seen = set()
+    for c in chunks:
+        k = re.sub(r"\s+", " ", c.strip())
+        if k and k not in seen:
+            dedup.append(c.strip())
+            seen.add(k)
+    return dedup
+
+
+def chunk_text(text: str) -> List[str]:
+    t = normalize_text(text)
+    if not t:
+        return []
+    paras = split_into_paragraphs(t)
+    return merge_paragraphs_to_chunks(paras, CHUNK_SIZE, CHUNK_OVERLAP)
+
+
+# ====== 向量编码 ======
 
 def embed_texts(texts):
     model = get_model()
-    out = model.encode(texts, batch_size=8, max_length=1024)
+    out = model.encode(texts, batch_size=8, max_length=8192)
+    vecs = None
     if isinstance(out, dict):
-        if "dense_vecs" in out:
+        if out.get("dense_vecs") is not None:
             vecs = out["dense_vecs"]
-        elif "dense" in out:
+        elif out.get("dense") is not None:
             vecs = out["dense"]
-        elif "embeddings" in out:
+        elif out.get("embeddings") is not None:
             vecs = out["embeddings"]
-        else:
-            raise ValueError("encode 输出中未找到向量字段")
-    else:
+    elif isinstance(out, (list, tuple, np.ndarray)):
         vecs = out
+    if vecs is None:
+        raise ValueError("encode 输出中未找到向量字段")
     vecs = np.asarray(vecs, dtype="float32")
     if vecs.ndim != 2:
         raise ValueError(f"向量维度异常: {vecs.shape}")
     faiss.normalize_L2(vecs)
     return vecs
 
+
+# ====== 构建索引 ======
 
 def collect_product_records(product: str):
     pdir = KNOWLEDGE_DIR / product
@@ -77,7 +196,8 @@ def collect_product_records(product: str):
         f = pdir / fname
         if not f.exists():
             continue
-        text = f.read_text(encoding="utf-8")
+        text = read_text_auto(f)
+        # alias 不切块，整体入库
         chunks = [text] if stype == "alias" else chunk_text(text)
         print(f"[OK] {product}/{fname}: {len(chunks)} chunks")
         for i, chunk in enumerate(chunks, 1):
