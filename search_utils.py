@@ -1,6 +1,6 @@
 import math
 import re
-from typing import List, Dict, Tuple
+from typing import Any, List, Dict, Tuple
 
 
 def normalize_text(text: str) -> str:
@@ -120,14 +120,24 @@ def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
     return score
 
 
-_bm25_cache: Dict[int, Tuple[List[str], int, float]] = {}  # id(docs) -> (texts, n_docs, avg_dl)
+_bm25_cache: Dict[Any, Tuple[List[str], int, float]] = {}
+
+
+def _corpus_cache_key(docs: List[Dict]) -> Tuple:
+    """生成稳定的缓存键：(文档数, 首末文档文本哈希)"""
+    n = len(docs)
+    if n == 0:
+        return (0,)
+    first = (docs[0].get("text") or "")[:64]
+    last = (docs[-1].get("text") or "")[:64]
+    return (n, hash((first, last)))
 
 
 def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float]:
     """缓存 docs 的小写文本和平均长度，避免每次请求重复计算"""
-    key = id(docs)
+    key = _corpus_cache_key(docs)
     cached = _bm25_cache.get(key)
-    if cached and cached[1] == len(docs):
+    if cached:
         return cached
     texts = [(d.get("text") or "").lower() for d in docs]
     n_docs = len(texts)
@@ -135,6 +145,20 @@ def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float]:
     result = (texts, n_docs, avg_dl)
     _bm25_cache[key] = result
     return result
+
+
+_df_cache: Dict[Any, Dict[str, int]] = {}  # corpus_key -> {term: df}
+
+
+def _get_doc_freq(term: str, texts: List[str], corpus_key: Any) -> int:
+    """获取 term 的文档频率，带缓存"""
+    cached = _df_cache.get(corpus_key)
+    if cached is None:
+        cached = {}
+        _df_cache[corpus_key] = cached
+    if term not in cached:
+        cached[term] = sum(1 for t in texts if term in t)
+    return cached[term]
 
 
 def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
@@ -146,11 +170,11 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
         return []
 
     texts, n_docs, avg_dl = _get_bm25_corpus(docs)
+    corpus_key = _corpus_cache_key(docs)
 
     doc_freqs: Dict[str, int] = {}
     for term in q_terms:
-        df = sum(1 for t in texts if term in t)
-        doc_freqs[term] = df
+        doc_freqs[term] = _get_doc_freq(term, texts, corpus_key)
 
     scored = []
     for i, d in enumerate(docs):

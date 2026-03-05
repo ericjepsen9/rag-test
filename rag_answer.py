@@ -119,9 +119,11 @@ def load_store(product: str):
             if line:
                 docs.append(json.loads(line))
     # 检测索引与文档数不一致（索引过期未重建）
-    if index.ntotal != len(docs):
+    stale = index.ntotal != len(docs)
+    if stale:
         print(f"[WARN] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. "
-              f"Run `python build_faiss.py --product {product}` to rebuild.")
+              f"向量检索已禁用，仅使用关键词检索。Run `python build_faiss.py --product {product}` to rebuild.")
+        index = None  # 标记为不可用，强制使用纯关键词检索
     with _store_lock:
         _store_cache[product] = (index, docs, mtime)
     return index, docs
@@ -396,7 +398,7 @@ def parse_answer(route: str, product: str, mode: str) -> List[str]:
 
 
 def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
-    """将检索结果拼接为 LLM context 字符串"""
+    """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断"""
     parts = []
     total = 0
     for i, h in enumerate(hits, 1):
@@ -408,7 +410,8 @@ def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
         score = h.get("hybrid_score", h.get("score", 0.0))
         header = f"[片段{i} | {source}#{chunk_id} | 相关度:{score:.2f}]"
         part = f"{header}\n{text}"
-        if total + len(part) > max_chars:
+        # 至少保留 1 个片段；之后按完整 chunk 粒度截断
+        if parts and total + len(part) > max_chars:
             break
         parts.append(part)
         total += len(part)
@@ -580,14 +583,18 @@ def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
 def answer_question(question: str, mode: str) -> str:
     rewrite = rewrite_query(question)
     outputs = []
-    seen = set()
+    seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
         # 如果子问题与原问题相同，复用已有的 rewrite 结果
-        sub_rewrite = rewrite if subq == rewrite["original"] else None
+        sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq)
+        route = detect_route(subq)
+        # 同路由的子问题只回答一次（避免重复检索相同 chunk）
+        if route in seen_routes:
+            continue
+        seen_routes.add(route)
         ans = answer_one(subq, mode, rewrite=sub_rewrite)
         key = ans.strip()
-        if key and key not in seen:
-            seen.add(key)
+        if key:
             outputs.append(ans)
     return "\n\n".join(outputs)
 
