@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -15,6 +17,13 @@ ADMIN_PAGE = BASE_DIR / "admin_page.html"
 CHAT_PAGE = BASE_DIR / "web" / "chat.html"
 
 app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 MAX_QUESTION_LEN = 500
 
@@ -49,10 +58,23 @@ class RebuildRequest(BaseModel):
 
 @app.get("/health")
 def health():
+    from rag_runtime_config import STORE_ROOT
+    products = []
+    if KNOWLEDGE_DIR.exists():
+        for p in sorted(KNOWLEDGE_DIR.iterdir()):
+            if not p.is_dir():
+                continue
+            store = STORE_ROOT / p.name
+            products.append({
+                "name": p.name,
+                "index_exists": (store / "index.faiss").exists(),
+                "docs_exists": (store / "docs.jsonl").exists(),
+            })
+    all_indexed = all(p["index_exists"] and p["docs_exists"] for p in products) if products else False
     return {
-        "status": "ok",
-        "base_dir": str(BASE_DIR),
+        "status": "ok" if all_indexed else "degraded",
         "knowledge_exists": KNOWLEDGE_DIR.exists(),
+        "products": products,
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections import deque
 from datetime import datetime
@@ -13,12 +14,32 @@ QA_LOG = LOG_DIR / "qa_log.jsonl"
 MISS_LOG = LOG_DIR / "miss_log.jsonl"
 ERROR_LOG = LOG_DIR / "error_log.jsonl"
 
+# 日志文件大小上限（默认 10MB），超过后轮转
+LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "3"))
 
 _write_lock = threading.Lock()
 
 
 def _ensure_dir() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _rotate_if_needed(path: Path) -> None:
+    """简易日志轮转：超过 LOG_MAX_BYTES 时重命名为 .1, .2, ..."""
+    try:
+        if not path.exists() or path.stat().st_size < LOG_MAX_BYTES:
+            return
+        # 删除最老的备份
+        for i in range(LOG_BACKUP_COUNT, 0, -1):
+            old = Path(f"{path}.{i}")
+            if i == LOG_BACKUP_COUNT:
+                old.unlink(missing_ok=True)
+            elif old.exists():
+                old.rename(Path(f"{path}.{i + 1}"))
+        path.rename(Path(f"{path}.1"))
+    except OSError:
+        pass  # 轮转失败不应阻塞写入
 
 
 def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
@@ -29,8 +50,12 @@ def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
     }
     line = json.dumps(row, ensure_ascii=False) + "\n"
     with _write_lock:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(line)
+        _rotate_if_needed(path)
+        try:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except OSError:
+            pass  # 磁盘满等极端情况下不崩溃
 
 
 def log_qa(

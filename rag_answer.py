@@ -116,8 +116,12 @@ def load_store(product: str):
     with docs_path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 docs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # 跳过损坏行，不中断整体加载
     # 检测索引与文档数不一致（索引过期未重建）
     stale = index.ntotal != len(docs)
     if stale:
@@ -583,8 +587,14 @@ def answer_one(question: str, mode: str, rewrite: dict = None) -> str:
     return text
 
 
+_NO_MATCH_REPLY = "抱歉，暂时无法回答该问题。请尝试询问产品成分、术后护理、禁忌人群等相关问题。"
+
+
 def answer_question(question: str, mode: str) -> str:
-    rewrite = rewrite_query(question)
+    q = (question or "").strip()
+    if not q:
+        return _NO_MATCH_REPLY
+    rewrite = rewrite_query(q)
     outputs = []
     seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
@@ -599,7 +609,7 @@ def answer_question(question: str, mode: str) -> str:
         key = ans.strip()
         if key:
             outputs.append(ans)
-    return "\n\n".join(outputs)
+    return "\n\n".join(outputs) if outputs else _NO_MATCH_REPLY
 
 
 def main():

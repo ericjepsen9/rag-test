@@ -120,7 +120,19 @@ def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
     return score
 
 
+_CACHE_MAX_SIZE = 32  # 最多缓存 32 个产品的语料统计
 _bm25_cache: Dict[Any, Tuple[List[str], int, float]] = {}
+
+
+def _cache_put(cache: dict, key: Any, value: Any) -> None:
+    """写入缓存，超过上限时清除最早的条目"""
+    if len(cache) >= _CACHE_MAX_SIZE:
+        # 移除第一个（最早插入）条目
+        try:
+            cache.pop(next(iter(cache)))
+        except (StopIteration, RuntimeError):
+            pass
+    cache[key] = value
 
 
 def _corpus_cache_key(docs: List[Dict]) -> Tuple:
@@ -143,7 +155,7 @@ def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float]:
     n_docs = len(texts)
     avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
     result = (texts, n_docs, avg_dl)
-    _bm25_cache[key] = result
+    _cache_put(_bm25_cache, key, result)
     return result
 
 
@@ -155,7 +167,7 @@ def _get_doc_freq(term: str, texts: List[str], corpus_key: Any) -> int:
     cached = _df_cache.get(corpus_key)
     if cached is None:
         cached = {}
-        _df_cache[corpus_key] = cached
+        _cache_put(_df_cache, corpus_key, cached)
     if term not in cached:
         cached[term] = sum(1 for t in texts if term in t)
     return cached[term]
