@@ -634,18 +634,23 @@ def _detect_route_with_history(question: str, rewrite: dict) -> str:
     当前问题被补全为"菲罗奥 还有别的吗"，路由检测可能落入 basic，
     但用户真实意图是继续问 aftercare。
 
-    注意：使用 last_user_q（上一轮单条问题）做路由继承，而非 history_summary
-    （多轮摘要），避免多轮关键词混淆导致路由错判。
+    使用 last_routed_q（最近一条含路由关键词的历史问题）做路由继承，
+    而非 last_user_q（可能是"还有吗"这类无路由词的追问），
+    解决连续追问链（Q1:aftercare → Q2:"还有吗" → Q3:"还有别的吗"）
+    中路由丢失的问题。
     """
     route = detect_route(question)
     if route != "basic":
         return route
 
-    # 当前路由为 basic 且发生了上下文补全 → 用上一轮问题的路由
-    if rewrite.get("context_resolved") and rewrite.get("last_user_q"):
-        history_route = detect_route(rewrite["last_user_q"])
-        if history_route != "basic":
-            return history_route
+    # 当前路由为 basic 且发生了上下文补全 → 用最近含路由关键词的问题的路由
+    if rewrite.get("context_resolved"):
+        # 优先用 last_routed_q（含路由关键词的问题），回退到 last_user_q
+        routed_q = rewrite.get("last_routed_q") or rewrite.get("last_user_q", "")
+        if routed_q:
+            history_route = detect_route(routed_q)
+            if history_route != "basic":
+                return history_route
 
     return route
 

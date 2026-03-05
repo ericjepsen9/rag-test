@@ -23,7 +23,7 @@ _PRONOUN_PATTERNS = re.compile(
 
 # 追问/延续模式：命中时在问题前**补充**产品名
 _FOLLOWUP_PATTERNS = re.compile(
-    r"^还有(别的|其他|吗)"
+    r"^还有(别的|其他|什么|吗)"
     r"|(呢|吗|怎么样|有哪些|是什么|是多少|怎么办)$"
 )
 
@@ -71,6 +71,7 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
     ctx: Dict[str, Any] = {
         "product": "", "product_id": "", "projects": [],
         "route": "", "last_user_q": "",
+        "last_routed_q": "",  # 最近一条含路由关键词的用户问题（用于路由继承）
     }
     user_count = 0
     for item in reversed(history):
@@ -106,6 +107,9 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
             for route, keywords in QUESTION_ROUTES.items():
                 if any(kw.lower() in content_lower for kw in keywords):
                     ctx["route"] = route
+                    # 记录含路由关键词的原始问题，而非可能是 "还有吗" 的 last_user_q
+                    if not ctx["last_routed_q"]:
+                        ctx["last_routed_q"] = content
                     break
 
         # 全部找到 → 提前退出；否则扫完限额后退出
@@ -262,7 +266,8 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     history_summary = ""
     history_pairs: List[Dict] = []
     last_user_q = ""
-    if history and context_resolved:
+    if history:
+        # 始终构建历史信息，即使没有 context_resolved（LLM 也需要对话上下文）
         history_summary = _build_history_summary(history)
         history_pairs = _build_history_pairs(history)
         last_user_q = history_ctx.get("last_user_q", "")
@@ -279,5 +284,6 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
         "sub_questions": sub_questions,
         "history_summary": history_summary,   # 多轮摘要，供 LLM prompt
         "history_pairs": history_pairs,       # 完整 Q&A 对，供 LLM 深度理解
-        "last_user_q": last_user_q,           # 上一轮用户问题，供路由继承
+        "last_user_q": last_user_q,           # 上一轮用户问题
+        "last_routed_q": history_ctx.get("last_routed_q", ""),  # 最近含路由的问题，供路由继承
     }
