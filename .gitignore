@@ -4,3 +4,5 @@ __pycache__/
 .env
 logs/
 *.zip
+answer.txt
+answer_*.txt
