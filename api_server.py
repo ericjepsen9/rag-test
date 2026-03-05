@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from media_router import find_media
-from rag_answer import answer_question, _store_cache
+from rag_answer import answer_question, invalidate_store_cache
 from rag_logger import log_error, get_recent_qa, get_recent_misses, get_recent_errors
 from rag_runtime_config import KNOWLEDGE_DIR
 
@@ -118,7 +118,7 @@ def admin_rebuild(req: RebuildRequest):
     try:
         build_for_product(req.product.strip())
         # 重建后清除缓存，下次请求会加载新索引
-        _store_cache.pop(req.product.strip(), None)
+        invalidate_store_cache(req.product.strip())
         return {"ok": True, "product": req.product}
     except Exception as e:
         log_error("admin_rebuild", repr(e), meta={"product": req.product})

@@ -37,6 +37,12 @@ _store_lock = threading.Lock()   # 保护 _store_cache 读写
 _search_lock = threading.Lock()  # 保护 FAISS index.search（非线程安全）
 
 
+def invalidate_store_cache(product: str) -> None:
+    """线程安全地清除指定产品的索引缓存，供 rebuild 后调用"""
+    with _store_lock:
+        _store_cache.pop(product, None)
+
+
 def get_faiss():
     global _faiss
     if _faiss is None:

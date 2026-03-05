@@ -120,6 +120,23 @@ def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
     return score
 
 
+_bm25_cache: Dict[int, Tuple[List[str], int, float]] = {}  # id(docs) -> (texts, n_docs, avg_dl)
+
+
+def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float]:
+    """缓存 docs 的小写文本和平均长度，避免每次请求重复计算"""
+    key = id(docs)
+    cached = _bm25_cache.get(key)
+    if cached and cached[1] == len(docs):
+        return cached
+    texts = [(d.get("text") or "").lower() for d in docs]
+    n_docs = len(texts)
+    avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
+    result = (texts, n_docs, avg_dl)
+    _bm25_cache[key] = result
+    return result
+
+
 def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
     if not docs:
         return []
@@ -128,10 +145,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
     if not q_terms:
         return []
 
-    # 预计算文档频率和平均文档长度
-    texts = [(d.get("text") or "").lower() for d in docs]
-    n_docs = len(texts)
-    avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
+    texts, n_docs, avg_dl = _get_bm25_corpus(docs)
 
     doc_freqs: Dict[str, int] = {}
     for term in q_terms:
