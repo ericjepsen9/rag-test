@@ -69,13 +69,19 @@ def _extract_terms(query: str) -> List[str]:
     """从查询中提取搜索词：先按空格/标点分割，再对中文长词做 bigram 切分"""
     raw = [x for x in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if x]
     terms = []
+    seen = set()
     for w in raw:
-        terms.append(w)
+        if w not in seen:
+            terms.append(w)
+            seen.add(w)
         # 对纯中文且长度>=3的词做 bigram 切分，提高部分匹配能力
         if len(w) >= 3 and re.fullmatch(r"[\u4e00-\u9fff]+", w):
             for i in range(len(w) - 1):
-                terms.append(w[i:i+2])
-    return list(set(terms))
+                bg = w[i:i+2]
+                if bg not in seen:
+                    terms.append(bg)
+                    seen.add(bg)
+    return terms
 
 
 def _count_term(term: str, text: str) -> int:

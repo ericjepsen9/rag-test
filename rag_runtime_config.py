@@ -83,6 +83,10 @@ PROJECT_ALIASES = {
 TIME_TERMS = ["当天", "术后当天", "术后1天", "术后1-3天", "术后3天", "术后1周", "一周", "术后1个月"]
 SYMPTOM_TERMS = ["红肿", "结节", "疼痛", "过敏", "硬块", "发热", "感染", "刺痛"]
 
+# ===== 回答构建 =====
+MAX_SUB_QUESTIONS = 4    # 单次问答最多拆分的子问题数
+MAX_EVIDENCE_CHUNKS = 6  # build_evidence / answer_formatter 保留的最大证据片段数
+
 # ===== 检索 =====
 VECTOR_TOP_K = 12
 KEYWORD_TOP_K = 12

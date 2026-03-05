@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -77,17 +78,18 @@ def log_error(stage: str, error: str, *, meta: Optional[Dict[str, Any]] = None) 
 def read_recent(path: Path, limit: int = 20) -> list[Dict[str, Any]]:
     if not path.exists():
         return []
-    rows: list[Dict[str, Any]] = []
+    cap = max(1, limit)
+    buf: deque[Dict[str, Any]] = deque(maxlen=cap)
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                buf.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return rows[-max(1, limit):][::-1]
+    return list(reversed(buf))
 
 
 def get_recent_qa(limit: int = 20) -> list[Dict[str, Any]]:

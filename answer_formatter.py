@@ -1,5 +1,5 @@
 from typing import List, Dict
-from rag_runtime_config import REFERENCE_NOTE, RISK_NOTE
+from rag_runtime_config import REFERENCE_NOTE, RISK_NOTE, MAX_EVIDENCE_CHUNKS
 
 
 def format_structured_answer(
@@ -25,7 +25,7 @@ def format_structured_answer(
 
     if evidence:
         out.append("依据：")
-        for ev in evidence[:6]:
+        for ev in evidence[:MAX_EVIDENCE_CHUNKS]:
             source_file = ev.get("meta", {}).get("source_file", "unknown")
             chunk = ev.get("meta", {}).get("chunk_id", "?")
             stype = ev.get("meta", {}).get("source_type", "unknown")

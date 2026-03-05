@@ -18,7 +18,8 @@ from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT, OUT_PATH, DEFAULT_MODE, DEFAULT_TOP_K,
     USE_OPENAI, OPENAI_MODEL, DEBUG, QUESTION_ROUTES, SECTION_RULES,
     PRODUCT_ALIASES, PROJECT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
-    HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG
+    HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
+    MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
 )
 from search_utils import (
     normalize_text, normalize_lines, uniq, is_faq_line, section_block,
@@ -34,8 +35,6 @@ _BGEM3 = None
 _store_cache = {}  # {product: (index, docs, mtime)} — 进程内缓存，避免每次请求重读文件
 _store_lock = threading.Lock()   # 保护 _store_cache 读写
 _search_lock = threading.Lock()  # 保护 FAISS index.search（非线程安全）
-MAX_SUB_QUESTIONS = 4  # 单次问答最多拆分的子问题数
-MAX_EVIDENCE_CHUNKS = 6  # build_evidence 保留的最大片段数
 
 
 def get_faiss():
