@@ -166,6 +166,12 @@
           body: JSON.stringify(body)
         });
 
+        if (!res.ok) {
+          $("status").innerHTML = `<span class="err">HTTP ${res.status}</span>`;
+          $("answer").textContent = await res.text();
+          return;
+        }
+
         const data = await res.json();
 
         if (data.ok) {

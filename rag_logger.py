@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -10,6 +11,9 @@ LOG_DIR = BASE_DIR / "logs"
 QA_LOG = LOG_DIR / "qa_log.jsonl"
 MISS_LOG = LOG_DIR / "miss_log.jsonl"
 ERROR_LOG = LOG_DIR / "error_log.jsonl"
+
+
+_write_lock = threading.Lock()
 
 
 def _ensure_dir() -> None:
@@ -22,8 +26,10 @@ def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
         "ts": datetime.now().isoformat(timespec="seconds"),
         **payload,
     }
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    line = json.dumps(row, ensure_ascii=False) + "\n"
+    with _write_lock:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def log_qa(

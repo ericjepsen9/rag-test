@@ -32,6 +32,7 @@ _model = None
 _faiss = None
 _BGEM3 = None
 _store_cache = {}  # {product: (index, docs, mtime)} — 进程内缓存，避免每次请求重读文件
+_store_lock = threading.Lock()   # 保护 _store_cache 读写
 _search_lock = threading.Lock()  # 保护 FAISS index.search（非线程安全）
 MAX_SUB_QUESTIONS = 4  # 单次问答最多拆分的子问题数
 MAX_EVIDENCE_CHUNKS = 6  # build_evidence 保留的最大片段数
@@ -98,12 +99,13 @@ def load_store(product: str):
     if not index_path.exists() or not docs_path.exists():
         return None, []
 
-    # 按 index.faiss 的修改时间判断是否需要重新加载
     mtime = index_path.stat().st_mtime
-    cached = _store_cache.get(product)
-    if cached and cached[2] == mtime:
-        return cached[0], cached[1]
+    with _store_lock:
+        cached = _store_cache.get(product)
+        if cached and cached[2] == mtime:
+            return cached[0], cached[1]
 
+    # 加载在锁外进行（IO 耗时），加载完后再加锁写入
     index = get_faiss().read_index(str(index_path))
     docs = []
     with docs_path.open("r", encoding="utf-8") as f:
@@ -111,7 +113,8 @@ def load_store(product: str):
             line = line.strip()
             if line:
                 docs.append(json.loads(line))
-    _store_cache[product] = (index, docs, mtime)
+    with _store_lock:
+        _store_cache[product] = (index, docs, mtime)
     return index, docs
 
 

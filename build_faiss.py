@@ -42,7 +42,7 @@ def read_text_auto(p: Path) -> str:
             return p.read_text(encoding=enc)
         except Exception:
             continue
-    return p.read_text(errors="ignore")
+    return p.read_text(errors="replace")
 
 
 # ====== 段落感知切块 ======
