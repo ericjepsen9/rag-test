@@ -15,7 +15,6 @@ CASES = json.loads((BASE_DIR / "regression_cases.json").read_text(encoding="utf-
 def test_route_detection():
     """测试路由检测是否准确（仅依赖轻量模块）"""
     from rag_runtime_config import QUESTION_ROUTES
-    from search_utils import detect_terms
 
     def detect_route(question: str) -> str:
         q = (question or "").lower()

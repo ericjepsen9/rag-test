@@ -4,7 +4,7 @@ import json
 import re
 import threading
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 try:
@@ -16,13 +16,13 @@ import numpy as np
 
 from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT, OUT_PATH, DEFAULT_MODE, DEFAULT_TOP_K,
-    USE_OPENAI, OPENAI_MODEL, DEBUG, QUESTION_ROUTES, SECTION_RULES,
-    PRODUCT_ALIASES, PROJECT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
+    USE_OPENAI, OPENAI_MODEL, QUESTION_ROUTES, SECTION_RULES,
+    PRODUCT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
     HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
     MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
 )
 from search_utils import (
-    normalize_text, normalize_lines, uniq, is_faq_line, section_block,
+    normalize_lines, uniq, is_faq_line, section_block,
     keyword_search, merge_hybrid, detect_terms
 )
 from query_rewrite import rewrite_query
