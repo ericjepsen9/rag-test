@@ -12,21 +12,36 @@ try:
 except Exception:
     pass
 
-import numpy as np
-import faiss
-from FlagEmbedding import BGEM3FlagModel
-
 from rag_runtime_config import KNOWLEDGE_DIR, STORE_ROOT
 
 MODEL_NAME = "BAAI/bge-m3"
 CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "420"))
 CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "100"))
 _model = None
+_np = None
+_faiss = None
+
+
+def _get_np():
+    global _np
+    if _np is None:
+        import numpy as _np_mod
+        _np = _np_mod
+    return _np
+
+
+def _get_faiss():
+    global _faiss
+    if _faiss is None:
+        import faiss as _faiss_mod
+        _faiss = _faiss_mod
+    return _faiss
 
 
 def get_model():
     global _model
     if _model is None:
+        from FlagEmbedding import BGEM3FlagModel
         print(f"[INFO] 加载模型：{MODEL_NAME}")
         _model = BGEM3FlagModel(MODEL_NAME, use_fp16=True)
     return _model
@@ -173,14 +188,15 @@ def embed_texts(texts):
             vecs = out["dense"]
         elif out.get("embeddings") is not None:
             vecs = out["embeddings"]
-    elif isinstance(out, (list, tuple, np.ndarray)):
+    else:
         vecs = out
     if vecs is None:
         raise ValueError("encode 输出中未找到向量字段")
+    np = _get_np()
     vecs = np.asarray(vecs, dtype="float32")
     if vecs.ndim != 2:
         raise ValueError(f"向量维度异常: {vecs.shape}")
-    faiss.normalize_L2(vecs)
+    _get_faiss().normalize_L2(vecs)
     return vecs
 
 
@@ -221,6 +237,7 @@ def build_for_product(product: str):
     print(f"[INFO] Total chunks: {len(texts)}")
     print(f"[INFO] Embedding {len(texts)} chunks ...")
     vecs = embed_texts(texts)
+    faiss = _get_faiss()
     dim = vecs.shape[1]
     index = faiss.IndexFlatIP(dim)
     index.add(vecs)
@@ -233,7 +250,7 @@ def build_for_product(product: str):
     with docs_path.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    faiss.write_index(index, str(index_path))
+    _get_faiss().write_index(index, str(index_path))
 
     print(f"[DONE] Built store")
     print(f"       product: {product}")

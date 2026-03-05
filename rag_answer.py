@@ -118,6 +118,10 @@ def load_store(product: str):
             line = line.strip()
             if line:
                 docs.append(json.loads(line))
+    # 检测索引与文档数不一致（索引过期未重建）
+    if index.ntotal != len(docs):
+        print(f"[WARN] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. "
+              f"Run `python build_faiss.py --product {product}` to rebuild.")
     with _store_lock:
         _store_cache[product] = (index, docs, mtime)
     return index, docs
@@ -129,7 +133,7 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
         return []
     qv = embed_query(query)
     with _search_lock:
-        scores, ids = index.search(qv, min(top_k, len(docs)))
+        scores, ids = index.search(qv, min(top_k, index.ntotal))
     hits = []
     for i, idx in enumerate(ids[0]):
         if idx < 0 or idx >= len(docs):
