@@ -13,6 +13,8 @@ _ROUTE_EXPANSION = {
     "combo":            ["联合", "间隔", "搭配"],
     "risk":             ["红肿", "不良反应", "就医"],
     "contraindication": ["禁忌", "妊娠", "哺乳", "禁忌人群"],
+    "aftercare":        ["术后护理", "冰敷", "面膜", "洗脸", "禁酒", "辛辣"],
+    "operation":        ["注射", "深度", "进针", "剂量", "操作", "间距"],
 }
 
 # 指代词模式：命中时用产品名**替换**指代词
@@ -50,7 +52,8 @@ _IMPLICIT_TOPIC_PATTERNS = re.compile(
 _CHITCHAT_PATTERNS = re.compile(
     r"^(你好|嗨|hi|hello|hey)$"
     r"|^(谢谢|感谢|多谢|辛苦了|好的|明白了|了解了|知道了|收到|OK|ok|嗯|嗯嗯|哦|噢)$"
-    r"|^(再见|拜拜|bye)$",
+    r"|^(再见|拜拜|bye)$"
+    r"|^[？?！!。\.…·\s]+$",
     re.IGNORECASE,
 )
 

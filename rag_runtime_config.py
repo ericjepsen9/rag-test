@@ -73,7 +73,7 @@ SECTION_RULES = {
 # ===== 别名与多实体 =====
 PRODUCT_ALIASES = {
     "feiluoao": ["菲罗奥", "非罗奥", "菲洛奥", "赛罗菲", "赛罗菲提升", "CELLOFILL", "FILLOUP"],
-    "sailuofei_vface": ["赛洛菲V脸溶脂", "赛洛菲V脸", "V脸溶脂", "赛洛菲溶脂"],
+    "sailuofei_vface": ["赛洛菲V脸溶脂", "赛洛菲V脸", "V脸溶脂", "赛洛菲溶脂", "赛洛菲"],
 }
 PROJECT_ALIASES = {
     "水光": ["水光", "水光针"],
