@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-CASES = json.loads((BASE_DIR / "regression_cases.json").read_text(encoding="utf-8"))
+_RAW_CASES = json.loads((BASE_DIR / "regression_cases.json").read_text(encoding="utf-8"))
+# 过滤掉注释条目（只有 _comment 字段、没有 q 字段的条目）
+CASES = [c for c in _RAW_CASES if "q" in c]
 
 
 def test_route_detection():
