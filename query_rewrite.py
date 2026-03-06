@@ -46,6 +46,19 @@ _IMPLICIT_TOPIC_PATTERNS = re.compile(
     r"|痛不痛|疼不疼|会不会|能不能|可不可以|需要几|需要多|注意什么|注意事项)"
 )
 
+# 非提问：问候、致谢、确认等不需要检索的输入
+_CHITCHAT_PATTERNS = re.compile(
+    r"^(你好|嗨|hi|hello|hey)$"
+    r"|^(谢谢|感谢|多谢|辛苦了|好的|明白了|了解了|知道了|收到|OK|ok|嗯|嗯嗯|哦|噢)$"
+    r"|^(再见|拜拜|bye)$",
+    re.IGNORECASE,
+)
+
+# 纠正前缀：用户纠正上一个回答时的引导语，检索时应去除
+_CORRECTION_PREFIX = re.compile(
+    r"^(不对[，,]?|不是[，,]?(这个[，,]?)?|我(想|要)?问的是|我说的是)"
+)
+
 # 所有路由关键词汇集，用于判断问题是否包含领域词
 _ALL_ROUTE_KEYWORDS = set()
 for _kws in QUESTION_ROUTES.values():
@@ -232,14 +245,20 @@ def _build_history_pairs(history: List[Dict], max_pairs: int = 3) -> List[Dict]:
 def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
     raw = (question or "").strip()
 
+    # 快速判断：非提问（问候/致谢/确认）直接返回，跳过后续处理
+    is_chitchat = bool(_CHITCHAT_PATTERNS.match(raw))
+
     # 提取历史上下文（只解析一次，传给后续所有需要的函数）
     history_ctx: Dict[str, Any] = {}
     if history:
         history_ctx = _extract_history_context(history)
 
     # 上下文补全：解析指代词和省略
-    q = _resolve_context(raw, history_ctx) if history_ctx else raw
+    q = _resolve_context(raw, history_ctx) if (history_ctx and not is_chitchat) else raw
     context_resolved = (q != raw)
+
+    # 清理纠正前缀："不对，我问的是禁忌人群" → "禁忌人群"（用于检索，不改 original）
+    search_q = _CORRECTION_PREFIX.sub("", q).strip() if _CORRECTION_PREFIX.search(q) else q
 
     products = detect_terms(q, PRODUCT_ALIASES)
     projects = detect_terms(q, PROJECT_ALIASES)
@@ -256,11 +275,17 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     expanded_terms.extend(symptoms)
 
     # 路由感知扩展：补充路由专属的高区分度词
-    for route in _detect_route_for_expansion(q):
+    detected_routes = _detect_route_for_expansion(q)
+    for route in detected_routes:
         expanded_terms.extend(_ROUTE_EXPANSION.get(route, []))
 
+    # 当没有检测到路由但有历史路由时，也补充对应的扩展词（支持追问继承场景）
+    if not detected_routes and history_ctx.get("route"):
+        inherited_route = history_ctx["route"]
+        expanded_terms.extend(_ROUTE_EXPANSION.get(inherited_route, []))
+
     sub_questions = split_multi_question(q)
-    expanded_query = " ".join(uniq([q] + expanded_terms))
+    expanded_query = " ".join(uniq([search_q] + expanded_terms))
 
     # 构建多轮历史摘要供 LLM 使用
     history_summary = ""
@@ -275,6 +300,8 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     return {
         "original": q,
         "raw_input": raw,
+        "search_query": search_q,             # 清理后的检索用查询（去除纠正前缀等噪音）
+        "is_chitchat": is_chitchat,           # 非提问标记，调用方可直接返回礼貌回复
         "context_resolved": context_resolved,
         "expanded": expanded_query,
         "products": products,
