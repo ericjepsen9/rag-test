@@ -341,16 +341,16 @@ class TestBuildContext:
 
 class TestBuildEvidence:
     def test_truncation(self):
-        hits = [{"text": "x" * 300, "meta": {"source_file": "f.txt"}}]
+        hits = [{"text": "x" * 400, "meta": {"source_file": "f.txt"}}]
         ev = build_evidence(hits)
-        assert len(ev[0]["text"]) <= 200
+        assert len(ev[0]["text"]) <= 300
 
     def test_sentence_aware(self):
-        hits = [{"text": "第一句。第二句。" + "x" * 300, "meta": {}}]
+        hits = [{"text": "第一句。第二句。" + "x" * 400, "meta": {}}]
         ev = build_evidence(hits)
         # 应在句子边界截断
         text = ev[0]["text"]
-        assert text.endswith("。") or len(text) <= 200
+        assert text.endswith("。") or len(text) <= 300
 
 
 class TestDetectProduct:

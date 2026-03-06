@@ -211,7 +211,8 @@ def _hit_key(h: Dict) -> str:
     return h.get("text", "")
 
 
-def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, kw: float, top_k: int) -> List[Dict]:
+def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, kw: float, top_k: int,
+                  route: str = "") -> List[Dict]:
     merged = {}
     for h in vector_hits:
         key = _hit_key(h)
@@ -224,9 +225,38 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
             merged[key]["score"] = 0.0
             merged[key]["hybrid_score"] = 0.0
         merged[key]["hybrid_score"] += float(h.get("keyword_score", 0.0)) * kw
+
+    # 路由感知加分：匹配目标章节标题的 chunk 得到小幅提升
+    if route:
+        _apply_route_boost(merged, route)
+
     out = list(merged.values())
     out.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
     return out[:top_k]
+
+
+# 路由→章节标题关键词：chunk 文本中包含这些关键词即视为匹配该路由的章节
+_ROUTE_SECTION_MARKERS = {
+    "basic":             ["产品基础信息", "产品名称", "备案信息", "规格"],
+    "ingredient":        ["核心成分与作用", "聚己内酯", "PCL", "透明质酸"],
+    "operation":         ["操作方法与注射指南", "注射参数", "推荐方式"],
+    "aftercare":         ["术后护理与注意事项", "术后护理", "冰敷"],
+    "anti_fake":         ["防伪鉴别方法", "HiddenTag", "防伪步骤"],
+    "risk":              ["风险与不良反应", "常见术后反应", "处理建议"],
+    "contraindication":  ["禁忌人群", "免疫系统疾病", "妊娠期"],
+    "combo":             ["联合方案与项目搭配", "可联合项目", "联合注意事项"],
+}
+_ROUTE_BOOST = 0.05  # 小幅加分，避免压过真正高相关度的结果
+
+
+def _apply_route_boost(merged: Dict[str, Dict], route: str) -> None:
+    markers = _ROUTE_SECTION_MARKERS.get(route, [])
+    if not markers:
+        return
+    for h in merged.values():
+        text = (h.get("text") or "")[:200]  # 只看 chunk 开头，章节标题通常在前部
+        if any(m in text for m in markers):
+            h["hybrid_score"] += _ROUTE_BOOST
 
 
 def split_multi_question(question: str, separators: List[str] = None) -> List[str]:

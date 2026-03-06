@@ -198,7 +198,7 @@ def detect_route(question: str) -> str:
     return "basic"
 
 
-def _truncate_to_sentence(text: str, max_chars: int = 200) -> str:
+def _truncate_to_sentence(text: str, max_chars: int = 300) -> str:
     """截断文本到最近的句子边界，避免截断关键信息"""
     if len(text) <= max_chars:
         return text
@@ -359,8 +359,14 @@ def _accept_line(clean: str, route: str) -> bool:
     if keywords:
         return any(k in clean for k in keywords)
 
-    # basic 和未知路由：保留较短的行
-    return len(clean) <= 80
+    # basic 路由：保留产品属性相关的行
+    basic_keywords = ["产品", "品牌", "备案", "规格", "形态", "保质期", "储存",
+                      "适用", "肤质", "松弛", "下垂", "缺水", "细纹", "紧致",
+                      "FILLOUP", "菲罗奥", "赛罗菲", "CELLOFILL",
+                      "ml", "瓶", "液体", "常温"]
+    if any(k in clean for k in basic_keywords):
+        return True
+    return len(clean) <= 60
 
 
 def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: str) -> List[str]:
@@ -546,23 +552,29 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         return text
 
 
-def _fallback_from_hits(hits: List[Dict], max_lines: int = 8) -> List[str]:
-    """当规则提取失败时，从检索结果中提取文本作为 fallback 答案"""
-    lines = []
+def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
+                        query: str = "") -> List[str]:
+    """当规则提取失败时，从检索结果中提取文本作为 fallback 答案。
+    优先选择包含查询关键词的行，其次取各 chunk 的前几行。"""
+    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if len(t) >= 2]
+    priority_lines = []
+    other_lines = []
     for h in hits:
         text = (h.get("text") or "").strip()
         if not text:
             continue
-        # 取每个 chunk 的前几行作为摘要
         for ln in text.split("\n"):
             ln = ln.strip()
-            if ln and len(ln) > 4:
-                lines.append(ln)
-            if len(lines) >= max_lines:
-                break
-        if len(lines) >= max_lines:
-            break
-    return uniq(lines)
+            if not ln or len(ln) <= 4:
+                continue
+            ln_lower = ln.lower()
+            if query_terms and any(t in ln_lower for t in query_terms):
+                priority_lines.append(ln)
+            else:
+                other_lines.append(ln)
+    # 关键词匹配行优先，再补充其他行
+    result = uniq(priority_lines + other_lines)
+    return result[:max_lines]
 
 
 def answer_one(question: str, mode: str, rewrite: dict = None,
@@ -590,7 +602,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     vector_hits = vector_search(product, search_q, VECTOR_TOP_K)
     _, docs = load_store(product)
     keyword_hits = keyword_search(rewrite["expanded"], docs, KEYWORD_TOP_K) if docs else []
-    hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, route_top_k) if (vector_hits or keyword_hits) else []
+    hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, route_top_k, route=route) if (vector_hits or keyword_hits) else []
     # 过滤低于 threshold 的结果
     hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
 
@@ -614,7 +626,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
     if not body_lines:
         # 规则也提取失败，从检索结果中摘要
-        fallback_lines = _fallback_from_hits(hits)
+        fallback_lines = _fallback_from_hits(hits, query=question)
         if fallback_lines:
             body_lines = fallback_lines
         else:
