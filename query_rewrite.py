@@ -248,17 +248,22 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     # 快速判断：非提问（问候/致谢/确认）直接返回，跳过后续处理
     is_chitchat = bool(_CHITCHAT_PATTERNS.match(raw))
 
+    # 清理纠正前缀："不对，我问的是禁忌人群" → "禁忌人群"（在上下文补全之前清理）
+    cleaned = _CORRECTION_PREFIX.sub("", raw).strip() if _CORRECTION_PREFIX.search(raw) else raw
+    has_correction = (cleaned != raw)
+
     # 提取历史上下文（只解析一次，传给后续所有需要的函数）
     history_ctx: Dict[str, Any] = {}
     if history:
         history_ctx = _extract_history_context(history)
 
-    # 上下文补全：解析指代词和省略
-    q = _resolve_context(raw, history_ctx) if (history_ctx and not is_chitchat) else raw
+    # 上下文补全：解析指代词和省略（用清理后的文本做补全，更干净）
+    q = _resolve_context(cleaned, history_ctx) if (history_ctx and not is_chitchat) else cleaned
     context_resolved = (q != raw)
 
-    # 清理纠正前缀："不对，我问的是禁忌人群" → "禁忌人群"（用于检索，不改 original）
-    search_q = _CORRECTION_PREFIX.sub("", q).strip() if _CORRECTION_PREFIX.search(q) else q
+    # search_query：用于检索的查询（已去除纠正前缀）
+    # original：保留完整补全结果（含产品名），供路由检测和 LLM 使用
+    search_q = q
 
     products = detect_terms(q, PRODUCT_ALIASES)
     projects = detect_terms(q, PROJECT_ALIASES)

@@ -570,9 +570,10 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     route_top_k = route_cfg.get("k", DEFAULT_TOP_K)
     route_threshold = route_cfg.get("threshold", 0.30)
 
-    # 向量检索用原始查询（避免别名扩展稀释语义方向）
+    # 向量检索用 search_query（去除纠正前缀等噪音，语义更聚焦）
     # 关键词检索用扩展查询（别名/同义词有助于 term 匹配）
-    vector_hits = vector_search(product, rewrite["original"], VECTOR_TOP_K)
+    search_q = rewrite.get("search_query", rewrite["original"])
+    vector_hits = vector_search(product, search_q, VECTOR_TOP_K)
     _, docs = load_store(product)
     keyword_hits = keyword_search(rewrite["expanded"], docs, KEYWORD_TOP_K) if docs else []
     hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, route_top_k) if (vector_hits or keyword_hits) else []
@@ -625,6 +626,25 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
 _NO_MATCH_REPLY = "抱歉，暂时无法回答该问题。请尝试询问产品成分、术后护理、禁忌人群等相关问题。"
 
+# 非提问的礼貌回复映射
+_CHITCHAT_REPLIES = {
+    "greeting": "您好！我是医美产品知识库助手，请问有什么可以帮您的？",
+    "thanks":   "不客气！如有其他问题，随时可以继续问我。",
+    "bye":      "再见！祝您一切顺利。",
+    "ack":      "好的，如有其他问题请继续提问。",
+}
+
+def _chitchat_reply(raw: str) -> str:
+    """根据非提问输入类型返回礼貌回复"""
+    import re
+    if re.match(r"^(你好|嗨|hi|hello|hey)$", raw, re.IGNORECASE):
+        return _CHITCHAT_REPLIES["greeting"]
+    if re.match(r"^(谢谢|感谢|多谢|辛苦了)$", raw):
+        return _CHITCHAT_REPLIES["thanks"]
+    if re.match(r"^(再见|拜拜|bye)$", raw, re.IGNORECASE):
+        return _CHITCHAT_REPLIES["bye"]
+    return _CHITCHAT_REPLIES["ack"]
+
 
 def _detect_route_with_history(question: str, rewrite: dict) -> str:
     """路由检测：优先用当前问题检测，若结果为 basic 且有历史上下文，
@@ -662,6 +682,13 @@ def answer_question(question: str, mode: str, history: list = None,
         return _NO_MATCH_REPLY
     if rewrite is None:
         rewrite = rewrite_query(q, history=history)
+
+    # 非提问快速路径：问候/致谢/确认等直接返回礼貌回复，跳过检索
+    if rewrite.get("is_chitchat"):
+        reply = _chitchat_reply(rewrite.get("raw_input", q))
+        log_qa(q, reply, rewritten_query="", matched_sources=[], hit=False,
+               meta={"method": "chitchat"})
+        return reply
     outputs = []
     seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
