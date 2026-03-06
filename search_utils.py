@@ -85,16 +85,10 @@ def _extract_terms(query: str) -> List[str]:
 
 
 def _count_term(term: str, text: str) -> int:
-    """统计 term 在 text 中出现的次数"""
-    count = 0
-    start = 0
-    while True:
-        idx = text.find(term, start)
-        if idx == -1:
-            break
-        count += 1
-        start = idx + len(term)
-    return count
+    """统计 term 在 text 中出现的次数（非重叠匹配）"""
+    if not term:
+        return 0
+    return text.count(term)
 
 
 def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
@@ -199,12 +193,10 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
 
     scored.sort(key=lambda x: x.get("keyword_score", 0.0), reverse=True)
 
-    # 归一化到 [0, 1] 区间，使其与向量分数可比
-    if scored:
-        max_score = scored[0]["keyword_score"]
-        if max_score > 0:
-            for x in scored:
-                x["keyword_score"] = x["keyword_score"] / max_score
+    # 归一化到 [0, 1] 区间：sigmoid 函数使不同 query 间的分数可比
+    # sigmoid(x/scale) 中 scale=5 使典型 BM25 分数（0~15）映射到 (0.5, 0.95) 区间
+    for x in scored:
+        x["keyword_score"] = 1.0 / (1.0 + math.exp(-x["keyword_score"] / 5.0))
 
     return scored[:top_k]
 

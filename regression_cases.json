@@ -123,5 +123,75 @@
     "q": "红肿怎么办，硬块正常吗",
     "expect_any": ["红肿", "硬块", "反应"],
     "route": "risk"
+  },
+
+  {"_comment": "--- 边界场景：消歧测试 ---"},
+  {
+    "q": "过敏体质的人能不能做",
+    "expect_any": ["禁忌", "过敏", "医生"],
+    "route": "contraindication",
+    "_note": "禁忌信号词'能不能'应优先匹配 contraindication 而非 risk"
+  },
+  {
+    "q": "感染了怎么处理",
+    "expect_any": ["感染", "医生", "就医"],
+    "route": "risk",
+    "_note": "感染是风险，非禁忌"
+  },
+
+  {"_comment": "--- 边界场景：多路由关键词交叉 ---"},
+  {
+    "q": "术后红肿是正常反应吗",
+    "expect_any": ["红肿", "正常", "反应"],
+    "route": "risk",
+    "_note": "'术后'可匹配aftercare，但'红肿'+'反应'应判定为risk"
+  },
+  {
+    "q": "注射后需要注意什么",
+    "expect_any": ["术后", "注意", "护理", "注射"],
+    "route": "operation",
+    "_note": "'注射'在优先级中先于aftercare的'注意事项'，路由到operation"
+  },
+
+  {"_comment": "--- 边界场景：别名覆盖 ---"},
+  {
+    "q": "CELLOFILL是什么",
+    "expect_any": ["产品", "菲罗奥", "成分"],
+    "route": "basic",
+    "_note": "英文别名识别"
+  },
+  {
+    "q": "菲洛奥的禁忌人群",
+    "expect_any": ["禁忌", "妊娠", "过敏"],
+    "route": "contraindication",
+    "_note": "常见错别字别名"
+  },
+
+  {"_comment": "--- 边界场景：短问题/模糊问题 ---"},
+  {
+    "q": "成分",
+    "expect_any": ["PCL", "聚己内酯", "透明质酸", "成分"],
+    "route": "ingredient",
+    "_note": "极短查询"
+  },
+  {
+    "q": "副作用",
+    "expect_any": ["反应", "红肿", "副作用"],
+    "route": "risk",
+    "_note": "单一关键词查询"
+  },
+
+  {"_comment": "--- 边界场景：复合问题 ---"},
+  {
+    "q": "成分是什么？禁忌人群有哪些？",
+    "expect_any": ["PCL", "禁忌", "成分", "妊娠"],
+    "route": "contraindication",
+    "_note": "多关键词并存时contraindication优先级高于ingredient；实际回答时子问题会分别处理"
+  },
+  {
+    "q": "水光和微针分别是什么",
+    "expect_any": ["水光", "微针"],
+    "route": "operation",
+    "_note": "'水光''微针'是operation关键词，路由检测基于全文而非拆分后子问题"
   }
 ]

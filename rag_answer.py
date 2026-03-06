@@ -198,12 +198,26 @@ def detect_route(question: str) -> str:
     return "basic"
 
 
+def _truncate_to_sentence(text: str, max_chars: int = 200) -> str:
+    """截断文本到最近的句子边界，避免截断关键信息"""
+    if len(text) <= max_chars:
+        return text
+    # 在 max_chars 范围内找最后一个句子结束符
+    truncated = text[:max_chars]
+    # 中文和英文句子结束符
+    for sep in ["。", "；", "！", "？", ". ", "! ", "? ", "\n"]:
+        pos = truncated.rfind(sep)
+        if pos > max_chars // 3:  # 至少保留 1/3 内容
+            return truncated[:pos + len(sep)].strip()
+    return truncated.strip()
+
+
 def build_evidence(hits: List[Dict]) -> List[Dict]:
     ev = []
     for h in hits[:MAX_EVIDENCE_CHUNKS]:
         ev.append({
             "meta": h.get("meta", {}),
-            "text": (h.get("text") or "")[:200],
+            "text": _truncate_to_sentence((h.get("text") or "").strip()),
         })
     return ev
 
