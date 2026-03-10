@@ -169,7 +169,8 @@ def detect_product(question: str) -> str:
 
 def detect_route(question: str) -> str:
     q = (question or "").lower()
-    order = ["risk", "combo", "aftercare", "operation", "anti_fake", "contraindication", "ingredient", "basic"]
+    order = ["risk", "repair", "combo", "aftercare", "operation", "anti_fake",
+             "contraindication", "design", "effect", "pre_care", "ingredient", "basic"]
 
     # 收集每个 route 的匹配关键词
     matched = {}
@@ -190,6 +191,11 @@ def detect_route(question: str) -> str:
         return "contraindication"
     if "risk" in matched and "contraindication" in matched and has_contra_signal:
         return "contraindication"
+
+    # 消歧：修复意图信号 → 优先 repair
+    repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
+    if "repair" in matched and any(s in q for s in repair_signals):
+        return "repair"
 
     # 按优先级返回第一个命中的 route
     for route in order:
@@ -353,6 +359,17 @@ def _accept_line(clean: str, route: str) -> bool:
         "ingredient": ["PCL", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽", "肽",
                        "生长因子", "矿物质", "聚乙二醇", "胶原", "抗氧化", "修复",
                        "再生", "保湿", "提升", "弹性"],
+        "effect": ["效果", "维持", "见效", "胶原", "再生", "疗程", "持续",
+                   "显现", "最佳", "差异", "防晒", "保湿", "护理", "因人而异"],
+        "pre_care": ["术前", "检查", "病史", "过敏史", "用药", "A酸", "果酸",
+                     "饮酒", "抗凝", "素颜", "沟通", "知情", "同意书", "费用",
+                     "方案", "准备"],
+        "design": ["设计", "方案", "评估", "松弛", "皱纹", "轮廓", "法令纹",
+                   "下颌", "苹果肌", "毛孔", "弹性", "含水量", "用量", "支",
+                   "导入", "注射", "全脸", "区域", "疗程", "间隔", "保守"],
+        "repair": ["修复", "补救", "不理想", "不均匀", "不对称", "结节", "硬块",
+                   "吸收", "层次", "自行", "按压", "揉捏", "间隔", "医生",
+                   "评估", "安全", "循序渐进", "记录", "效果差"],
     }
 
     keywords = route_keywords.get(route)
@@ -409,6 +426,10 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
         "combo":           (8,  16),
         "ingredient":      (10, 24),
         "basic":           (10, 22),
+        "effect":          (8,  18),
+        "pre_care":        (8,  18),
+        "design":          (10, 24),
+        "repair":          (10, 22),
     }
     brief_lim, full_lim = limits.get(route, (8, 20))
     limit = brief_lim if mode == "brief" else full_lim
@@ -480,6 +501,10 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         "contraindication": "列出禁忌人群和情况，提醒需医生评估。",
         "combo": "说明联合方案和间隔时间。",
         "basic": "介绍产品基本信息。",
+        "effect": "说明效果起效时间、维持时间和影响因素。",
+        "pre_care": "列出术前需要做的准备和注意事项。",
+        "design": "说明方案设计的要点和评估维度，提醒需医生面诊制定。",
+        "repair": "说明修复和补救的思路，强调需医生评估，不要自行处理。",
     }
 
     history_block = ""

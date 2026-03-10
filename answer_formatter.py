@@ -17,6 +17,10 @@ def format_structured_answer(
         "anti_fake": "防伪鉴别",
         "contraindication": "禁忌人群",
         "ingredient": "核心成分与作用",
+        "effect": "效果与维持时间",
+        "pre_care": "术前准备",
+        "design": "方案设计与面部评估",
+        "repair": "修复与补救方案",
     }
     title = title_map.get(route, "回答")
     out = [f"{title}（资料提取）：", "结论："]
