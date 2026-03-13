@@ -1,0 +1,228 @@
+{
+  "_doc": "实体间关联索引。系统根据此文件做跨实体检索和回答补充。",
+
+  "entity_types": {
+    "product":      {"base_dir": "products", "label": "产品"},
+    "procedure":    {"base_dir": "procedures", "label": "项目"},
+    "equipment":    {"base_dir": "equipment", "label": "设备"},
+    "anatomy":      {"base_dir": "anatomy", "label": "部位", "single_file": true},
+    "indication":   {"base_dir": "indications", "label": "适应症", "single_file": true},
+    "complication":  {"base_dir": "complications", "label": "并发症", "single_file": true},
+    "course":       {"base_dir": "courses", "label": "疗程", "single_file": true},
+    "script":       {"base_dir": "scripts", "label": "话术", "single_file": true}
+  },
+
+  "product_procedure": [
+    {
+      "product": "feiluoao",
+      "procedure": "water_light",
+      "compatible": true,
+      "equipment": "water_light_machine",
+      "params": {"needle": "9针头", "depth": "0.8mm"},
+      "spacing": "可同日操作",
+      "note": "水光仪器导入菲罗奥，补水同时促进胶原再生"
+    },
+    {
+      "product": "feiluoao",
+      "procedure": "microneedling",
+      "compatible": true,
+      "equipment": "mts_device",
+      "params": {"depth": "0.5-1.0mm"},
+      "spacing": "可同日操作",
+      "note": "MTS微针导入菲罗奥，适合全面部肤质改善"
+    },
+    {
+      "product": "feiluoao",
+      "procedure": "photoelectric",
+      "compatible": true,
+      "equipment": "rf_device",
+      "params": {},
+      "spacing": "同日操作先光电后注射，不同日间隔2-4周",
+      "note": "光电刺激+菲罗奥修复，紧致效果叠加"
+    },
+    {
+      "product": "feiluoao",
+      "procedure": "filling",
+      "compatible": true,
+      "equipment": null,
+      "params": {},
+      "spacing": "间隔至少2周，不同部位可缩短",
+      "note": "填充塑形+菲罗奥肤质改善，不同功能互补"
+    }
+  ],
+
+  "product_product": [
+    {
+      "product_a": "feiluoao",
+      "product_b": "bo_niao_suan",
+      "can_combine": true,
+      "min_interval_days": 14,
+      "note": "填充类项目（玻尿酸等）与菲罗奥建议间隔至少2周"
+    }
+  ],
+
+  "procedure_equipment": [
+    {
+      "procedure": "water_light",
+      "equipment": "water_light_machine",
+      "required": true,
+      "note": "水光针项目必须使用水光注射仪"
+    },
+    {
+      "procedure": "microneedling",
+      "equipment": "mts_device",
+      "required": true,
+      "note": "微针项目使用MTS微针仪或滚轮微针"
+    },
+    {
+      "procedure": "photoelectric",
+      "equipment": "rf_device",
+      "required": true,
+      "note": "光电项目使用对应光电设备（射频仪/光子/激光等）"
+    }
+  ],
+
+  "indication_product": [
+    {
+      "indication": "皮肤松弛",
+      "products": ["feiluoao"],
+      "procedures": ["microneedling", "water_light", "photoelectric"],
+      "note": "根据松弛程度选择方式和用量"
+    },
+    {
+      "indication": "法令纹",
+      "products": ["feiluoao"],
+      "procedures": ["filling", "photoelectric"],
+      "note": "轻度用菲罗奥MTS，中重度联合填充"
+    },
+    {
+      "indication": "毛孔粗大",
+      "products": ["feiluoao"],
+      "procedures": ["microneedling", "photoelectric"],
+      "note": "微针+光电联合效果最佳"
+    },
+    {
+      "indication": "皮肤干燥",
+      "products": ["feiluoao"],
+      "procedures": ["water_light"],
+      "note": "水光针补水为首选"
+    },
+    {
+      "indication": "色斑",
+      "products": [],
+      "procedures": ["photoelectric"],
+      "note": "光子嫩肤或皮秒激光为首选"
+    },
+    {
+      "indication": "痘坑",
+      "products": ["feiluoao"],
+      "procedures": ["microneedling", "photoelectric"],
+      "note": "微针+点阵激光，菲罗奥辅助胶原修复"
+    },
+    {
+      "indication": "苹果肌下垂",
+      "products": ["feiluoao"],
+      "procedures": ["filling", "photoelectric"],
+      "note": "填充塑形+菲罗奥/射频紧致"
+    },
+    {
+      "indication": "下颌线松弛",
+      "products": ["feiluoao"],
+      "procedures": ["photoelectric"],
+      "note": "射频/超声刀紧致+菲罗奥线性注射辅助"
+    }
+  ],
+
+  "anatomy_product": [
+    {
+      "area": "额部",
+      "products": ["feiluoao"],
+      "procedures": ["microneedling"],
+      "note": "额部皮肤薄，建议MTS浅层导入"
+    },
+    {
+      "area": "苹果肌",
+      "products": ["feiluoao"],
+      "procedures": ["filling", "photoelectric"],
+      "note": "填充+菲罗奥+射频综合"
+    },
+    {
+      "area": "法令纹",
+      "products": ["feiluoao"],
+      "procedures": ["filling"],
+      "note": "菲罗奥线性注射+填充"
+    },
+    {
+      "area": "下颌线",
+      "products": ["feiluoao"],
+      "procedures": ["photoelectric"],
+      "note": "射频紧致+菲罗奥辅助"
+    },
+    {
+      "area": "颈部",
+      "products": ["feiluoao"],
+      "procedures": ["water_light", "photoelectric"],
+      "note": "颈部皮肤薄，注射深度需浅"
+    },
+    {
+      "area": "手部",
+      "products": ["feiluoao"],
+      "procedures": ["water_light"],
+      "note": "手背补水+胶原再生"
+    }
+  ],
+
+  "combo_contraindications": [
+    {
+      "rule": "同一部位同日不做多种注射类项目",
+      "severity": "禁止"
+    },
+    {
+      "rule": "皮肤有活动性感染或炎症时不做任何项目",
+      "severity": "禁止"
+    },
+    {
+      "rule": "术后恢复期内不叠加其他创伤性操作",
+      "severity": "禁止"
+    },
+    {
+      "rule": "射频类项目可能加速玻尿酸代谢，建议先填充后射频",
+      "severity": "注意"
+    },
+    {
+      "rule": "正在使用维A酸类药物需停药后评估再做微针",
+      "severity": "注意"
+    },
+    {
+      "rule": "服用抗凝药物（阿司匹林等）期间注射易出血，需遵医嘱",
+      "severity": "注意"
+    }
+  ],
+
+  "drug_interactions": [
+    {
+      "drug": "阿司匹林/抗凝药",
+      "impact": "增加出血和淤青风险",
+      "action": "术前遵医嘱停药",
+      "applies_to": ["water_light", "microneedling", "filling"]
+    },
+    {
+      "drug": "维A酸类（异维A酸/阿达帕林）",
+      "impact": "皮肤屏障脆弱，创伤修复能力下降",
+      "action": "停药至少1个月后评估",
+      "applies_to": ["microneedling", "photoelectric"]
+    },
+    {
+      "drug": "免疫抑制剂",
+      "impact": "感染风险增加，伤口愈合慢",
+      "action": "需医生综合评估",
+      "applies_to": ["water_light", "microneedling", "filling"]
+    },
+    {
+      "drug": "肉毒素（已注射）",
+      "impact": "与填充/注射类项目需间隔",
+      "action": "间隔至少2周",
+      "applies_to": ["filling", "water_light"]
+    }
+  ]
+}

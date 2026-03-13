@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from media_router import find_media
 from rag_answer import answer_question, invalidate_store_cache
 from rag_logger import log_error, get_recent_qa, get_recent_misses, get_recent_errors
-from rag_runtime_config import KNOWLEDGE_DIR
+from rag_runtime_config import KNOWLEDGE_DIR, SHARED_ENTITY_DIRS
 
 BASE_DIR = Path(__file__).resolve().parent
 ADMIN_PAGE = BASE_DIR / "admin_page.html"
@@ -67,10 +67,11 @@ class RebuildRequest(BaseModel):
 @app.get("/health")
 def health():
     from rag_runtime_config import STORE_ROOT
+    shared_names = set(SHARED_ENTITY_DIRS.values())
     products = []
     if KNOWLEDGE_DIR.exists():
         for p in sorted(KNOWLEDGE_DIR.iterdir()):
-            if not p.is_dir():
+            if not p.is_dir() or p.name in shared_names:
                 continue
             store = STORE_ROOT / p.name
             products.append({
@@ -78,11 +79,15 @@ def health():
                 "index_exists": (store / "index.faiss").exists(),
                 "docs_exists": (store / "docs.jsonl").exists(),
             })
+    # 共享知识索引状态
+    shared_store = STORE_ROOT / "_shared"
+    shared_indexed = (shared_store / "index.faiss").exists() and (shared_store / "docs.jsonl").exists()
     all_indexed = all(p["index_exists"] and p["docs_exists"] for p in products) if products else False
     return {
         "status": "ok" if all_indexed else "degraded",
         "knowledge_exists": KNOWLEDGE_DIR.exists(),
         "products": products,
+        "shared_knowledge_indexed": shared_indexed,
     }
 
 
