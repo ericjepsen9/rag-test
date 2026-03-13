@@ -277,80 +277,100 @@ def detect_route(question: str) -> str:
     if not matched:
         return "basic"
 
-    # 消歧：禁忌适用性信号 → 优先 contraindication
+    # ---- 置信度评分：多路由歧义时用加权分数决定 ----
+    # 每个路由的分数 = 命中关键词数 × 1.0 + 消歧信号加分
+    scores = {}
+    for route, hits in matched.items():
+        # 基础分：命中关键词数（长关键词加权更高，避免单字误匹配）
+        score = sum(max(1.0, len(kw) / 2) for kw in hits)
+        scores[route] = score
+
+    # 消歧加分规则（仅对已命中的路由加分）
     contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
                       "能做", "可以做", "能不能", "能打吗", "可以吗"]
-    has_contra_signal = any(s in q for s in contra_signals)
+    if "contraindication" in scores and any(s in q for s in contra_signals):
+        scores["contraindication"] += 5.0
 
-    if "contraindication" in matched and has_contra_signal:
-        return "contraindication"
-    if "risk" in matched and "contraindication" in matched and has_contra_signal:
-        return "contraindication"
-
-    # 消歧：联合方案信号 → 优先 combo（"一起做""搭配" 优先于 operation/aftercare）
     combo_signals = ["一起做", "联合", "搭配", "同做", "配合", "间隔多久"]
-    if "combo" in matched and any(s in q for s in combo_signals):
-        return "combo"
+    if "combo" in scores and any(s in q for s in combo_signals):
+        scores["combo"] += 5.0
 
-    # 消歧：修复意图信号 → 优先 repair（在症状消歧之前，因为"硬块需要修复吗"应归repair）
     repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
-    if "repair" in matched and any(s in q for s in repair_signals):
-        return "repair"
+    if "repair" in scores and any(s in q for s in repair_signals):
+        scores["repair"] += 5.0
 
-    # 消歧：complication vs risk — 术后时间线信号（"术后第N天""术后N天"）→ complication
-    # 长期异常（"术后3个月""半年后"）→ risk
+    # complication vs risk — 术后时间线信号
     temporal_short = re.search(r"术后(第?\d+天|当天|1-3天|一周|1周)", q)
     temporal_long = re.search(r"(术后\d+个月|半年|一年|长期)", q)
-    if "complication" in matched and "risk" in matched:
+    if "complication" in scores and "risk" in scores:
         if temporal_long:
-            return "risk"
+            scores["risk"] += 4.0
         if temporal_short:
-            return "complication"
+            scores["complication"] += 4.0
 
-    # 消歧：疼痛体感询问 — "疼不疼/痛不痛/疼吗" 是术前体感问题 → operation
+    # 疼痛体感询问 → operation
     pain_inquiry = re.search(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛)", q)
-    if pain_inquiry and "operation" in matched:
-        return "operation"
+    if pain_inquiry and "operation" in scores:
+        scores["operation"] += 4.0
 
-    # 消歧：术后症状 → risk 优先于 aftercare/operation
-    symptom_kws = ["红肿", "肿胀", "肿", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
+    # 术后症状 → risk 优先于 aftercare/operation
+    # 但多症状同时出现 + "正常吗" → complication（综合评估）
+    symptom_kws = ["红肿", "肿胀", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
                    "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
                    "越来越"]
-    if "risk" in matched and ("aftercare" in matched or "operation" in matched):
-        if any(s in q for s in symptom_kws):
-            return "risk"
+    symptom_count = sum(1 for s in symptom_kws if s in q)
+    if "risk" in scores and ("aftercare" in scores or "operation" in scores):
+        if symptom_count >= 1:
+            scores["risk"] += 4.0
+    # 多症状并列询问（"红肿怎么办，硬块正常吗"）→ complication 更全面
+    if "complication" in scores and symptom_count >= 2:
+        scores["complication"] += 3.0
 
-    # 消歧：疼痛体感 — "打的时候疼"是 operation（术中），"打完疼"是 risk（术后异常）
-    if "risk" in matched and "operation" in matched:
+    # 术中疼痛 → operation（更精确）
+    if "risk" in scores and "operation" in scores:
         pre_pain = re.search(r"(打的时候|注射时|术中|操作中).{0,4}(疼|痛)", q)
         if pre_pain:
-            return "operation"
+            scores["operation"] += 5.0
 
-    # 消歧：生活限制问题 → aftercare 优先（"能运动吗""能化妆吗"）
+    # 生活限制问题 → aftercare
     lifestyle_kws = ["运动", "健身", "游泳", "桑拿", "化妆", "上妆", "防晒", "晒太阳",
                      "洗澡", "喝酒", "饮酒", "上班", "出汗", "泡澡", "汗蒸"]
-    if "aftercare" in matched and any(s in q for s in lifestyle_kws):
-        return "aftercare"
+    if "aftercare" in scores and any(s in q for s in lifestyle_kws):
+        scores["aftercare"] += 4.0
 
-    # 消歧：疗程规划 vs 操作参数（"疗程" 同时出现在 operation 和 course 中）
+    # 疗程规划信号 → course
     course_signals = ["安排", "规划", "几次", "间隔多久", "总共", "多长时间",
                       "时间表", "多少钱", "费用", "预算"]
-    if "course" in matched and "operation" in matched:
+    if "course" in scores:
         if any(s in q for s in course_signals):
-            return "course"
-        return "operation"
+            scores["course"] += 4.0
+    # 无疗程信号但有 operation → 偏向 operation
+    if "course" in scores and "operation" in scores:
+        if not any(s in q for s in course_signals):
+            scores["operation"] += 2.0
 
-    # 消歧：部位/适应症 vs 方案设计（"怎么打""打哪里""几支" 是设计信号）
+    # 方案设计信号 → design
     design_signals = ["怎么打", "打哪里", "几支", "怎么设计", "方案", "用量"]
-    if ("anatomy_q" in matched or "indication_q" in matched) and "design" in matched:
-        if any(s in q for s in design_signals):
-            return "design"
+    if "design" in scores and any(s in q for s in design_signals):
+        scores["design"] += 4.0
 
-    # 按优先级返回第一个命中的 route
-    for route in order:
-        if route in matched:
-            return route
-    return "basic"
+    # 部位名 → anatomy_q 优先于 indication_q（具体部位比泛化症状更精确）
+    body_parts = ["苹果肌", "法令纹", "下颌", "额头", "额部", "眼周", "颈部",
+                  "鼻部", "手部", "手背"]
+    if "anatomy_q" in scores and "indication_q" in scores:
+        if any(bp in q for bp in body_parts):
+            scores["anatomy_q"] += 3.0
+
+    # 设备/仪器关键词 → equipment_q 优先于 operation
+    equipment_words = ["仪器", "设备", "机器", "仪", "水光仪", "微针仪", "品牌"]
+    if "equipment_q" in scores and "operation" in scores:
+        if any(ew in q for ew in equipment_words):
+            scores["equipment_q"] += 4.0
+
+    # 按分数排序，相同分数时按 order 优先级
+    order_idx = {r: i for i, r in enumerate(order)}
+    best = max(scores.keys(), key=lambda r: (scores[r], -order_idx.get(r, 99)))
+    return best
 
 
 def _truncate_to_sentence(text: str, max_chars: int = 450) -> str:
@@ -1057,9 +1077,16 @@ def _detect_route_with_history(question: str, rewrite: dict) -> str:
     if route != "basic":
         return route
 
-    # 当前路由为 basic 且发生了上下文补全 → 用最近含路由关键词的问题的路由
-    if rewrite.get("context_resolved"):
-        # 优先用 last_routed_q（含路由关键词的问题），回退到 last_user_q
+    # 路由继承策略：
+    # 1. 上下文补全后仍为 basic → 继承最近含路由关键词的问题的路由
+    # 2. 用户原始输入很短（≤10字，追问模式）→ 即使没有 context_resolved 也尝试继承
+    raw_input = rewrite.get("raw_input", "")
+    should_inherit = (
+        rewrite.get("context_resolved")
+        or (raw_input and len(raw_input.strip()) <= 10)
+    )
+
+    if should_inherit:
         routed_q = rewrite.get("last_routed_q") or rewrite.get("last_user_q", "")
         if routed_q:
             history_route = detect_route(routed_q)

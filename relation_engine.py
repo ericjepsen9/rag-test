@@ -169,6 +169,82 @@ def get_procedure_equipment(query: str) -> List[str]:
     return lines
 
 
+def get_temporal_constraints(product_id: str) -> List[str]:
+    """获取产品相关的时序约束：各项目之间的间隔要求。"""
+    data = _load()
+    lines = []
+    seen = set()
+
+    # 产品-项目间隔
+    for rel in data.get("product_procedure", []):
+        if rel.get("product") == product_id:
+            proc = _procedure_label(rel.get("procedure", ""))
+            spacing = rel.get("spacing", "")
+            if spacing and spacing not in seen:
+                lines.append(f"与{proc}：{spacing}")
+                seen.add(spacing)
+
+    # 产品-产品间隔
+    for rel in data.get("product_product", []):
+        if rel.get("product_a") == product_id or rel.get("product_b") == product_id:
+            other_id = rel["product_b"] if rel["product_a"] == product_id else rel["product_a"]
+            other = _product_label(other_id)
+            days = rel.get("min_interval_days", 0)
+            note = rel.get("note", "")
+            if days:
+                line = f"与{other}间隔至少{days}天"
+                if note:
+                    line += f"（{note}）"
+                if line not in seen:
+                    lines.append(line)
+                    seen.add(line)
+
+    return lines
+
+
+def validate_combo_safety(product_id: str, question: str) -> List[str]:
+    """检查问题中提到的联合方案是否存在安全风险。
+
+    返回警告信息列表（空列表表示无风险或无法判断）。
+    """
+    data = _load()
+    warnings = []
+    q_lower = question.lower()
+
+    # 检测问题中提到的项目
+    mentioned_procs = []
+    for proc_id, aliases in PROCEDURE_ALIASES.items():
+        if any(a.lower() in q_lower for a in aliases):
+            mentioned_procs.append(proc_id)
+
+    if len(mentioned_procs) < 2:
+        return []
+
+    # 检查联合禁忌
+    for rule in data.get("combo_contraindications", []):
+        severity = rule.get("severity", "")
+        text = rule.get("rule", "")
+        if severity == "禁止":
+            # 同一部位同日多种注射 → 检查是否有多个注射类项目
+            injection_procs = {"water_light", "microneedling", "filling"}
+            mentioned_injections = [p for p in mentioned_procs if p in injection_procs]
+            if len(mentioned_injections) >= 2 and "同一部位" in text:
+                warnings.append(f"⚠ {text}")
+
+    # 检查时序冲突：如果两个项目都有 spacing 要求
+    for rel in data.get("product_procedure", []):
+        if rel.get("product") != product_id:
+            continue
+        proc = rel.get("procedure", "")
+        if proc in mentioned_procs:
+            spacing = rel.get("spacing", "")
+            if spacing and "同日" not in spacing:
+                proc_label = _procedure_label(proc)
+                warnings.append(f"时序提示：{proc_label} — {spacing}")
+
+    return warnings
+
+
 def enrich_answer(route: str, product_id: str, question: str) -> List[str]:
     """根据路由类型，从 relations.json 中提取补充信息。
 
@@ -181,6 +257,10 @@ def enrich_answer(route: str, product_id: str, question: str) -> List[str]:
     lines = []
     if route == "combo":
         lines = get_combo_info(product_id)
+        # 追加安全风险检查
+        safety = validate_combo_safety(product_id, question)
+        if safety:
+            lines.extend(safety)
     elif route in ("contraindication", "pre_care"):
         lines = get_drug_interactions(route)
     elif route == "indication_q":
@@ -189,5 +269,11 @@ def enrich_answer(route: str, product_id: str, question: str) -> List[str]:
         lines = get_anatomy_recommendations(question)
     elif route == "equipment_q":
         lines = get_procedure_equipment(question)
+    elif route == "course":
+        # 疗程路由追加时序约束
+        temporal = get_temporal_constraints(product_id)
+        if temporal:
+            lines.append("【间隔要求】")
+            lines.extend(temporal)
 
     return lines

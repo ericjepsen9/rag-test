@@ -60,7 +60,9 @@ _IMPLICIT_TOPIC_PATTERNS = re.compile(
     r"(安全|价格|多少钱|持续多久|维持多久|恢复多久|多久恢复|恢复期|疗程|几次|保质期|保存"
     r"|区别|对比|优势|好处|原理|机制"
     r"|痛不痛|疼不疼|会不会|能不能|可不可以|需要几|需要多|注意什么|注意事项"
-    r"|要不要停药|需不需要|要做什么准备|怎么设计|打几支|怎么修复)"
+    r"|要不要停药|需不需要|要做什么准备|怎么设计|打几支|怎么修复"
+    r"|会不会烧伤|会不会感染|正常吗|怎么办|多久见效|多久消|几天消"
+    r"|有没有用|有效果吗|靠谱吗|值得做吗|推荐吗|划算吗)"
     r"|(效果|功效|作用).{0,4}(吗|呢|怎么样|如何|好不好|怎样)"
 )
 
@@ -84,7 +86,7 @@ for _kws in QUESTION_ROUTES.values():
     _ALL_ROUTE_KEYWORDS.update(kw.lower() for kw in _kws)
 
 
-_MAX_HISTORY_SCAN = 6  # 最多回溯的用户消息数，避免长历史全扫描
+_MAX_HISTORY_SCAN = 12  # 最多回溯的用户消息数，支持深度对话链
 
 
 def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:

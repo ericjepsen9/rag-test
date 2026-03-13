@@ -4,6 +4,49 @@ from typing import Any, List, Dict, Tuple
 
 from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST
 
+# 中文医美术语同义词映射表：将口语/变体统一为规范术语，提升 BM25 召回率
+# key: 变体形式, value: 规范形式
+_SYNONYM_MAP = {
+    # 注射动作
+    "打": "注射", "注": "注射", "施术": "注射", "扎": "注射",
+    # 产品动作
+    "做": "操作", "做了": "操作",
+    # 疼痛
+    "痛": "疼痛", "疼": "疼痛", "刺痛": "疼痛",
+    # 肿胀
+    "肿": "肿胀", "肿了": "肿胀", "浮肿": "肿胀",
+    # 淤青
+    "青": "淤青", "瘀青": "淤青", "发青": "淤青", "乌青": "淤青",
+    # 恢复
+    "好了": "恢复", "消了": "消退", "退了": "消退",
+    # 医生
+    "大夫": "医生", "主治": "医生",
+    # 玻尿酸
+    "玻尿酸": "透明质酸",
+}
+
+# 反向映射：同义词扩展（检索时同时搜索同义词）
+_SYNONYM_EXPAND = {}
+for _k, _v in _SYNONYM_MAP.items():
+    _SYNONYM_EXPAND.setdefault(_v, set()).add(_k)
+    _SYNONYM_EXPAND.setdefault(_k, set()).add(_v)
+
+
+def expand_synonyms(query: str) -> str:
+    """在查询中追加同义词，提升 BM25 召回率。
+    例如 "打菲罗奥疼吗" → "打菲罗奥疼吗 注射 疼痛"
+    """
+    extra = set()
+    q_lower = query.lower()
+    for term, synonyms in _SYNONYM_EXPAND.items():
+        if term in q_lower:
+            for syn in synonyms:
+                if syn not in q_lower:
+                    extra.add(syn)
+    if extra:
+        return query + " " + " ".join(extra)
+    return query
+
 
 def normalize_text(text: str) -> str:
     text = text or ""
@@ -173,6 +216,8 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
     if not docs:
         return []
 
+    # 同义词扩展：增加召回
+    query = expand_synonyms(query)
     q_terms = _extract_terms(query)
     if not q_terms:
         return []
