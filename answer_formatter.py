@@ -47,4 +47,7 @@ def format_structured_answer(
     if add_risk_note:
         out.append("需医生评估项：")
         out.append(f"- {RISK_NOTE}")
+    # 安全相关路由自动追加医生评估提醒
+    elif route in ("contraindication", "complication", "repair", "operation"):
+        out.append(f"- {RISK_NOTE}")
     return "\n".join(out).strip()

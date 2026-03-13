@@ -17,6 +17,13 @@ _relations: Optional[Dict] = None
 _lock = threading.Lock()
 
 
+def invalidate_relations_cache() -> None:
+    """清除关联数据缓存（relations.json 更新后调用）"""
+    global _relations
+    with _lock:
+        _relations = None
+
+
 def _load() -> Dict:
     global _relations
     if _relations is not None:

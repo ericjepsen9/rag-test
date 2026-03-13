@@ -409,6 +409,10 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
             final.append(p)
 
     result = [p.strip().rstrip("。？?") for p in final if len(p.strip()) >= 2]
+    # 安全检查：如果拆分后只有1个子问题且与原文相同，直接返回
+    # 如果原始问题是选择式（"A还是B"），不应拆分
+    if "还是" in question and len(result) > 1:
+        return [question.strip().rstrip("。？?")]
     return uniq(result)
 
 

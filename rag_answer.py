@@ -367,10 +367,13 @@ def detect_route(question: str) -> str:
         if any(ew in q for ew in equipment_words):
             scores["equipment_q"] += 4.0
 
-    # 多项目并列提及 → combo（"菲罗奥和微针"、"水光和光电"）
+    # 多实体并列提及 → combo（"菲罗奥和微针"、"水光和光电"）
+    # 产品+项目也算并列（"菲罗奥和水光针"）
     from rag_runtime_config import PROJECT_ALIASES
     mentioned_projects = detect_terms(q, PROJECT_ALIASES)
-    if "combo" in scores and len(mentioned_projects) >= 2:
+    mentioned_products = detect_terms(q, PRODUCT_ALIASES)
+    entity_count = len(mentioned_projects) + len(mentioned_products)
+    if "combo" in scores and entity_count >= 2:
         scores["combo"] += 6.0
 
     # "维持" → effect, "恢复" → risk/complication（分辨持久 vs 恢复期）
@@ -1123,11 +1126,12 @@ _CHITCHAT_REPLIES = {
 
 def _chitchat_reply(raw: str) -> str:
     """根据非提问输入类型返回礼貌回复"""
-    if re.match(r"^(你好|嗨|hi|hello|hey)$", raw, re.IGNORECASE):
+    s = raw.strip().rstrip("！!。.~")
+    if re.match(r"^(你好|嗨|hi|hello|hey|您好|在吗|在不在)$", s, re.IGNORECASE):
         return _CHITCHAT_REPLIES["greeting"]
-    if re.match(r"^(谢谢|感谢|多谢|辛苦了)$", raw):
+    if re.match(r"^(谢谢|感谢|多谢|辛苦了|谢啦|thx|thanks)$", s, re.IGNORECASE):
         return _CHITCHAT_REPLIES["thanks"]
-    if re.match(r"^(再见|拜拜|bye)$", raw, re.IGNORECASE):
+    if re.match(r"^(再见|拜拜|bye|回头见|下次再聊)$", s, re.IGNORECASE):
         return _CHITCHAT_REPLIES["bye"]
     return _CHITCHAT_REPLIES["ack"]
 

@@ -179,6 +179,9 @@ def admin_rebuild(req: RebuildRequest):
         build_for_product(req.product.strip())
         # 重建后清除缓存，下次请求会加载新索引
         invalidate_store_cache(req.product.strip())
+        # 同时清除关联数据缓存
+        from relation_engine import invalidate_relations_cache
+        invalidate_relations_cache()
         return {"ok": True, "product": req.product}
     except Exception as e:
         log_error("admin_rebuild", repr(e), meta={"product": req.product})
