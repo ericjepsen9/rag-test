@@ -584,7 +584,8 @@ def _accept_line(clean: str, route: str) -> bool:
                       "ml", "瓶", "液体", "常温"]
     if any(k in clean for k in basic_keywords):
         return True
-    return len(clean) <= 60
+    # 无关键词的短行不接受（避免无信息片段）
+    return False
 
 
 def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: str) -> List[str]:
@@ -620,17 +621,25 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
 
     # 各路由的条目数限制 (brief, full)
     limits = {
-        "aftercare":       (10, 28),
+        "aftercare":       (14, 32),  # 14个子主题，brief 不丢失整类
         "operation":       (10, 24),
         "contraindication": (8,  18),
-        "risk":            (8,  20),
+        "risk":            (10, 22),
         "combo":           (8,  16),
-        "ingredient":      (10, 24),
+        "ingredient":      (8,  28),  # 7成分各3条，full 需28条
         "basic":           (10, 22),
-        "effect":          (8,  18),
-        "pre_care":        (8,  18),
-        "design":          (10, 24),
+        "effect":          (10, 20),  # 效果问题关注度高
+        "pre_care":        (10, 20),
+        "design":          (12, 26),
         "repair":          (10, 22),
+        # 跨实体路由
+        "complication":    (10, 24),
+        "course":          (10, 22),
+        "anatomy_q":       (10, 22),
+        "indication_q":    (10, 22),
+        "procedure_q":     (10, 22),
+        "equipment_q":     (8,  18),
+        "script":          (8,  18),
     }
     brief_lim, full_lim = limits.get(route, (8, 20))
     limit = brief_lim if mode == "brief" else full_lim
@@ -908,25 +917,27 @@ def openai_rewrite_answer(text: str, route: str) -> str:
 def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
                         query: str = "") -> List[str]:
     """当规则提取失败时，从检索结果中提取文本作为 fallback 答案。
-    优先选择包含查询关键词的行，其次取各 chunk 的前几行。"""
-    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if len(t) >= 2]
-    priority_lines = []
-    other_lines = []
+    优先选择包含查询关键词的行，其次取各 chunk 的前几行。
+    按关键词匹配数排序，去重后返回。"""
+    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if len(t) >= 3]
+    scored_lines = []
     for h in hits:
         text = (h.get("text") or "").strip()
         if not text:
             continue
         for ln in text.split("\n"):
             ln = ln.strip()
-            if not ln or len(ln) <= 4:
+            if not ln or len(ln) <= 6:
+                continue
+            # 跳过纯标题行和分隔线
+            if re.match(r"^[一二三四五六七八九十]+、", ln) or set(ln) <= {"=", "-", "_", " "}:
                 continue
             ln_lower = ln.lower()
-            if query_terms and any(t in ln_lower for t in query_terms):
-                priority_lines.append(ln)
-            else:
-                other_lines.append(ln)
-    # 关键词匹配行优先，再补充其他行
-    result = uniq(priority_lines + other_lines)
+            match_count = sum(1 for t in query_terms if t in ln_lower) if query_terms else 0
+            scored_lines.append((match_count, ln))
+    # 按匹配数降序排列
+    scored_lines.sort(key=lambda x: x[0], reverse=True)
+    result = uniq([ln for _, ln in scored_lines])
     return result[:max_lines]
 
 
@@ -1002,11 +1013,15 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
     body_lines = parse_answer(route, product, mode)
 
-    # 补充 FAQ 命中：如果检索结果中有 FAQ 条目与查询高度相关，追加到答案中
-    if body_lines and hits:
+    # 补充 FAQ 命中：规则提取结果不够丰富时，用 FAQ 补充
+    # 规则提取已充分（>= 6 条）时跳过 FAQ 补充，避免冗余
+    if hits and len(body_lines) < 6:
         faq_supplement = _extract_faq_from_hits(hits, question)
         if faq_supplement:
-            body_lines = faq_supplement + [""] + body_lines
+            if body_lines:
+                body_lines = faq_supplement + [""] + body_lines
+            else:
+                body_lines = faq_supplement
 
     # 关联数据补充：从 relations.json 中提取跨实体信息
     relation_lines = relation_enrich(route, product, question)

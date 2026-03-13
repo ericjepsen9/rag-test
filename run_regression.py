@@ -54,6 +54,61 @@ def test_answer_content():
     return ok, total
 
 
+def test_synonym_expansion():
+    """测试同义词扩展是否正确"""
+    from search_utils import expand_synonyms
+
+    cases = [
+        ("打菲罗奥疼吗", ["注射", "疼痛"]),
+        ("做完脸肿了", ["肿胀", "操作"]),
+        ("瘀青怎么办", ["淤青"]),
+        ("玻尿酸是什么", ["透明质酸"]),
+        ("有副作用吗", ["不良反应"]),
+        ("术后保养怎么做", ["护理"]),
+        ("提拉效果好不好", ["紧致"]),
+        ("术后没什么问题", []),  # 无需扩展
+    ]
+    ok = 0
+    total = len(cases)
+    for q, expected in cases:
+        result = expand_synonyms(q)
+        passed = all(e in result for e in expected)
+        if not expected:
+            passed = result == q  # 无扩展时应原样返回
+        status = "PASS" if passed else "FAIL"
+        print(f"  [{status}] synonym: {q} → {result[:60]}")
+        ok += 1 if passed else 0
+    print(f"  Synonym expansion: {ok}/{total}\n")
+    return ok, total
+
+
+def test_query_rewrite_context():
+    """测试对话历史上下文补全"""
+    from query_rewrite import rewrite_query
+
+    cases = [
+        # (问题, 历史, 预期包含的词)
+        ("安全吗", [{"role": "user", "content": "菲罗奥成分是什么"}], "菲罗奥"),
+        ("还有别的吗", [{"role": "user", "content": "菲罗奥术后注意什么"}], "菲罗奥"),
+        ("它的效果怎么样", [{"role": "user", "content": "菲罗奥是什么"}], "菲罗奥"),
+        ("天气怎么样", [{"role": "user", "content": "菲罗奥成分"}], None),  # 不应补全
+    ]
+    ok = 0
+    total = len(cases)
+    for q, history, expect_word in cases:
+        result = rewrite_query(q, history=history)
+        resolved = result["original"]
+        if expect_word:
+            passed = expect_word in resolved
+        else:
+            passed = "菲罗奥" not in resolved  # 不应包含产品名
+        status = "PASS" if passed else "FAIL"
+        print(f"  [{status}] rewrite: \"{q}\" → \"{resolved}\"")
+        ok += 1 if passed else 0
+    print(f"  Query rewrite context: {ok}/{total}\n")
+    return ok, total
+
+
 def main():
     full_mode = "--full" in sys.argv
 
@@ -68,13 +123,23 @@ def main():
     total_ok += ok
     total_all += total
 
+    print("[2] Synonym Expansion Test")
+    ok, total = test_synonym_expansion()
+    total_ok += ok
+    total_all += total
+
+    print("[3] Query Rewrite Context Test")
+    ok, total = test_query_rewrite_context()
+    total_ok += ok
+    total_all += total
+
     if full_mode:
-        print("[2] Answer Content Test")
+        print("[4] Answer Content Test")
         ok, total = test_answer_content()
         total_ok += ok
         total_all += total
     else:
-        print("[2] Answer Content Test (skipped, use --full to enable)")
+        print("[4] Answer Content Test (skipped, use --full to enable)")
 
     print("=" * 50)
     print(f"Total: {total_ok}/{total_all} passed")

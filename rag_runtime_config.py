@@ -121,27 +121,27 @@ SECTION_RULES = {
     },
     "course": {
         "titles": ["一、疗程规划总则", "疗程规划", "疗程方案"],
-        "stops": [],
+        "stops": ["三、", "四、", "项目对比"],
     },
     "anatomy_q": {
         "titles": ["一、面部分区与常见治疗方案", "面部分区"],
-        "stops": [],
+        "stops": ["三、", "四、", "常见问题"],
     },
     "indication_q": {
         "titles": ["一、按皮肤状态分类的治疗推荐", "按皮肤状态"],
-        "stops": [],
+        "stops": ["三、", "四、", "常见问题"],
     },
     "procedure_q": {
         "titles": ["一、项目概述", "项目概述", "项目名称"],
-        "stops": [],
+        "stops": ["二、", "三、"],
     },
     "equipment_q": {
         "titles": ["一、设备概述", "设备概述", "设备名称"],
-        "stops": [],
+        "stops": ["二、", "三、"],
     },
     "script": {
         "titles": ["一、客户常见顾虑应答指南", "客户常见顾虑"],
-        "stops": [],
+        "stops": ["三、", "四、"],
     },
 }
 
@@ -266,11 +266,11 @@ QUESTION_TYPE_CONFIG = {
     "design":            {"k": 10, "threshold": 0.25},
     "repair":            {"k": 10, "threshold": 0.25},
     # 跨实体路由
-    "complication":      {"k": 10, "threshold": 0.20},
+    "complication":      {"k": 10, "threshold": 0.20, "vw": 0.60, "kw": 0.40},
     "course":            {"k": 10, "threshold": 0.25},
-    "anatomy_q":         {"k": 8,  "threshold": 0.25},
-    "indication_q":      {"k": 10, "threshold": 0.20},
-    "procedure_q":       {"k": 10, "threshold": 0.25},
+    "anatomy_q":         {"k": 8,  "threshold": 0.25, "vw": 0.50, "kw": 0.50},
+    "indication_q":      {"k": 10, "threshold": 0.20, "vw": 0.55, "kw": 0.45},
+    "procedure_q":       {"k": 10, "threshold": 0.25, "vw": 0.50, "kw": 0.50},
     "equipment_q":       {"k": 8,  "threshold": 0.25, "vw": 0.50, "kw": 0.50},
     "script":            {"k": 8,  "threshold": 0.25},
 }
