@@ -192,9 +192,13 @@ def _resolve_context(question: str, history_ctx: Dict[str, Any]) -> str:
     prefix = " ".join(prefix_parts)
 
     # 模式1: 指代词替换 — "它的成分呢" → "菲罗奥的成分呢"
-    if _PRONOUN_PATTERNS.search(q):
-        resolved = _PRONOUN_PATTERNS.sub(prefix, q, count=1)
-        return resolved
+    # 仅替换句首或标点后的指代词，避免句中错误替换（如 "和它一起用"）
+    m = _PRONOUN_PATTERNS.search(q)
+    if m:
+        pos = m.start()
+        if pos == 0 or q[pos - 1] in "，。？！；、,;!? ":
+            resolved = q[:pos] + prefix + q[m.end():]
+            return resolved
 
     # 模式2: 追问/延续补全 — "还有别的吗" "成分呢" "禁忌人群有哪些" → 补充上下文
     if _FOLLOWUP_PATTERNS.search(q):

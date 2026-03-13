@@ -51,6 +51,7 @@ for _k, _v in _SYNONYM_MAP.items():
 def expand_synonyms(query: str) -> str:
     """在查询中追加同义词，提升 BM25 召回率。
     例如 "打菲罗奥疼吗" → "打菲罗奥疼吗 注射 疼痛"
+    支持时间模式扩展：术后第N天 → 追加恢复/消退关键词
     """
     extra = set()
     q_lower = query.lower()
@@ -59,6 +60,11 @@ def expand_synonyms(query: str) -> str:
             for syn in synonyms:
                 if syn not in q_lower:
                     extra.add(syn)
+    # 时间模式扩展：术后第X天/周/月 → 补充恢复相关词
+    if re.search(r"术后[第]?\d+[天日周月]", q_lower):
+        for w in ("恢复", "消退", "正常"):
+            if w not in q_lower:
+                extra.add(w)
     if extra:
         return query + " " + " ".join(extra)
     return query
@@ -167,8 +173,9 @@ def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
         if tf == 0:
             continue
         df = doc_freqs.get(term, 0)
-        # IDF: log((N - df + 0.5) / (df + 0.5) + 1)
-        idf = math.log((n_docs - df + 0.5) / (df + 0.5) + 1.0)
+        # IDF: 对小语料库平滑，防止稀有词分数膨胀
+        effective_n = max(n_docs, 100)
+        idf = math.log((effective_n - df + 0.5) / (df + 0.5) + 1.0)
         # TF normalization
         tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1)))
         score += idf * tf_norm
@@ -280,7 +287,9 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
     for h in vector_hits:
         key = _hit_key(h)
         merged[key] = dict(h)
-        merged[key]["hybrid_score"] = float(h.get("score", 0.0)) * vw
+        # 安全钳位：FAISS 余弦相似度理论范围 [0,1]，防止超界
+        vs = min(1.0, max(0.0, float(h.get("score", 0.0))))
+        merged[key]["hybrid_score"] = vs * vw
     for h in keyword_hits:
         key = _hit_key(h)
         if key not in merged:

@@ -21,7 +21,7 @@ from rag_runtime_config import (
     HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
     MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
     EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_QUERY, EMBED_MAX_LENGTH_QUERY,
-    LLM_TEMPERATURE, LLM_MAX_TOKENS_BRIEF, LLM_MAX_TOKENS_FULL,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS_BRIEF, LLM_MAX_TOKENS_FULL, ROUTE_LLM_TEMPERATURE,
     RELATIONS_FILE,
     PRICE_REPLY, COMPARISON_REPLY, LOCATION_REPLY,
 )
@@ -783,17 +783,21 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
 
 
 def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
-    """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断"""
+    """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断。
+    前3个片段含完整元数据头，后续片段仅标序号以节省 token。"""
     parts = []
     total = 0
     for i, h in enumerate(hits, 1):
         text = (h.get("text") or "").strip()
         if not text:
             continue
-        source = h.get("meta", {}).get("source_file", "unknown")
-        chunk_id = h.get("meta", {}).get("chunk_id", "?")
-        score = h.get("hybrid_score", h.get("score", 0.0))
-        header = f"[片段{i} | {source}#{chunk_id} | 相关度:{score:.2f}]"
+        if i <= 3:
+            source = h.get("meta", {}).get("source_file", "unknown")
+            chunk_id = h.get("meta", {}).get("chunk_id", "?")
+            score = h.get("hybrid_score", h.get("score", 0.0))
+            header = f"[片段{i} | {source}#{chunk_id} | 相关度:{score:.2f}]"
+        else:
+            header = f"[片段{i}]"
         part = f"{header}\n{text}"
         # 至少保留 1 个片段；之后按完整 chunk 粒度截断
         if parts and total + len(part) > max_chars:
@@ -885,7 +889,7 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=LLM_TEMPERATURE,
+            temperature=ROUTE_LLM_TEMPERATURE.get(route, LLM_TEMPERATURE),
             max_tokens=LLM_MAX_TOKENS_BRIEF if mode == "brief" else LLM_MAX_TOKENS_FULL,
         )
         return (resp.choices[0].message.content or "").strip()

@@ -90,8 +90,11 @@ def is_title_like(line: str) -> bool:
 
 
 def _is_major_section(line: str) -> bool:
-    """判断是否为主章节标题（一、二、...），这些标题处应强制分 chunk"""
-    return bool(re.match(r"^[一二三四五六七八九十]+、", line.strip()))
+    """判断是否为主章节标题（一、二、...）或编号子节标题（1）2）...），
+    这些标题处应强制分 chunk，避免跨章节合并"""
+    s = line.strip()
+    return bool(re.match(r"^[一二三四五六七八九十]+、", s) or
+                re.match(r"^\d+[）\)]\s*.{2,}", s))
 
 
 def split_into_paragraphs(text: str) -> List[str]:
@@ -162,9 +165,13 @@ def merge_paragraphs_to_chunks(paragraphs: List[str], chunk_size: int, overlap: 
                 add_chunk(cur)
             if chunks and overlap > 0:
                 tail = chunks[-1][-overlap:]
-                cur = (tail + "\n" + para).strip()
-                if len(cur) > int(chunk_size * 1.3):
+                # 防止 overlap 跨越主章节边界造成语义污染
+                if _is_major_section(tail.split("\n")[0]):
                     cur = para
+                else:
+                    cur = (tail + "\n" + para).strip()
+                    if len(cur) > int(chunk_size * 1.3):
+                        cur = para
             else:
                 cur = para
 
