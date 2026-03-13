@@ -97,6 +97,28 @@
       background: #f1f5f9;
       color: #222;
     }
+    .media-group {
+      margin-top: 8px;
+    }
+    .media-group img {
+      max-width: 100%;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform .2s;
+    }
+    .media-group img:hover {
+      transform: scale(1.02);
+    }
+    .media-group video {
+      max-width: 100%;
+      border-radius: 8px;
+      margin-top: 4px;
+    }
+    .media-title {
+      font-size: 12px;
+      color: #666;
+      margin: 4px 0 2px;
+    }
   </style>
 </head>
 <body>
@@ -154,10 +176,37 @@
     let chatHistory = [];
     const MAX_HISTORY = 10;
 
-    function addBubble(text, role) {
+    function addBubble(text, role, mediaList) {
       const el = document.createElement("div");
       el.className = "bubble " + (role === "user" ? "bubble-user" : "bubble-bot");
       el.textContent = text;
+      // 在回答气泡后附加媒体
+      if (mediaList && mediaList.length > 0) {
+        const group = document.createElement("div");
+        group.className = "media-group";
+        for (const m of mediaList) {
+          if (!m.url) continue;
+          const label = document.createElement("div");
+          label.className = "media-title";
+          label.textContent = m.title || "";
+          group.appendChild(label);
+          if (m.type === "video") {
+            const v = document.createElement("video");
+            v.src = m.url;
+            v.controls = true;
+            v.preload = "metadata";
+            v.playsInline = true;
+            group.appendChild(v);
+          } else {
+            const img = document.createElement("img");
+            img.src = m.url;
+            img.alt = m.title || "";
+            img.loading = "lazy";
+            group.appendChild(img);
+          }
+        }
+        el.appendChild(group);
+      }
       $("chatLog").appendChild(el);
       $("chatLog").scrollTop = $("chatLog").scrollHeight;
     }
@@ -225,8 +274,8 @@
           $("status").innerHTML = `<span class="err">失败</span>`;
         }
 
-        // 显示回答气泡
-        addBubble(answer, "bot");
+        // 显示回答气泡（附带媒体）
+        addBubble(answer, "bot", data.media || []);
 
         // 更新对话历史
         chatHistory.push({ role: "user", content: question });
