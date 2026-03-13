@@ -289,8 +289,23 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
         parts = next_parts
 
     # "A和B分别是什么" → ["A是什么", "B是什么"]
+    # "A、B和C分别是什么" → ["A是什么", "B是什么", "C是什么"]
     expanded = []
     for p in parts:
+        # 先尝试带顿号的多项列举："A、B、C分别是什么"
+        m_list = re.match(r"^(.+?)(分别|各自)(是什么|有哪些|怎么样|怎么办)$", p.strip())
+        if m_list:
+            items_str = m_list.group(1)
+            suffix = m_list.group(3)
+            # 用顿号和"和"分割列举项
+            items = re.split(r"[、和]", items_str)
+            if len(items) >= 2:
+                for item in items:
+                    item = item.strip()
+                    if item:
+                        expanded.append(item + suffix)
+                continue
+        # 简单的 "A和B是什么" 模式
         m = re.match(r"^(.+?)和(.+?)(分别|各自)?(是什么|有哪些|怎么样)$", p.strip())
         if m:
             suffix = m.group(4)
@@ -299,16 +314,31 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
         else:
             expanded.append(p)
 
+    # 顿号分隔列举：当包含顿号且有共同的疑问尾时拆分
+    # "水光、微针、光电怎么选" → ["水光怎么选", "微针怎么选", "光电怎么选"]
+    enum_expanded = []
+    for p in expanded:
+        if "、" in p:
+            m_enum = re.match(r"^(.+?)(怎么选|怎么样|是什么|有什么区别|哪个好)$", p.strip())
+            if m_enum:
+                items_str = m_enum.group(1)
+                suffix = m_enum.group(2)
+                items = [x.strip() for x in items_str.split("、") if x.strip()]
+                if len(items) >= 2:
+                    enum_expanded.extend(item + suffix for item in items)
+                    continue
+        enum_expanded.append(p)
+
     # 逗号分隔：仅当两侧都 ≥4 字符时才拆分（避免 "术后1天，可以洗脸" 被误拆）
     final = []
-    for p in expanded:
+    for p in enum_expanded:
         comma_parts = re.split(r"[，,]", p)
         if len(comma_parts) >= 2 and all(len(cp.strip()) >= 5 for cp in comma_parts):
             final.extend(comma_parts)
         else:
             final.append(p)
 
-    result = [p.strip().rstrip("。？?") for p in final if len(p.strip()) >= 3]
+    result = [p.strip().rstrip("。？?") for p in final if len(p.strip()) >= 2]
     return uniq(result)
 
 

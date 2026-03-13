@@ -237,7 +237,7 @@ LLM_MAX_TOKENS_FULL = 2048
 BM25_K1 = 1.5
 BM25_B = 0.75
 SIGMOID_SCALE = 5.0
-ROUTE_BOOST = 0.05
+ROUTE_BOOST = 0.12
 CACHE_MAX_PRODUCTS = 32
 
 # ===== 回答构建 =====
@@ -251,13 +251,14 @@ HYBRID_VECTOR_WEIGHT = 0.65
 HYBRID_KEYWORD_WEIGHT = 0.35
 
 # ===== 按问题类型调整检索参数 =====
+# vw/kw: 向量/关键词权重覆盖（可选）。精确参数类问题提高 kw，语义模糊问题提高 vw。
 QUESTION_TYPE_CONFIG = {
     "ingredient":        {"k": 8,  "threshold": 0.25},
     "basic":             {"k": 6,  "threshold": 0.30},
-    "operation":         {"k": 10, "threshold": 0.25},
+    "operation":         {"k": 10, "threshold": 0.25, "vw": 0.55, "kw": 0.45},
     "aftercare":         {"k": 8,  "threshold": 0.25},
     "risk":              {"k": 8,  "threshold": 0.25},
-    "anti_fake":         {"k": 8,  "threshold": 0.20},
+    "anti_fake":         {"k": 8,  "threshold": 0.20, "vw": 0.45, "kw": 0.55},
     "contraindication":  {"k": 8,  "threshold": 0.25},
     "combo":             {"k": 10, "threshold": 0.30},
     "effect":            {"k": 8,  "threshold": 0.25},
@@ -270,7 +271,7 @@ QUESTION_TYPE_CONFIG = {
     "anatomy_q":         {"k": 8,  "threshold": 0.25},
     "indication_q":      {"k": 10, "threshold": 0.20},
     "procedure_q":       {"k": 10, "threshold": 0.25},
-    "equipment_q":       {"k": 8,  "threshold": 0.25},
+    "equipment_q":       {"k": 8,  "threshold": 0.25, "vw": 0.50, "kw": 0.50},
     "script":            {"k": 8,  "threshold": 0.25},
 }
 

@@ -200,17 +200,25 @@ def detect_product(question: str) -> str:
 def _detect_special_intent(q: str) -> str:
     """检测无知识兜底的特殊意图：价格、对比、地点。返回意图名或空字符串。"""
     price_kws = ["多少钱", "价格", "费用", "贵不贵", "便宜", "一支多少", "疗程多少钱",
-                 "收费", "报价", "花多少"]
+                 "收费", "报价", "花多少", "怎么收费", "优惠", "打折", "一次多少",
+                 "一针多少", "总花费", "预算多少"]
     if any(k in q for k in price_kws):
         return "price"
 
-    compare_kws = ["区别", "对比", "vs", "和.+比", "哪个好", "哪个更", "差别",
-                   "不同点", "优劣", "比较"]
-    for k in compare_kws:
-        if re.search(k, q):
-            return "comparison"
+    # 对比意图：需排除产品自身成分对比（如"PCL和透明质酸的作用"属于 ingredient）
+    compare_kws = ["区别", "对比", "vs", "哪个好", "哪个更", "差别",
+                   "不同点", "优劣", "比较", "哪里比.*好", "和.*区别",
+                   "和.*哪个", "好还是"]
+    # 排除成分层面的内部对比
+    _internal_compare = ["PCL", "聚己内酯", "透明质酸", "成分"]
+    if not any(ic in q for ic in _internal_compare):
+        for k in compare_kws:
+            if re.search(k, q):
+                return "comparison"
 
-    location_kws = ["哪里可以做", "哪家医院", "附近", "哪里有", "哪能做", "去哪"]
+    location_kws = ["哪里可以做", "哪家医院", "附近", "哪里有", "哪能做", "去哪",
+                    "哪个城市", "北京能做", "上海能做", "哪里能打", "哪里做",
+                    "哪个机构", "哪个诊所", "推荐医院"]
     if any(k in q for k in location_kws):
         return "location"
     return ""
@@ -314,7 +322,7 @@ def detect_route(question: str) -> str:
     return "basic"
 
 
-def _truncate_to_sentence(text: str, max_chars: int = 300) -> str:
+def _truncate_to_sentence(text: str, max_chars: int = 450) -> str:
     """截断文本到最近的句子边界，避免截断关键信息"""
     if len(text) <= max_chars:
         return text
@@ -455,15 +463,23 @@ def _accept_line(clean: str, route: str) -> bool:
     route_keywords = {
         "aftercare": ["术后", "洗脸", "辛辣", "禁酒", "面膜", "保湿", "熬夜", "按摩",
                        "洁面仪", "多喝水", "水果", "蔬菜", "冰敷", "清洁", "饮食",
-                       "睡眠", "面霜", "生活"],
+                       "睡眠", "面霜", "生活", "运动", "健身", "出汗", "化妆", "上妆",
+                       "卸妆", "防晒", "SPF", "紫外线", "日晒", "洗澡", "水温",
+                       "桑拿", "汗蒸", "泡澡", "游泳", "泳池", "上班", "工作",
+                       "海鲜", "喝酒", "饮酒", "避免", "恢复"],
         "operation": ["针头", "深度", "注射", "0.8", "1.0", "0.3ml", "2cm", "MTS",
                       "水光", "涂抹", "微针", "仪器", "全脸", "进针", "间距",
-                      "用量", "方式", "中胚层", "安全声明", "专业人员", "不建议"],
+                      "用量", "方式", "中胚层", "安全声明", "专业人员", "不建议",
+                      "麻醉", "敷麻", "疼", "痛", "耐受", "分钟", "操作"],
         "contraindication": ["免疫", "妊娠", "哺乳", "过敏", "18", "风湿", "皮肤疾病",
-                             "感染", "炎症", "禁忌"],
+                             "感染", "炎症", "禁忌", "敏感", "年龄", "男性", "性别",
+                             "自行", "自己", "在家", "抗凝", "阿司匹林", "停药",
+                             "未成年", "评估", "医生"],
         "risk": ["红肿", "疼痛", "结节", "硬块", "感染", "过敏", "淤青", "肿胀",
                  "冰敷", "就医", "反应", "处理", "缓解", "发热", "化脓",
-                 "异常", "严重", "正规医疗", "专业医师", "注意事项"],
+                 "异常", "严重", "正规医疗", "专业医师", "注意事项",
+                 "消退", "正常", "天", "瘀青", "发紫", "疹子", "红疹", "痒",
+                 "坏死", "溃烂", "不消", "越来越", "色沉"],
         "combo": ["联合", "搭配", "间隔", "水光", "微针", "光电", "填充", "同日",
                   "恢复", "建议", "不建议", "周"],
         "ingredient": ["PCL", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽", "肽",
@@ -623,7 +639,7 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
     # 用 bigram（2字组合）做模糊匹配，解决中文不分词问题
     q_bigrams = set(q_lower[i:i+2] for i in range(len(q_lower) - 1))
 
-    faq_lines = []
+    faq_candidates = []
     for h in hits:
         meta = h.get("meta", {})
         if meta.get("source_type") != "faq":
@@ -631,15 +647,22 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
         text = (h.get("text") or "").strip()
         if "【Q】" not in text or "【A】" not in text:
             continue
-        q_part = text.split("【A】")[0].lower()
+        q_part = text.split("【A】")[0].replace("【Q】", "").lower().replace(" ", "")
         # 计算 FAQ 问题与用户问题的 bigram 重叠率
         faq_bigrams = set(q_part[i:i+2] for i in range(len(q_part) - 1))
+        if not faq_bigrams:
+            continue
         overlap = len(q_bigrams & faq_bigrams)
-        if overlap >= 2:  # 至少2个 bigram 重叠
+        # 用比率而非绝对数量：重叠 bigram 占用户问题 bigram 的比例 ≥30%
+        # 同时要求至少 3 个重叠（避免极短问题误匹配）
+        ratio = overlap / max(len(q_bigrams), 1)
+        if overlap >= 3 and ratio >= 0.3:
             a_part = text.split("【A】")[1].strip()
             if a_part:
-                faq_lines.append(a_part)
-    return faq_lines[:2]  # 最多2条FAQ补充
+                faq_candidates.append((ratio, a_part))
+    # 按重叠率排序，取最相关的
+    faq_candidates.sort(key=lambda x: x[0], reverse=True)
+    return [c[1] for c in faq_candidates[:2]]
 
 
 def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
@@ -838,7 +861,10 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         vector_hits = vector_hits + shared_v
         keyword_hits = keyword_hits + shared_kw
 
-    hits = merge_hybrid(vector_hits, keyword_hits, HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, route_top_k, route=route) if (vector_hits or keyword_hits) else []
+    # 路由感知权重：精确参数类问题提高关键词权重
+    vw = route_cfg.get("vw", HYBRID_VECTOR_WEIGHT)
+    kw = route_cfg.get("kw", HYBRID_KEYWORD_WEIGHT)
+    hits = merge_hybrid(vector_hits, keyword_hits, vw, kw, route_top_k, route=route) if (vector_hits or keyword_hits) else []
     # 过滤低于 threshold 的结果
     hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
 
