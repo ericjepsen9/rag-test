@@ -12,11 +12,15 @@ try:
 except Exception:
     pass
 
-from rag_runtime_config import KNOWLEDGE_DIR, STORE_ROOT
+from rag_runtime_config import (
+    KNOWLEDGE_DIR, STORE_ROOT,
+    EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_BUILD, EMBED_MAX_LENGTH_BUILD,
+    CHUNK_SIZE as _DEFAULT_CHUNK_SIZE, CHUNK_OVERLAP as _DEFAULT_CHUNK_OVERLAP,
+)
 
-MODEL_NAME = "BAAI/bge-m3"
-CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", "420"))
-CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", "50"))
+MODEL_NAME = EMBED_MODEL_NAME
+CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", str(_DEFAULT_CHUNK_SIZE)))
+CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP", str(_DEFAULT_CHUNK_OVERLAP)))
 _model = None
 _np = None
 _faiss = None
@@ -43,7 +47,7 @@ def get_model():
     if _model is None:
         from FlagEmbedding import BGEM3FlagModel
         print(f"[INFO] 加载模型：{MODEL_NAME}")
-        _model = BGEM3FlagModel(MODEL_NAME, use_fp16=True)
+        _model = BGEM3FlagModel(MODEL_NAME, use_fp16=EMBED_USE_FP16)
     return _model
 
 
@@ -196,7 +200,7 @@ def chunk_text(text: str) -> List[str]:
 
 def embed_texts(texts):
     model = get_model()
-    out = model.encode(texts, batch_size=8, max_length=8192)
+    out = model.encode(texts, batch_size=EMBED_BATCH_SIZE_BUILD, max_length=EMBED_MAX_LENGTH_BUILD)
     vecs = None
     if isinstance(out, dict):
         if out.get("dense_vecs") is not None:

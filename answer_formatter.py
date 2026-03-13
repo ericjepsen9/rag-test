@@ -21,6 +21,13 @@ def format_structured_answer(
         "pre_care": "术前准备",
         "design": "方案设计与面部评估",
         "repair": "修复与补救方案",
+        "complication": "术后并发症处理",
+        "course": "疗程规划",
+        "anatomy_q": "部位治疗方案",
+        "indication_q": "适应症推荐",
+        "procedure_q": "项目介绍",
+        "equipment_q": "设备信息",
+        "script": "客户沟通话术",
     }
     title = title_map.get(route, "回答")
     out = [f"{title}（资料提取）：", "结论："]

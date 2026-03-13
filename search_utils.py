@@ -2,6 +2,8 @@ import math
 import re
 from typing import Any, List, Dict, Tuple
 
+from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST
+
 
 def normalize_text(text: str) -> str:
     text = text or ""
@@ -92,7 +94,7 @@ def _count_term(term: str, text: str) -> int:
 
 
 def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
-               doc_freqs: Dict[str, int], k1: float = 1.5, b: float = 0.75) -> float:
+               doc_freqs: Dict[str, int], k1: float = BM25_K1, b: float = BM25_B) -> float:
     """BM25 评分：考虑词频、文档长度、逆文档频率"""
     q_terms = _extract_terms(query)
     t = (text or "").lower()
@@ -114,7 +116,7 @@ def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
     return score
 
 
-_CACHE_MAX_SIZE = 32  # 最多缓存 32 个产品的语料统计
+_CACHE_MAX_SIZE = CACHE_MAX_PRODUCTS
 _bm25_cache: Dict[Any, Tuple[List[str], int, float]] = {}
 
 
@@ -196,7 +198,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
     # 归一化到 [0, 1] 区间：sigmoid 函数使不同 query 间的分数可比
     # sigmoid(x/scale) 中 scale=5 使典型 BM25 分数（0~15）映射到 (0.5, 0.95) 区间
     for x in scored:
-        x["keyword_score"] = 1.0 / (1.0 + math.exp(-x["keyword_score"] / 5.0))
+        x["keyword_score"] = 1.0 / (1.0 + math.exp(-x["keyword_score"] / SIGMOID_SCALE))
 
     return scored[:top_k]
 
@@ -258,7 +260,7 @@ _ROUTE_SECTION_MARKERS = {
     "equipment_q":       ["设备概述", "设备参数", "适配产品", "针头规格"],
     "script":            ["客户常见顾虑", "话术", "怎么解释", "合规要点", "沟通技巧"],
 }
-_ROUTE_BOOST = 0.05  # 小幅加分，避免压过真正高相关度的结果
+_ROUTE_BOOST = ROUTE_BOOST
 
 
 def _apply_route_boost(merged: Dict[str, Dict], route: str) -> None:

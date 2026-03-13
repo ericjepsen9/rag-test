@@ -20,6 +20,9 @@ from rag_runtime_config import (
     PRODUCT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
     HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
     MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
+    EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_QUERY, EMBED_MAX_LENGTH_QUERY,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS_BRIEF, LLM_MAX_TOKENS_FULL,
+    RELATIONS_FILE,
 )
 from search_utils import (
     normalize_lines, uniq, is_faq_line, section_block,
@@ -27,6 +30,7 @@ from search_utils import (
 )
 from query_rewrite import rewrite_query
 from answer_formatter import format_structured_answer
+from relation_engine import enrich_answer as relation_enrich
 from rag_logger import log_qa
 
 _model = None
@@ -80,13 +84,13 @@ def save_answer(text: str):
 def get_model():
     global _model
     if _model is None:
-        _model = get_bg_cls()("BAAI/bge-m3", use_fp16=False)
+        _model = get_bg_cls()(EMBED_MODEL_NAME, use_fp16=EMBED_USE_FP16)
     return _model
 
 
 def embed_query(text: str) -> np.ndarray:
     model = get_model()
-    out = model.encode([text], batch_size=1, max_length=1024)
+    out = model.encode([text], batch_size=EMBED_BATCH_SIZE_QUERY, max_length=EMBED_MAX_LENGTH_QUERY)
     if isinstance(out, dict):
         if "dense_vecs" in out:
             vec = out["dense_vecs"]
@@ -216,6 +220,16 @@ def detect_route(question: str) -> str:
     if "risk" in matched and "contraindication" in matched and has_contra_signal:
         return "contraindication"
 
+    # 消歧：complication vs risk — 术后时间线信号（"术后第N天""术后N天"）→ complication
+    # 长期异常（"术后3个月""半年后"）→ risk
+    temporal_short = re.search(r"术后(第?\d+天|当天|1-3天|一周|1周)", q)
+    temporal_long = re.search(r"(术后\d+个月|半年|一年|长期)", q)
+    if "complication" in matched and "risk" in matched:
+        if temporal_long:
+            return "risk"
+        if temporal_short:
+            return "complication"
+
     # 消歧：修复意图信号 → 优先 repair
     repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
     if "repair" in matched and any(s in q for s in repair_signals):
@@ -228,6 +242,11 @@ def detect_route(question: str) -> str:
         if any(s in q for s in course_signals):
             return "course"
         return "operation"  # 默认偏向操作参数
+
+    # 消歧：联合方案信号 → 优先 combo（"一起做""搭配""联合" 优先于 procedure_q）
+    combo_signals = ["一起做", "联合", "搭配", "同做", "配合", "间隔多久"]
+    if "combo" in matched and any(s in q for s in combo_signals):
+        return "combo"
 
     # 消歧：部位/适应症 vs 方案设计（"怎么打""打哪里""几支" 是设计信号）
     design_signals = ["怎么打", "打哪里", "几支", "怎么设计", "方案", "用量"]
@@ -645,8 +664,8 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.3,
-            max_tokens=1024 if mode == "brief" else 2048,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS_BRIEF if mode == "brief" else LLM_MAX_TOKENS_FULL,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception:
@@ -666,8 +685,8 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         resp = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=1024,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS_BRIEF,
         )
         return (resp.choices[0].message.content or "").strip() or text
     except Exception:
@@ -760,6 +779,11 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
     body_lines = parse_answer(route, product, mode)
 
+    # 关联数据补充：从 relations.json 中提取跨实体信息
+    relation_lines = relation_enrich(route, product, question)
+    if relation_lines:
+        body_lines = body_lines + ["", "【关联信息】"] + relation_lines[:6]
+
     if not body_lines:
         # 规则也提取失败，从检索结果中摘要
         fallback_lines = _fallback_from_hits(hits, query=question)
@@ -798,7 +822,6 @@ _CHITCHAT_REPLIES = {
 
 def _chitchat_reply(raw: str) -> str:
     """根据非提问输入类型返回礼貌回复"""
-    import re
     if re.match(r"^(你好|嗨|hi|hello|hey)$", raw, re.IGNORECASE):
         return _CHITCHAT_REPLIES["greeting"]
     if re.match(r"^(谢谢|感谢|多谢|辛苦了)$", raw):

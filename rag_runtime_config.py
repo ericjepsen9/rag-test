@@ -12,7 +12,6 @@ USE_OPENAI = False
 OPENAI_MODEL = "gpt-4o-mini"
 
 # ===== 输出与调试 =====
-DEBUG = False
 DEFAULT_MODE = "brief"   # brief / full
 DEFAULT_TOP_K = 8
 
@@ -27,7 +26,7 @@ QUESTION_ROUTES = {
     "operation": ["注射", "深度", "参数", "微针", "水光", "操作", "针头", "0.8mm", "0.3ml", "2cm"],
     "anti_fake": ["防伪", "真伪", "HiddenTag", "正品", "鉴别", "验真"],
     "contraindication": ["禁忌", "禁忌人群", "不适合", "过敏体质", "妊娠", "哺乳",
-                         "孕妇", "怀孕", "备孕"],
+                         "孕妇", "怀孕", "备孕", "阿司匹林", "抗凝", "免疫抑制"],
     "combo": ["联合", "同做", "一起做", "间隔", "配合", "搭配"],
     "ingredient": ["成分", "PCL", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽", "肽", "生长因子"],
     "basic": ["是什么", "作用", "适用", "产品", "功效", "备案", "规格"],
@@ -197,6 +196,31 @@ ANATOMY_KEYWORDS = {
 
 TIME_TERMS = ["当天", "术后当天", "术后1天", "术后1-3天", "术后3天", "术后1周", "一周", "术后1个月"]
 SYMPTOM_TERMS = ["红肿", "结节", "疼痛", "过敏", "硬块", "发热", "感染", "刺痛"]
+
+# ===== 实体关联 =====
+RELATIONS_FILE = KNOWLEDGE_DIR / "relations.json"
+
+# ===== 模型参数 =====
+EMBED_MODEL_NAME = "BAAI/bge-m3"
+EMBED_USE_FP16 = True
+EMBED_BATCH_SIZE_BUILD = 8
+EMBED_BATCH_SIZE_QUERY = 1
+EMBED_MAX_LENGTH_BUILD = 8192
+EMBED_MAX_LENGTH_QUERY = 1024
+CHUNK_SIZE = 420
+CHUNK_OVERLAP = 50
+
+# ===== LLM 参数 =====
+LLM_TEMPERATURE = 0.3
+LLM_MAX_TOKENS_BRIEF = 1024
+LLM_MAX_TOKENS_FULL = 2048
+
+# ===== 搜索调优 =====
+BM25_K1 = 1.5
+BM25_B = 0.75
+SIGMOID_SCALE = 5.0
+ROUTE_BOOST = 0.05
+CACHE_MAX_PRODUCTS = 32
 
 # ===== 回答构建 =====
 MAX_SUB_QUESTIONS = 4    # 单次问答最多拆分的子问题数
