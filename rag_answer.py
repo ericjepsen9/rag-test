@@ -210,11 +210,20 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
     return hits
 
 
+_knowledge_file_cache: Dict[str, tuple] = {}  # path -> (mtime, content)
+
 def read_knowledge_file(product: str, fname: str) -> str:
     p = KNOWLEDGE_DIR / product / fname
     if not p.exists():
         return ""
-    return p.read_text(encoding="utf-8")
+    key = str(p)
+    mtime = p.stat().st_mtime
+    cached = _knowledge_file_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    content = p.read_text(encoding="utf-8")
+    _knowledge_file_cache[key] = (mtime, content)
+    return content
 
 
 def _is_product_dir(name: str) -> bool:
@@ -372,10 +381,25 @@ def detect_route(question: str) -> str:
             scores["anatomy_q"] += 3.0
 
     # 设备/仪器关键词 → equipment_q 优先于 operation
-    equipment_words = ["仪器", "设备", "机器", "仪", "水光仪", "微针仪", "品牌"]
+    equipment_words = ["仪器", "设备", "机器", "仪", "水光仪", "微针仪", "品牌", "适配"]
     if "equipment_q" in scores and "operation" in scores:
         if any(ew in q for ew in equipment_words):
             scores["equipment_q"] += 4.0
+
+    # 项目流程/对比 → procedure_q 优先于 operation
+    proc_signals = ["操作流程", "流程", "项目有哪些", "有什么区别", "什么项目"]
+    if "procedure_q" in scores and "operation" in scores:
+        if any(ps in q for ps in proc_signals):
+            scores["procedure_q"] += 4.0
+
+    # 客户沟通场景 → script 优先于 ingredient/basic
+    script_signals = ["客户", "怎么介绍", "怎么解释", "怎么回答", "怎么说", "话术"]
+    if "script" in scores:
+        if any(ss in q for ss in script_signals):
+            for rival in ("ingredient", "basic", "effect"):
+                if rival in scores:
+                    scores["script"] += 4.0
+                    break
 
     # 多实体并列提及 → combo（"菲罗奥和微针"、"水光和光电"）
     # 产品+项目也算并列（"菲罗奥和水光针"）
@@ -711,20 +735,39 @@ _SHARED_ROUTE_DIR = {
 }
 
 
+_shared_knowledge_cache: Dict[str, tuple] = {}  # dir_name -> (max_mtime, content)
+
 def _read_shared_knowledge(dir_name: str) -> str:
-    """读取共享知识目录内容：单文件直接读，多实例拼接所有 main.txt"""
+    """读取共享知识目录内容：单文件直接读，多实例拼接所有 main.txt。带 mtime 缓存。"""
     shared_dir = KNOWLEDGE_DIR / dir_name
     if not shared_dir.exists():
         return ""
     main_file = shared_dir / "main.txt"
     if main_file.exists():
-        return main_file.read_text(encoding="utf-8")
+        mtime = main_file.stat().st_mtime
+        cached = _shared_knowledge_cache.get(dir_name)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        content = main_file.read_text(encoding="utf-8")
+        _shared_knowledge_cache[dir_name] = (mtime, content)
+        return content
     # 多实例目录：拼接所有子目录的 main.txt
     parts = []
+    max_mtime = 0.0
     for inst in sorted(shared_dir.iterdir()):
-        if inst.is_dir() and (inst / "main.txt").exists():
-            parts.append(inst.joinpath("main.txt").read_text(encoding="utf-8"))
-    return "\n\n".join(parts)
+        f = inst / "main.txt"
+        if inst.is_dir() and f.exists():
+            mt = f.stat().st_mtime
+            if mt > max_mtime:
+                max_mtime = mt
+            parts.append(f.read_text(encoding="utf-8"))
+    cached = _shared_knowledge_cache.get(dir_name)
+    if cached and cached[0] == max_mtime and parts:
+        return cached[1]
+    content = "\n\n".join(parts)
+    if max_mtime > 0:
+        _shared_knowledge_cache[dir_name] = (max_mtime, content)
+    return content
 
 
 def parse_answer(route: str, product: str, mode: str) -> List[str]:
@@ -1038,17 +1081,31 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     search_product = route not in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
     search_shared = route in _SHARED_ROUTES
 
+    # 并行执行向量检索和关键词检索（IO/计算密集混合，线程级并行有收益）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _do_vector(store_name):
+        return vector_search(store_name, search_q, VECTOR_TOP_K)
+
+    def _do_keyword(store_name):
+        _, d = load_store(store_name)
+        return keyword_search(rewrite["expanded"], d, KEYWORD_TOP_K, skip_synonym_expand=True) if d else []
+
     vector_hits, keyword_hits = [], []
-    if search_product:
-        vector_hits = vector_search(product, search_q, VECTOR_TOP_K)
-        _, docs = load_store(product)
-        keyword_hits = keyword_search(rewrite["expanded"], docs, KEYWORD_TOP_K) if docs else []
-    if search_shared:
-        shared_v = vector_search("_shared", search_q, VECTOR_TOP_K)
-        _, shared_docs = load_store("_shared")
-        shared_kw = keyword_search(rewrite["expanded"], shared_docs, KEYWORD_TOP_K) if shared_docs else []
-        vector_hits = vector_hits + shared_v
-        keyword_hits = keyword_hits + shared_kw
+    futures = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        if search_product:
+            futures["v_prod"] = pool.submit(_do_vector, product)
+            futures["k_prod"] = pool.submit(_do_keyword, product)
+        if search_shared:
+            futures["v_shared"] = pool.submit(_do_vector, "_shared")
+            futures["k_shared"] = pool.submit(_do_keyword, "_shared")
+        for key, fut in futures.items():
+            result = fut.result()
+            if key.startswith("v_"):
+                vector_hits.extend(result)
+            else:
+                keyword_hits.extend(result)
 
     # 路由感知权重：精确参数类问题提高关键词权重
     vw = route_cfg.get("vw", HYBRID_VECTOR_WEIGHT)

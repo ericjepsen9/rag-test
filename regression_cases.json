@@ -584,5 +584,133 @@
     "expect_any": ["间隔", "水光", "周", "天"],
     "route": "combo",
     "_note": "联合方案+时序约束"
+  },
+
+  {"_comment": "========== Round 7: 扩充覆盖不足的路由 =========="},
+
+  {"_comment": "--- pre_care 扩充 ---"},
+  {
+    "q": "做菲罗奥之前需要检查什么",
+    "expect_any": ["检查", "术前", "过敏", "病史"],
+    "route": "pre_care",
+    "_note": "术前检查场景"
+  },
+  {
+    "q": "术前要不要停用维A酸",
+    "expect_any": ["术前", "A酸", "停药", "停用"],
+    "route": "pre_care",
+    "_note": "药物术前准备"
+  },
+
+  {"_comment": "--- complication 扩充 ---"},
+  {
+    "q": "术后当天脸红是正常的吗",
+    "expect_any": ["正常", "红", "当天", "消退"],
+    "route": "complication",
+    "_note": "当天短期反应→complication"
+  },
+  {
+    "q": "做完第二天淤青正常吗",
+    "expect_any": ["淤青", "正常", "消退", "天"],
+    "route": "complication",
+    "_note": "第二天短期时间线→complication"
+  },
+
+  {"_comment": "--- course 扩充 ---"},
+  {
+    "q": "菲罗奥一个疗程几次",
+    "expect_any": ["疗程", "次", "间隔"],
+    "route": "course",
+    "_note": "疗程次数"
+  },
+  {
+    "q": "两次注射之间间隔多长时间",
+    "expect_any": ["间隔", "周", "月", "疗程"],
+    "route": "course",
+    "_note": "注射间隔→course"
+  },
+
+  {"_comment": "--- anatomy_q 扩充 ---"},
+  {
+    "q": "额头皱纹可以打菲罗奥吗",
+    "expect_any": ["额头", "额部", "皱纹", "方案"],
+    "route": "anatomy_q",
+    "_note": "部位+产品查询"
+  },
+  {
+    "q": "手背可以做吗",
+    "expect_any": ["手背", "手部", "方案"],
+    "route": "anatomy_q",
+    "_note": "非面部部位"
+  },
+
+  {"_comment": "--- indication_q 扩充 ---"},
+  {
+    "q": "痘坑用什么方法改善",
+    "expect_any": ["痘坑", "微针", "改善", "推荐"],
+    "route": "indication_q",
+    "_note": "适应症推荐"
+  },
+  {
+    "q": "皮肤暗沉怎么改善",
+    "expect_any": ["暗沉", "改善", "推荐", "水光"],
+    "route": "indication_q",
+    "_note": "暗沉适应症"
+  },
+
+  {"_comment": "--- procedure_q 扩充 ---"},
+  {
+    "q": "光电项目有哪些",
+    "expect_any": ["光电", "射频", "激光", "项目"],
+    "route": "procedure_q",
+    "_note": "项目类别查询"
+  },
+  {
+    "q": "微针的操作流程是什么",
+    "expect_any": ["微针", "操作", "流程", "MTS"],
+    "route": "procedure_q",
+    "_note": "项目操作流程"
+  },
+
+  {"_comment": "--- equipment_q 扩充 ---"},
+  {
+    "q": "微针仪的针头深度怎么调",
+    "expect_any": ["针头", "深度", "微针", "参数"],
+    "route": "equipment_q",
+    "_note": "设备参数调节"
+  },
+  {
+    "q": "菲罗奥适配什么品牌的仪器",
+    "expect_any": ["仪器", "品牌", "设备", "适配"],
+    "route": "equipment_q",
+    "_note": "产品设备适配"
+  },
+
+  {"_comment": "--- script 扩充 ---"},
+  {
+    "q": "客户问价格太贵怎么回答",
+    "expect_any": ["客户", "价格", "沟通", "话术", "价值"],
+    "route": "script",
+    "_note": "价格异议话术"
+  },
+  {
+    "q": "怎么向客户介绍菲罗奥和玻尿酸的区别",
+    "expect_any": ["区别", "介绍", "PCL", "透明质酸", "客户", "胶原"],
+    "route": "script",
+    "_note": "产品对比话术"
+  },
+
+  {"_comment": "--- 边界场景: 空白/特殊字符 ---"},
+  {
+    "q": "菲罗奥",
+    "expect_any": ["产品", "菲罗奥", "CELLOFILL", "FILLOUP"],
+    "route": "basic",
+    "_note": "仅产品名，无具体问题→basic"
+  },
+  {
+    "q": "术后护理注意事项有哪些",
+    "expect_any": ["术后", "护理", "洗脸", "保湿"],
+    "route": "aftercare",
+    "_note": "完整句式aftercare"
   }
 ]

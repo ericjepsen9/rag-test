@@ -239,12 +239,36 @@ def _get_doc_freq(term: str, texts: List[str], corpus_key: Any) -> int:
     return cached[term]
 
 
-def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
+def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dict[str, int]:
+    """批量计算多个 term 的文档频率，减少对 texts 的重复遍历。
+    对缓存未命中的 term 只做一次 O(n) 扫描（n=文档数），而非每个 term 扫一次。"""
+    cached = _df_cache.get(corpus_key)
+    if cached is None:
+        cached = {}
+        _cache_put(_df_cache, corpus_key, cached)
+
+    # 找出未缓存的 terms
+    uncached = [t for t in terms if t not in cached]
+    if uncached:
+        # 一次遍历文档列表，同时统计所有未缓存 term 的 df
+        counts = {t: 0 for t in uncached}
+        for doc_text in texts:
+            for t in uncached:
+                if t in doc_text:
+                    counts[t] += 1
+        cached.update(counts)
+
+    return {t: cached.get(t, 0) for t in terms}
+
+
+def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
+                    skip_synonym_expand: bool = False) -> List[Dict]:
     if not docs:
         return []
 
-    # 同义词扩展：增加召回
-    query = expand_synonyms(query)
+    # 同义词扩展：增加召回（当调用方已做扩展时跳过，避免双重扩展噪音）
+    if not skip_synonym_expand:
+        query = expand_synonyms(query)
     q_terms = _extract_terms(query)
     if not q_terms:
         return []
@@ -252,9 +276,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8) -> List[Dict]:
     texts, n_docs, avg_dl = _get_bm25_corpus(docs)
     corpus_key = _corpus_cache_key(docs)
 
-    doc_freqs: Dict[str, int] = {}
-    for term in q_terms:
-        doc_freqs[term] = _get_doc_freq(term, texts, corpus_key)
+    doc_freqs = _batch_doc_freqs(q_terms, texts, corpus_key)
 
     scored = []
     for i, d in enumerate(docs):
