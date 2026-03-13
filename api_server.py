@@ -105,6 +105,7 @@ def ask(req: AskRequest):
         raise HTTPException(status_code=400, detail="问题不能为空")
 
     t0 = time.monotonic()
+    rw = None
     try:
         history = [{"role": h.role, "content": h.content} for h in req.history[-6:]]
         # rewrite 只做一次，传给 answer_question 复用
@@ -142,7 +143,19 @@ def ask(req: AskRequest):
         )
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        log_error("api_ask", repr(e), meta={"question": question[:200], "latency_ms": latency_ms})
+        error_meta: Dict[str, Any] = {
+            "question": question[:200],
+            "latency_ms": latency_ms,
+            "mode": req.mode,
+        }
+        # 尝试捕获已解析的上下文信息
+        try:
+            if rw:
+                error_meta["route"] = detect_route(rw.get("original", question))
+                error_meta["product"] = detect_product(rw.get("original", question))
+        except Exception:
+            pass
+        log_error("api_ask", repr(e), meta=error_meta)
         return AskResponse(
             ok=False,
             answer="接口执行异常，请稍后重试",

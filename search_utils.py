@@ -403,7 +403,7 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
     final = []
     for p in enum_expanded:
         comma_parts = re.split(r"[，,]", p)
-        if len(comma_parts) >= 2 and all(len(cp.strip()) >= 5 for cp in comma_parts):
+        if len(comma_parts) >= 2 and all(len(cp.strip()) >= 4 for cp in comma_parts):
             final.extend(comma_parts)
         else:
             final.append(p)

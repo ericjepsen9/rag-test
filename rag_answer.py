@@ -1094,15 +1094,26 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         if fallback_lines:
             body_lines = fallback_lines
         else:
-            fallback = [
-                "当前知识库未覆盖该问题的直接结论。",
-                "可确认方向：请核对产品主文档、FAQ 或补充对应知识库章节。",
-                "该问题可能涉及医生判断范围，建议由专业医师评估。",
-            ]
+            # 区分无检索结果 vs 低分检索结果，便于分析和优化
+            if hits:
+                # 有检索结果但规则提取和 fallback 均失败 → 低置信度回答
+                fallback = [
+                    "知识库中可能存在相关信息，但置信度不足以生成准确结论。",
+                    "建议换一种表述重新提问，或咨询专业医师。",
+                ]
+                method = "low_confidence"
+            else:
+                # 完全无检索结果 → 知识库未覆盖
+                fallback = [
+                    "当前知识库未覆盖该问题的直接结论。",
+                    "可确认方向：请核对产品主文档、FAQ 或补充对应知识库章节。",
+                    "该问题可能涉及医生判断范围，建议由专业医师评估。",
+                ]
+                method = "no_hit"
             text = format_structured_answer(route, fallback, build_evidence(hits), add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=build_evidence(hits), hit=False,
-                   meta={**_log_meta, "method": "no_hit"})
+                   meta={**_log_meta, "method": method})
             return text
 
     text = format_structured_answer(route, body_lines, build_evidence(hits), add_risk_note=(route == "risk"))
