@@ -36,12 +36,13 @@ def test_route_detection():
 
 def test_answer_content():
     """测试答案是否包含期望关键词"""
-    from rag_answer import answer_one
+    from rag_answer import answer_question
     ok = 0
     total = len(CASES)
     for case in CASES:
         q = case["q"]
-        ans = answer_one(q, "brief")
+        # 使用 answer_question 而非 answer_one，以覆盖特殊意图（价格/对比/地点）路径
+        ans = answer_question(q, "brief")
         passed = any(x in ans for x in case.get("expect_any", []))
         status = "PASS" if passed else "FAIL"
         print(f"  [{status}] answer: {q}")

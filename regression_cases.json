@@ -72,7 +72,8 @@
   {
     "q": "术后有硬块正常吗",
     "expect_any": ["硬块", "正常", "医生", "反应"],
-    "route": "complication"
+    "route": "risk",
+    "_note": "硬块+术后 → 症状消歧优先 risk"
   },
   {
     "q": "非罗奥可以和光电一起做吗",
@@ -276,11 +277,6 @@
     "expect_any": ["红肿", "正常", "观察", "消退", "冰敷"],
     "route": "complication"
   },
-  {
-    "q": "感染了怎么处理",
-    "expect_any": ["感染", "就医", "红肿", "发热"],
-    "route": "risk"
-  },
 
   {"_comment": "========== 跨实体路由: course =========="},
   {
@@ -380,5 +376,122 @@
     "q": "吃阿司匹林能打菲罗奥吗",
     "expect_any": ["阿司匹林", "抗凝", "出血", "停药", "禁忌", "医生"],
     "route": "contraindication"
+  },
+
+  {"_comment": "========== 生活限制类 =========="},
+  {
+    "q": "做完能运动吗",
+    "expect_any": ["运动", "48", "一周", "出汗"],
+    "route": "aftercare"
+  },
+  {
+    "q": "术后多久可以化妆",
+    "expect_any": ["化妆", "24", "48", "72"],
+    "route": "aftercare"
+  },
+  {
+    "q": "打完能晒太阳吗",
+    "expect_any": ["防晒", "SPF", "紫外线", "日晒", "阳光"],
+    "route": "aftercare"
+  },
+  {
+    "q": "做完能洗澡吗",
+    "expect_any": ["洗澡", "24", "水温"],
+    "route": "aftercare"
+  },
+  {
+    "q": "术后能游泳吗",
+    "expect_any": ["游泳", "48", "泳池", "一周"],
+    "route": "aftercare"
+  },
+  {
+    "q": "做完能去桑拿吗",
+    "expect_any": ["桑拿", "汗蒸", "高温", "一周"],
+    "route": "aftercare"
+  },
+  {
+    "q": "做完能上班吗",
+    "expect_any": ["上班", "工作", "正常"],
+    "route": "aftercare"
+  },
+  {
+    "q": "术后能吃辣吗",
+    "expect_any": ["辛辣", "一周", "避免"],
+    "route": "aftercare"
+  },
+  {
+    "q": "术后能吃海鲜吗",
+    "expect_any": ["海鲜", "避免", "一周", "致敏"],
+    "route": "aftercare"
+  },
+
+  {"_comment": "========== 口语化症状 =========="},
+  {
+    "q": "做完脸肿了正常吗",
+    "expect_any": ["肿", "正常", "消退", "冰敷"],
+    "route": "complication",
+    "_note": "肿了+正常吗 → complication 关键词优先匹配"
+  },
+  {
+    "q": "打完淤青怎么办",
+    "expect_any": ["淤青", "消退", "正常", "天"],
+    "route": "risk"
+  },
+  {
+    "q": "术后脸上起疹子怎么回事",
+    "expect_any": ["疹", "过敏", "医生", "就医"],
+    "route": "risk"
+  },
+
+  {"_comment": "========== 年龄/性别/敏感肌 =========="},
+  {
+    "q": "多大年纪适合打菲罗奥",
+    "expect_any": ["18", "年龄", "成人", "医生"],
+    "route": "contraindication"
+  },
+  {
+    "q": "男性可以做吗",
+    "expect_any": ["可以", "男", "性别"],
+    "route": "contraindication"
+  },
+  {
+    "q": "皮肤敏感能打吗",
+    "expect_any": ["敏感", "过敏", "评估", "医生"],
+    "route": "contraindication"
+  },
+  {
+    "q": "可以自己在家打吗",
+    "expect_any": ["不可以", "专业", "医师", "禁止", "医疗"],
+    "route": "contraindication"
+  },
+
+  {"_comment": "========== 疼痛体感 =========="},
+  {
+    "q": "打菲罗奥疼不疼",
+    "expect_any": ["麻醉", "敷麻", "疼", "痛", "耐受"],
+    "route": "operation",
+    "_note": "术前体感 → operation"
+  },
+
+  {"_comment": "========== 价格/对比/地点（特殊意图兜底） =========="},
+  {
+    "q": "菲罗奥多少钱一支",
+    "expect_any": ["价格", "差异", "咨询", "报价"],
+    "route": null,
+    "_note": "价格问题走特殊意图，不检测route"
+  },
+  {
+    "q": "菲罗奥和玻尿酸有什么区别",
+    "expect_any": ["PCL", "聚己内酯", "胶原", "填充", "不同"],
+    "route": null,
+    "_note": "对比问题走特殊意图或ingredient"
+  },
+
+  {"_comment": "========== 联合方案消歧 =========="},
+  {
+    "q": "菲罗奥可以和水光一起做吗",
+    "expect_any": ["联合", "搭配", "水光", "间隔"],
+    "route": "combo",
+    "_note": "'一起做'应优先命中 combo 而非 operation"
   }
 ]

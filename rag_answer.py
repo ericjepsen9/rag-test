@@ -23,6 +23,7 @@ from rag_runtime_config import (
     EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_QUERY, EMBED_MAX_LENGTH_QUERY,
     LLM_TEMPERATURE, LLM_MAX_TOKENS_BRIEF, LLM_MAX_TOKENS_FULL,
     RELATIONS_FILE,
+    PRICE_REPLY, COMPARISON_REPLY, LOCATION_REPLY,
 )
 from search_utils import (
     normalize_lines, uniq, is_faq_line, section_block,
@@ -111,17 +112,17 @@ def load_store(product: str):
     store_dir = STORE_ROOT / product
     index_path = store_dir / "index.faiss"
     docs_path = store_dir / "docs.jsonl"
-    if not index_path.exists() or not docs_path.exists():
+    if not docs_path.exists():
         return None, []
 
-    mtime = index_path.stat().st_mtime
+    # 缓存键：docs.jsonl 的 mtime（即使没有 index.faiss 也能缓存 docs）
+    mtime = docs_path.stat().st_mtime
     with _store_lock:
         cached = _store_cache.get(product)
         if cached and cached[2] == mtime:
             return cached[0], cached[1]
 
-    # 加载在锁外进行（IO 耗时），加载完后再加锁写入
-    index = get_faiss().read_index(str(index_path))
+    # 加载文档（在锁外进行，IO 耗时）
     docs = []
     with docs_path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -132,12 +133,20 @@ def load_store(product: str):
                 docs.append(json.loads(line))
             except json.JSONDecodeError:
                 continue  # 跳过损坏行，不中断整体加载
-    # 检测索引与文档数不一致（索引过期未重建）
-    stale = index.ntotal != len(docs)
-    if stale:
-        print(f"[WARN] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. "
-              f"向量检索已禁用，仅使用关键词检索。Run `python build_faiss.py --product {product}` to rebuild.")
-        index = None  # 标记为不可用，强制使用纯关键词检索
+
+    # 加载向量索引（可选：无 index.faiss 时仅使用关键词检索）
+    index = None
+    if index_path.exists():
+        try:
+            index = get_faiss().read_index(str(index_path))
+            # 检测索引与文档数不一致（索引过期未重建）
+            if index.ntotal != len(docs):
+                print(f"[WARN] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. "
+                      f"向量检索已禁用，仅使用关键词检索。Run `python build_faiss.py --product {product}` to rebuild.")
+                index = None
+        except Exception:
+            index = None
+
     with _store_lock:
         _store_cache[product] = (index, docs, mtime)
     return index, docs
@@ -188,6 +197,25 @@ def detect_product(question: str) -> str:
     return dirs[0] if dirs else "feiluoao"
 
 
+def _detect_special_intent(q: str) -> str:
+    """检测无知识兜底的特殊意图：价格、对比、地点。返回意图名或空字符串。"""
+    price_kws = ["多少钱", "价格", "费用", "贵不贵", "便宜", "一支多少", "疗程多少钱",
+                 "收费", "报价", "花多少"]
+    if any(k in q for k in price_kws):
+        return "price"
+
+    compare_kws = ["区别", "对比", "vs", "和.+比", "哪个好", "哪个更", "差别",
+                   "不同点", "优劣", "比较"]
+    for k in compare_kws:
+        if re.search(k, q):
+            return "comparison"
+
+    location_kws = ["哪里可以做", "哪家医院", "附近", "哪里有", "哪能做", "去哪"]
+    if any(k in q for k in location_kws):
+        return "location"
+    return ""
+
+
 def detect_route(question: str) -> str:
     q = (question or "").lower()
     # 跨实体路由优先于产品路由（更具体的先匹配）
@@ -212,13 +240,23 @@ def detect_route(question: str) -> str:
 
     # 消歧：禁忌适用性信号 → 优先 contraindication
     contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
-                      "能做", "可以做", "能不能"]
+                      "能做", "可以做", "能不能", "能打吗", "可以吗"]
     has_contra_signal = any(s in q for s in contra_signals)
 
     if "contraindication" in matched and has_contra_signal:
         return "contraindication"
     if "risk" in matched and "contraindication" in matched and has_contra_signal:
         return "contraindication"
+
+    # 消歧：联合方案信号 → 优先 combo（"一起做""搭配" 优先于 operation/aftercare）
+    combo_signals = ["一起做", "联合", "搭配", "同做", "配合", "间隔多久"]
+    if "combo" in matched and any(s in q for s in combo_signals):
+        return "combo"
+
+    # 消歧：修复意图信号 → 优先 repair（在症状消歧之前，因为"硬块需要修复吗"应归repair）
+    repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
+    if "repair" in matched and any(s in q for s in repair_signals):
+        return "repair"
 
     # 消歧：complication vs risk — 术后时间线信号（"术后第N天""术后N天"）→ complication
     # 长期异常（"术后3个月""半年后"）→ risk
@@ -230,10 +268,30 @@ def detect_route(question: str) -> str:
         if temporal_short:
             return "complication"
 
-    # 消歧：修复意图信号 → 优先 repair
-    repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
-    if "repair" in matched and any(s in q for s in repair_signals):
-        return "repair"
+    # 消歧：疼痛体感询问 — "疼不疼/痛不痛/疼吗" 是术前体感问题 → operation
+    pain_inquiry = re.search(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛)", q)
+    if pain_inquiry and "operation" in matched:
+        return "operation"
+
+    # 消歧：术后症状 → risk 优先于 aftercare/operation
+    symptom_kws = ["红肿", "肿胀", "肿", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
+                   "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
+                   "越来越"]
+    if "risk" in matched and ("aftercare" in matched or "operation" in matched):
+        if any(s in q for s in symptom_kws):
+            return "risk"
+
+    # 消歧：疼痛体感 — "打的时候疼"是 operation（术中），"打完疼"是 risk（术后异常）
+    if "risk" in matched and "operation" in matched:
+        pre_pain = re.search(r"(打的时候|注射时|术中|操作中).{0,4}(疼|痛)", q)
+        if pre_pain:
+            return "operation"
+
+    # 消歧：生活限制问题 → aftercare 优先（"能运动吗""能化妆吗"）
+    lifestyle_kws = ["运动", "健身", "游泳", "桑拿", "化妆", "上妆", "防晒", "晒太阳",
+                     "洗澡", "喝酒", "饮酒", "上班", "出汗", "泡澡", "汗蒸"]
+    if "aftercare" in matched and any(s in q for s in lifestyle_kws):
+        return "aftercare"
 
     # 消歧：疗程规划 vs 操作参数（"疗程" 同时出现在 operation 和 course 中）
     course_signals = ["安排", "规划", "几次", "间隔多久", "总共", "多长时间",
@@ -241,12 +299,7 @@ def detect_route(question: str) -> str:
     if "course" in matched and "operation" in matched:
         if any(s in q for s in course_signals):
             return "course"
-        return "operation"  # 默认偏向操作参数
-
-    # 消歧：联合方案信号 → 优先 combo（"一起做""搭配""联合" 优先于 procedure_q）
-    combo_signals = ["一起做", "联合", "搭配", "同做", "配合", "间隔多久"]
-    if "combo" in matched and any(s in q for s in combo_signals):
-        return "combo"
+        return "operation"
 
     # 消歧：部位/适应症 vs 方案设计（"怎么打""打哪里""几支" 是设计信号）
     design_signals = ["怎么打", "打哪里", "几支", "怎么设计", "方案", "用量"]
@@ -561,6 +614,34 @@ def parse_answer(route: str, product: str, mode: str) -> List[str]:
     return parse_bullets_from_section(main_text, faq_text, route, mode)
 
 
+def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
+    """从检索结果中提取与问题高度相关的 FAQ 回答。
+    当 FAQ 条目的 Q 与用户问题有 bigram 重叠时，直接提取 A 的内容。"""
+    q_lower = question.lower().replace(" ", "")
+    if len(q_lower) < 2:
+        return []
+    # 用 bigram（2字组合）做模糊匹配，解决中文不分词问题
+    q_bigrams = set(q_lower[i:i+2] for i in range(len(q_lower) - 1))
+
+    faq_lines = []
+    for h in hits:
+        meta = h.get("meta", {})
+        if meta.get("source_type") != "faq":
+            continue
+        text = (h.get("text") or "").strip()
+        if "【Q】" not in text or "【A】" not in text:
+            continue
+        q_part = text.split("【A】")[0].lower()
+        # 计算 FAQ 问题与用户问题的 bigram 重叠率
+        faq_bigrams = set(q_part[i:i+2] for i in range(len(q_part) - 1))
+        overlap = len(q_bigrams & faq_bigrams)
+        if overlap >= 2:  # 至少2个 bigram 重叠
+            a_part = text.split("【A】")[1].strip()
+            if a_part:
+                faq_lines.append(a_part)
+    return faq_lines[:2]  # 最多2条FAQ补充
+
+
 def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
     """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断"""
     parts = []
@@ -779,6 +860,12 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
     body_lines = parse_answer(route, product, mode)
 
+    # 补充 FAQ 命中：如果检索结果中有 FAQ 条目与查询高度相关，追加到答案中
+    if body_lines and hits:
+        faq_supplement = _extract_faq_from_hits(hits, question)
+        if faq_supplement:
+            body_lines = faq_supplement + [""] + body_lines
+
     # 关联数据补充：从 relations.json 中提取跨实体信息
     relation_lines = relation_enrich(route, product, question)
     if relation_lines:
@@ -874,6 +961,18 @@ def answer_question(question: str, mode: str, history: list = None,
         log_qa(q, reply, rewritten_query="", matched_sources=[], hit=False,
                meta={"method": "chitchat"})
         return reply
+
+    # 特殊意图快速路径：价格/对比/地点等无知识覆盖的问题
+    special = _detect_special_intent(q)
+    if special:
+        _SPECIAL_REPLIES = {"price": PRICE_REPLY, "comparison": COMPARISON_REPLY,
+                            "location": LOCATION_REPLY}
+        reply = _SPECIAL_REPLIES.get(special, "")
+        if reply:
+            log_qa(q, reply, rewritten_query="", matched_sources=[], hit=False,
+                   meta={"method": "special_intent", "intent": special})
+            return reply
+
     outputs = []
     seen_routes = set()
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
