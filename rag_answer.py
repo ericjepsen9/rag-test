@@ -186,8 +186,15 @@ def detect_product(question: str) -> str:
 
 def detect_route(question: str) -> str:
     q = (question or "").lower()
-    order = ["risk", "repair", "combo", "aftercare", "operation", "anti_fake",
-             "contraindication", "design", "effect", "pre_care", "ingredient", "basic"]
+    # 跨实体路由优先于产品路由（更具体的先匹配）
+    order = [
+        # 跨实体路由
+        "complication", "script", "procedure_q", "equipment_q",
+        "anatomy_q", "indication_q", "course",
+        # 产品路由
+        "risk", "repair", "combo", "aftercare", "operation", "anti_fake",
+        "contraindication", "design", "effect", "pre_care", "ingredient", "basic",
+    ]
 
     # 收集每个 route 的匹配关键词
     matched = {}
@@ -213,6 +220,20 @@ def detect_route(question: str) -> str:
     repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
     if "repair" in matched and any(s in q for s in repair_signals):
         return "repair"
+
+    # 消歧：疗程规划 vs 操作参数（"疗程" 同时出现在 operation 和 course 中）
+    course_signals = ["安排", "规划", "几次", "间隔多久", "总共", "多长时间",
+                      "时间表", "多少钱", "费用", "预算"]
+    if "course" in matched and "operation" in matched:
+        if any(s in q for s in course_signals):
+            return "course"
+        return "operation"  # 默认偏向操作参数
+
+    # 消歧：部位/适应症 vs 方案设计（"怎么打""打哪里""几支" 是设计信号）
+    design_signals = ["怎么打", "打哪里", "几支", "怎么设计", "方案", "用量"]
+    if ("anatomy_q" in matched or "indication_q" in matched) and "design" in matched:
+        if any(s in q for s in design_signals):
+            return "design"
 
     # 按优先级返回第一个命中的 route
     for route in order:
@@ -391,6 +412,26 @@ def _accept_line(clean: str, route: str) -> bool:
                    "吸收", "层次", "自行", "按压", "揉捏", "间隔", "医生",
                    "评估", "安全", "循序渐进", "记录", "效果差",
                    "既往", "注射项目", "效果不佳", "注意事项"],
+        # 跨实体路由
+        "complication": ["并发症", "红肿", "结节", "硬块", "感染", "过敏", "淤青",
+                         "坏死", "栓塞", "正常", "异常", "就医", "复诊", "观察",
+                         "警惕", "急诊", "分级", "处理", "恢复", "冰敷", "消退",
+                         "术后", "天", "周", "当天"],
+        "course": ["疗程", "次", "间隔", "周期", "总共", "持续", "规划", "时间表",
+                   "周", "月", "方案", "维护", "效果", "预算", "费用"],
+        "anatomy_q": ["部位", "区域", "额头", "额部", "眼周", "苹果肌", "法令纹",
+                      "下颌线", "颈部", "鼻部", "手部", "手背", "面部", "分区",
+                      "推荐项目", "常见问题", "注意事项"],
+        "indication_q": ["松弛", "干燥", "毛孔", "色斑", "痘坑", "皱纹", "缺水",
+                         "粗糙", "暗沉", "细纹", "改善", "推荐", "适合", "年龄",
+                         "敏感肌", "油性", "屏障", "备孕", "孕期"],
+        "procedure_q": ["项目", "操作", "流程", "对比", "区别", "优势", "原理",
+                        "适用", "适应症", "效果", "疗程", "搭配", "水光针",
+                        "微针", "光电", "填充", "射频", "激光"],
+        "equipment_q": ["仪器", "设备", "机器", "参数", "针头", "深度", "功能",
+                        "兼容", "适配", "品牌", "维护", "水光仪", "微针仪"],
+        "script": ["话术", "解释", "回答", "沟通", "顾虑", "说法", "合规",
+                   "介绍", "客户", "担心", "推销", "预期"],
     }
 
     keywords = route_keywords.get(route)
@@ -458,9 +499,44 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
     return items[:limit]
 
 
+# 共享路由 → 共享知识目录名 的映射
+_SHARED_ROUTE_DIR = {
+    "complication": "complications",
+    "course":       "courses",
+    "anatomy_q":    "anatomy",
+    "indication_q": "indications",
+    "procedure_q":  "procedures",
+    "equipment_q":  "equipment",
+    "script":       "scripts",
+}
+
+
+def _read_shared_knowledge(dir_name: str) -> str:
+    """读取共享知识目录内容：单文件直接读，多实例拼接所有 main.txt"""
+    shared_dir = KNOWLEDGE_DIR / dir_name
+    if not shared_dir.exists():
+        return ""
+    main_file = shared_dir / "main.txt"
+    if main_file.exists():
+        return main_file.read_text(encoding="utf-8")
+    # 多实例目录：拼接所有子目录的 main.txt
+    parts = []
+    for inst in sorted(shared_dir.iterdir()):
+        if inst.is_dir() and (inst / "main.txt").exists():
+            parts.append(inst.joinpath("main.txt").read_text(encoding="utf-8"))
+    return "\n\n".join(parts)
+
+
 def parse_answer(route: str, product: str, mode: str) -> List[str]:
-    main_text = read_knowledge_file(product, "main.txt")
-    faq_text = read_knowledge_file(product, "faq.txt")
+    # 共享路由：从共享知识目录读取
+    shared_dir_name = _SHARED_ROUTE_DIR.get(route)
+    if shared_dir_name:
+        main_text = _read_shared_knowledge(shared_dir_name)
+        faq_text = ""
+    else:
+        main_text = read_knowledge_file(product, "main.txt")
+        faq_text = read_knowledge_file(product, "faq.txt")
+
     if route == "anti_fake":
         return parse_anti_fake(main_text, faq_text, mode)
     return parse_bullets_from_section(main_text, faq_text, route, mode)
