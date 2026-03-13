@@ -108,6 +108,38 @@ def embed_query(text: str) -> np.ndarray:
     return vec
 
 
+def _auto_rebuild_index(product: str, docs: List[Dict], store_dir: Path):
+    """当 docs.jsonl 与 index.faiss 条目数不一致时，自动重建索引。
+    在运行时使用 rag_answer 的 embed 模型（已加载），避免再次导入 build_faiss。
+    返回新的 FAISS index，失败时返回 None。"""
+    try:
+        texts = [(d.get("text") or "").strip() for d in docs]
+        texts = [t if t else " " for t in texts]  # 空文本用占位符
+        model = get_model()
+        out = model.encode(texts, batch_size=EMBED_BATCH_SIZE_QUERY, max_length=EMBED_MAX_LENGTH_QUERY)
+        if isinstance(out, dict):
+            vecs = out.get("dense_vecs") or out.get("dense") or out.get("embeddings")
+        else:
+            vecs = out
+        if vecs is None:
+            print(f"[WARN] {product}: 自动重建失败 — 未获取到向量")
+            return None
+        vecs = np.asarray(vecs, dtype="float32")
+        faiss = get_faiss()
+        faiss.normalize_L2(vecs)
+        dim = vecs.shape[1]
+        index = faiss.IndexFlatIP(dim)
+        index.add(vecs)
+        # 写回磁盘
+        index_path = store_dir / "index.faiss"
+        faiss.write_index(index, str(index_path))
+        print(f"[INFO] {product}: 索引自动重建成功 ({len(docs)} vectors, dim={dim})")
+        return index
+    except Exception as e:
+        print(f"[WARN] {product}: 自动重建索引失败 — {e}")
+        return None
+
+
 def load_store(product: str):
     store_dir = STORE_ROOT / product
     index_path = store_dir / "index.faiss"
@@ -139,11 +171,10 @@ def load_store(product: str):
     if index_path.exists():
         try:
             index = get_faiss().read_index(str(index_path))
-            # 检测索引与文档数不一致（索引过期未重建）
+            # 检测索引与文档数不一致（索引过期未重建）→ 自动重建
             if index.ntotal != len(docs):
-                print(f"[WARN] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. "
-                      f"向量检索已禁用，仅使用关键词检索。Run `python build_faiss.py --product {product}` to rebuild.")
-                index = None
+                print(f"[INFO] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. 自动重建索引...")
+                index = _auto_rebuild_index(product, docs, store_dir)
         except Exception:
             index = None
 
@@ -665,6 +696,63 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
     return [c[1] for c in faq_candidates[:2]]
 
 
+def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
+                       rewrite: dict, log_meta: dict) -> str:
+    """FAQ 精确匹配快速路径：当检索结果中有高置信度 FAQ 条目时直接返回。
+
+    触发条件（全部满足才走快速路径）：
+    1. 检索结果 top-1 是 FAQ 类型 chunk
+    2. FAQ 的 Q 与用户问题 bigram 重叠率 ≥50%（高置信度）
+    3. 检索分数 ≥0.40（排除低分噪音命中）
+
+    返回格式化答案或空字符串（不满足条件时）。
+    """
+    if not hits:
+        return ""
+
+    top_hit = hits[0]
+    # 条件1：top-1 必须是 FAQ
+    meta = top_hit.get("meta", {})
+    if meta.get("source_type") != "faq":
+        return ""
+    # 条件3：检索分数门槛
+    score = top_hit.get("hybrid_score", top_hit.get("score", 0.0))
+    if score < 0.40:
+        return ""
+
+    text = (top_hit.get("text") or "").strip()
+    if "【Q】" not in text or "【A】" not in text:
+        return ""
+
+    q_part = text.split("【A】")[0].replace("【Q】", "").lower().replace(" ", "")
+    a_part = text.split("【A】")[1].strip()
+    if not a_part:
+        return ""
+
+    # 条件2：bigram 高重叠率
+    q_lower = question.lower().replace(" ", "")
+    q_bigrams = set(q_lower[i:i+2] for i in range(len(q_lower) - 1))
+    faq_bigrams = set(q_part[i:i+2] for i in range(len(q_part) - 1))
+    if not q_bigrams or not faq_bigrams:
+        return ""
+    overlap = len(q_bigrams & faq_bigrams)
+    ratio = overlap / max(len(q_bigrams), 1)
+    if overlap < 3 or ratio < 0.50:
+        return ""
+
+    # 构建答案
+    body_lines = [a_part]
+    evidence = build_evidence(hits[:1])
+    add_risk = route in ("risk", "complication", "contraindication")
+    answer = format_structured_answer(route, body_lines, evidence, add_risk_note=add_risk)
+
+    log_qa(question, answer, rewritten_query=rewrite.get("expanded", ""),
+           matched_sources=evidence, hit=True,
+           meta={**log_meta, "method": "faq_fast_path", "faq_score": score,
+                 "faq_overlap_ratio": round(ratio, 3)})
+    return answer
+
+
 def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
     """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断"""
     parts = []
@@ -867,6 +955,14 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     hits = merge_hybrid(vector_hits, keyword_hits, vw, kw, route_top_k, route=route) if (vector_hits or keyword_hits) else []
     # 过滤低于 threshold 的结果
     hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
+
+    # ---- 策略0: FAQ 精确匹配快速路径 ----
+    # 当检索结果中有高置信度 FAQ 条目与问题高度吻合时，直接返回 FAQ 回答，
+    # 跳过 LLM/规则提取，提升常见问题的响应质量和速度。
+    if hits:
+        faq_answer = _try_faq_fast_path(hits, question, route, rewrite, _log_meta)
+        if faq_answer:
+            return faq_answer
 
     # ---- 策略1: LLM RAG（优先）——检索结果作为 context 让 LLM 生成答案 ----
     if hits and USE_OPENAI:
