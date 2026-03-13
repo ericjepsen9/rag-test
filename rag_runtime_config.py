@@ -134,7 +134,8 @@ QUESTION_TYPE_CONFIG = {
 }
 
 # ===== 媒体 =====
-MEDIA_FILE = BASE_DIR / "media.json"
+# 每个产品的媒体文件位于 knowledge/{product_id}/media.json
+# 由 media_router.py 按 product_id 加载，不再使用全局路径
 
 # ===== 测试 =====
 REGRESSION_CASES_FILE = BASE_DIR / "regression_cases.json"

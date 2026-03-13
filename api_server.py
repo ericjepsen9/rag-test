@@ -109,17 +109,19 @@ def ask(req: AskRequest):
 
         answer = answer_question(question, req.mode, history=history, rewrite=rw)
         latency_ms = int((time.monotonic() - t0) * 1000)
-        # 用补全后的问题匹配媒体（如指代词已替换为产品名）
-        media = [MediaItem(**m) for m in find_media(resolved_q)]
+        # 用产品+路由精准匹配媒体，关键词兜底
+        from rag_answer import detect_route, detect_product
+        product_id = detect_product(resolved_q)
+        route = detect_route(resolved_q)
+        media = [MediaItem(**m) for m in find_media(resolved_q, product_id=product_id, route=route)]
         debug = None
         if req.debug:
-            from rag_answer import detect_route, detect_product
             debug = {
                 "question": question,
                 "resolved_question": resolved_q if rw["context_resolved"] else None,
                 "mode": req.mode,
-                "route": detect_route(resolved_q),
-                "product": detect_product(resolved_q),
+                "route": route,
+                "product": product_id,
                 "expanded_query": rw["expanded"],
                 "context_resolved": rw["context_resolved"],
                 "history_summary": rw.get("history_summary") or None,

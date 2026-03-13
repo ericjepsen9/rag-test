@@ -1,0 +1,37 @@
+[
+  {
+    "title": "防伪演示图",
+    "type": "image",
+    "url": "",
+    "routes": ["anti_fake"],
+    "keywords": ["防伪", "hiddentag", "验真"]
+  },
+  {
+    "title": "真伪对比图",
+    "type": "image",
+    "url": "",
+    "routes": ["anti_fake"],
+    "keywords": ["真伪", "对比", "正品"]
+  },
+  {
+    "title": "术后护理流程图",
+    "type": "image",
+    "url": "",
+    "routes": ["aftercare"],
+    "keywords": ["术后护理", "护理", "恢复"]
+  },
+  {
+    "title": "操作示意视频",
+    "type": "video",
+    "url": "",
+    "routes": ["operation"],
+    "keywords": ["注射", "操作", "微针", "水光"]
+  },
+  {
+    "title": "效果对比图",
+    "type": "image",
+    "url": "",
+    "routes": ["effect"],
+    "keywords": ["效果", "对比", "前后"]
+  }
+]
