@@ -198,13 +198,17 @@ def _cache_put(cache: dict, key: Any, value: Any) -> None:
 
 
 def _corpus_cache_key(docs: List[Dict]) -> Tuple:
-    """生成稳定的缓存键：(文档数, 首末文档文本哈希)"""
+    """生成稳定的缓存键：使用确定性哈希（跨进程重启不变）"""
+    import hashlib
     n = len(docs)
     if n == 0:
         return (0,)
     first = (docs[0].get("text") or "")[:64]
     last = (docs[-1].get("text") or "")[:64]
-    return (n, hash((first, last)))
+    mid_idx = n // 2
+    mid = (docs[mid_idx].get("text") or "")[:32] if n > 2 else ""
+    digest = hashlib.md5(f"{first}|{mid}|{last}".encode()).hexdigest()[:12]
+    return (n, digest)
 
 
 def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float]:

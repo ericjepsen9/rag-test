@@ -175,6 +175,7 @@
     // 对话历史（发送给后端的 history 字段）
     let chatHistory = [];
     const MAX_HISTORY = 10;
+    const MAX_BUBBLES = 60;  // DOM 中保留的最大气泡数
 
     function addBubble(text, role, mediaList) {
       const el = document.createElement("div");
@@ -207,13 +208,25 @@
         }
         el.appendChild(group);
       }
-      $("chatLog").appendChild(el);
-      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+      const log = $("chatLog");
+      log.appendChild(el);
+      // 防止 DOM 无限增长：超出上限时移除最早的气泡
+      while (log.children.length > MAX_BUBBLES) {
+        log.removeChild(log.firstChild);
+      }
+      log.scrollTop = log.scrollHeight;
     }
 
     function clearChat() {
       chatHistory = [];
-      $("chatLog").innerHTML = "";
+      // 释放媒体资源后再清空 DOM
+      const log = $("chatLog");
+      for (const v of log.querySelectorAll("video")) {
+        v.pause();
+        v.removeAttribute("src");
+        v.load();
+      }
+      log.innerHTML = "";
       $("debugBox").textContent = "（无）";
       $("status").textContent = "";
     }

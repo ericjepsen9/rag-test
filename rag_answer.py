@@ -21,6 +21,7 @@ from rag_runtime_config import (
     HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
     MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
     EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_QUERY, EMBED_MAX_LENGTH_QUERY,
+    EMBED_BATCH_SIZE_BUILD, EMBED_MAX_LENGTH_BUILD,
     LLM_TEMPERATURE, LLM_MAX_TOKENS_BRIEF, LLM_MAX_TOKENS_FULL, ROUTE_LLM_TEMPERATURE,
     RELATIONS_FILE,
     PRICE_REPLY, COMPARISON_REPLY, LOCATION_REPLY,
@@ -116,7 +117,7 @@ def _auto_rebuild_index(product: str, docs: List[Dict], store_dir: Path):
         texts = [(d.get("text") or "").strip() for d in docs]
         texts = [t if t else " " for t in texts]  # 空文本用占位符
         model = get_model()
-        out = model.encode(texts, batch_size=EMBED_BATCH_SIZE_QUERY, max_length=EMBED_MAX_LENGTH_QUERY)
+        out = model.encode(texts, batch_size=EMBED_BATCH_SIZE_BUILD, max_length=EMBED_MAX_LENGTH_BUILD)
         if isinstance(out, dict):
             vecs = out.get("dense_vecs") or out.get("dense") or out.get("embeddings")
         else:
@@ -179,7 +180,10 @@ def load_store(product: str):
             index = None
 
     with _store_lock:
-        _store_cache[product] = (index, docs, mtime)
+        if index is not None or not index_path.exists():
+            # 正常缓存：有索引或压根没索引文件
+            _store_cache[product] = (index, docs, mtime)
+        # else: 索引文件存在但加载失败 → 不缓存，下次请求重试
     return index, docs
 
 
@@ -188,6 +192,12 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
     if index is None or not docs:
         return []
     qv = embed_query(query)
+    if qv.shape[1] != index.d:
+        # 模型维度与索引不匹配（模型更换后需重建索引）
+        from rag_logger import log_error
+        log_error("vector_search", f"维度不匹配: query={qv.shape[1]}, index={index.d}",
+                  meta={"product": product})
+        return []
     with _search_lock:
         scores, ids = index.search(qv, min(top_k, index.ntotal))
     hits = []

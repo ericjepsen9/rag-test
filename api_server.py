@@ -26,6 +26,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def _warmup_models():
+    """启动时预热嵌入模型，避免首次查询延迟"""
+    if os.environ.get("SKIP_WARMUP"):
+        return
+    try:
+        from rag_answer import embed_query
+        embed_query("预热查询")
+        print("[INFO] 嵌入模型预热完成")
+    except Exception as e:
+        print(f"[WARN] 模型预热失败: {e}")
+
 MAX_QUESTION_LEN = 500
 
 
