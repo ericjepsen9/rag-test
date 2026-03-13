@@ -554,5 +554,19 @@
     "expect_any": ["术后", "饮食", "避免"],
     "route": "aftercare",
     "_note": "饮食类术后护理"
+  },
+
+  {"_comment": "========== 消歧增强 =========="},
+  {
+    "q": "菲罗奥效果能维持多长时间",
+    "expect_any": ["维持", "月", "效果"],
+    "route": "effect",
+    "_note": "维持→effect，不是risk"
+  },
+  {
+    "q": "皮肤干燥适合什么项目",
+    "expect_any": ["干燥", "推荐", "改善"],
+    "route": "indication_q",
+    "_note": "适合→indication_q，不是contraindication"
   }
 ]

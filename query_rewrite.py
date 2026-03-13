@@ -267,7 +267,8 @@ def _build_history_pairs(history: List[Dict], max_pairs: int = 3) -> List[Dict]:
     return pairs[-max_pairs:] if len(pairs) > max_pairs else pairs
 
 
-def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
+def rewrite_query(question: str, history: Optional[List[Dict]] = None,
+                   _cached_ctx: Optional[Dict] = None) -> Dict[str, Any]:
     raw = (question or "").strip()
 
     # 快速判断：非提问（问候/致谢/确认）直接返回，跳过后续处理
@@ -277,9 +278,11 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None) -> Dict[s
     cleaned = _CORRECTION_PREFIX.sub("", raw).strip() if _CORRECTION_PREFIX.search(raw) else raw
     has_correction = (cleaned != raw)
 
-    # 提取历史上下文（只解析一次，传给后续所有需要的函数）
+    # 提取历史上下文（支持缓存复用，避免多子问题重复解析）
     history_ctx: Dict[str, Any] = {}
-    if history:
+    if _cached_ctx is not None:
+        history_ctx = _cached_ctx
+    elif history:
         history_ctx = _extract_history_context(history)
 
     # 上下文补全：解析指代词和省略（用清理后的文本做补全，更干净）

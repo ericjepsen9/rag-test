@@ -367,6 +367,24 @@ def detect_route(question: str) -> str:
         if any(ew in q for ew in equipment_words):
             scores["equipment_q"] += 4.0
 
+    # 多项目并列提及 → combo（"菲罗奥和微针"、"水光和光电"）
+    from rag_runtime_config import PROJECT_ALIASES
+    mentioned_projects = detect_terms(q, PROJECT_ALIASES)
+    if "combo" in scores and len(mentioned_projects) >= 2:
+        scores["combo"] += 6.0
+
+    # "维持" → effect, "恢复" → risk/complication（分辨持久 vs 恢复期）
+    if "effect" in scores and "维持" in q and "恢复" not in q:
+        scores["effect"] += 3.0
+    if "risk" in scores and "恢复" in q and "维持" not in q:
+        scores["risk"] += 2.0
+
+    # "适合"/"推荐" 偏向 indication_q 而非 contraindication（推荐 vs 禁忌）
+    recommendation_words = ["适合", "推荐", "用什么好", "选什么"]
+    if "indication_q" in scores and "contraindication" in scores:
+        if any(w in q for w in recommendation_words):
+            scores["indication_q"] += 4.0
+
     # 按分数排序，相同分数时按 order 优先级
     order_idx = {r: i for i, r in enumerate(order)}
     best = max(scores.keys(), key=lambda r: (scores[r], -order_idx.get(r, 99)))
@@ -379,21 +397,30 @@ def _truncate_to_sentence(text: str, max_chars: int = 450) -> str:
         return text
     # 在 max_chars 范围内找最后一个句子结束符
     truncated = text[:max_chars]
-    # 中文和英文句子结束符
-    for sep in ["。", "；", "！", "？", ". ", "! ", "? ", "\n"]:
+    # 中文和英文句子/段落结束符
+    for sep in ["。", "；", "！", "？", "）", ". ", "! ", "? ", "\n"]:
         pos = truncated.rfind(sep)
-        if pos > max_chars // 3:  # 至少保留 1/3 内容
+        if pos > max_chars // 2:  # 至少保留 1/2 内容
             return truncated[:pos + len(sep)].strip()
     return truncated.strip()
 
 
 def build_evidence(hits: List[Dict]) -> List[Dict]:
+    """构建答案的证据列表，按 source_file+chunk_id 去重"""
+    seen = set()
     ev = []
-    for h in hits[:MAX_EVIDENCE_CHUNKS]:
+    for h in hits:
+        meta = h.get("meta", {})
+        key = (meta.get("source_file", ""), meta.get("chunk_id", ""))
+        if key in seen:
+            continue
+        seen.add(key)
         ev.append({
-            "meta": h.get("meta", {}),
+            "meta": meta,
             "text": _truncate_to_sentence((h.get("text") or "").strip()),
         })
+        if len(ev) >= MAX_EVIDENCE_CHUNKS:
+            break
     return ev
 
 
@@ -619,6 +646,18 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
         if not any("医" in x for x in items):
             items.append("术后如有任何异常，请及时联系操作医生。")
 
+    # 临床优先级排序：警告/就医类条目排在前面（被 brief 截断时不丢失关键安全信息）
+    _PRIORITY_KEYWORDS = {
+        "risk": ["就医", "急诊", "医院", "专业医", "立即", "禁止", "严重", "异常"],
+        "contraindication": ["禁止", "绝对", "禁忌", "不得", "严禁"],
+        "complication": ["就医", "急诊", "立即", "紧急", "严重"],
+    }
+    priority_kws = _PRIORITY_KEYWORDS.get(route)
+    if priority_kws:
+        critical = [x for x in items if any(k in x for k in priority_kws)]
+        normal = [x for x in items if not any(k in x for k in priority_kws)]
+        items = critical + normal
+
     # 各路由的条目数限制 (brief, full)
     limits = {
         "aftercare":       (14, 32),  # 14个子主题，brief 不丢失整类
@@ -690,14 +729,21 @@ def parse_answer(route: str, product: str, mode: str) -> List[str]:
     return parse_bullets_from_section(main_text, faq_text, route, mode)
 
 
+def _normalize_for_bigram(text: str) -> str:
+    """归一化文本用于 bigram 匹配：同义词展开后取小写去空格"""
+    from search_utils import expand_synonyms
+    return expand_synonyms(text).lower().replace(" ", "")
+
+
 def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
     """从检索结果中提取与问题高度相关的 FAQ 回答。
-    当 FAQ 条目的 Q 与用户问题有 bigram 重叠时，直接提取 A 的内容。"""
-    q_lower = question.lower().replace(" ", "")
-    if len(q_lower) < 2:
+    先对双方做同义词归一化，再用 bigram 重叠匹配。
+    短问题（<15字）降低重叠数要求。"""
+    q_norm = _normalize_for_bigram(question)
+    if len(q_norm) < 2:
         return []
-    # 用 bigram（2字组合）做模糊匹配，解决中文不分词问题
-    q_bigrams = set(q_lower[i:i+2] for i in range(len(q_lower) - 1))
+    q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
+    min_overlap = 2 if len(question) < 15 else 3
 
     faq_candidates = []
     for h in hits:
@@ -707,20 +753,17 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
         text = (h.get("text") or "").strip()
         if "【Q】" not in text or "【A】" not in text:
             continue
-        q_part = text.split("【A】")[0].replace("【Q】", "").lower().replace(" ", "")
-        # 计算 FAQ 问题与用户问题的 bigram 重叠率
-        faq_bigrams = set(q_part[i:i+2] for i in range(len(q_part) - 1))
+        q_part = text.split("【A】")[0].replace("【Q】", "")
+        faq_norm = _normalize_for_bigram(q_part)
+        faq_bigrams = set(faq_norm[i:i+2] for i in range(len(faq_norm) - 1))
         if not faq_bigrams:
             continue
         overlap = len(q_bigrams & faq_bigrams)
-        # 用比率而非绝对数量：重叠 bigram 占用户问题 bigram 的比例 ≥30%
-        # 同时要求至少 3 个重叠（避免极短问题误匹配）
         ratio = overlap / max(len(q_bigrams), 1)
-        if overlap >= 3 and ratio >= 0.3:
+        if overlap >= min_overlap and ratio >= 0.3:
             a_part = text.split("【A】")[1].strip()
             if a_part:
                 faq_candidates.append((ratio, a_part))
-    # 按重叠率排序，取最相关的
     faq_candidates.sort(key=lambda x: x[0], reverse=True)
     return [c[1] for c in faq_candidates[:2]]
 
@@ -744,29 +787,39 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
     meta = top_hit.get("meta", {})
     if meta.get("source_type") != "faq":
         return ""
-    # 条件3：检索分数门槛
+    # 条件3：路由感知的检索分数门槛
+    _ROUTE_FAQ_THRESHOLDS = {
+        "aftercare": {"score": 0.35, "ratio": 0.40},
+        "effect":    {"score": 0.35, "ratio": 0.45},
+        "basic":     {"score": 0.38, "ratio": 0.45},
+        "risk":      {"score": 0.45, "ratio": 0.55},
+        "contraindication": {"score": 0.45, "ratio": 0.55},
+        "complication": {"score": 0.45, "ratio": 0.55},
+    }
+    thresholds = _ROUTE_FAQ_THRESHOLDS.get(route, {"score": 0.40, "ratio": 0.50})
     score = top_hit.get("hybrid_score", top_hit.get("score", 0.0))
-    if score < 0.40:
+    if score < thresholds["score"]:
         return ""
 
     text = (top_hit.get("text") or "").strip()
     if "【Q】" not in text or "【A】" not in text:
         return ""
 
-    q_part = text.split("【A】")[0].replace("【Q】", "").lower().replace(" ", "")
+    q_part = text.split("【A】")[0].replace("【Q】", "")
     a_part = text.split("【A】")[1].strip()
     if not a_part:
         return ""
 
-    # 条件2：bigram 高重叠率
-    q_lower = question.lower().replace(" ", "")
-    q_bigrams = set(q_lower[i:i+2] for i in range(len(q_lower) - 1))
-    faq_bigrams = set(q_part[i:i+2] for i in range(len(q_part) - 1))
+    # 条件2：bigram 高重叠率（同义词归一化后匹配）
+    q_norm = _normalize_for_bigram(question)
+    faq_norm = _normalize_for_bigram(q_part)
+    q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
+    faq_bigrams = set(faq_norm[i:i+2] for i in range(len(faq_norm) - 1))
     if not q_bigrams or not faq_bigrams:
         return ""
     overlap = len(q_bigrams & faq_bigrams)
     ratio = overlap / max(len(q_bigrams), 1)
-    if overlap < 3 or ratio < 0.50:
+    if overlap < 3 or ratio < thresholds["ratio"]:
         return ""
 
     # 构建答案
@@ -1143,11 +1196,16 @@ def answer_question(question: str, mode: str, history: list = None,
 
     outputs = []
     seen_routes = set()
+    # 预提取历史上下文供子问题复用（避免每个子问题重复解析历史）
+    _history_ctx = None
+    if history:
+        from query_rewrite import _extract_history_context
+        _history_ctx = _extract_history_context(history)
     for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
         # 如果子问题与原问题相同，复用已有的 rewrite 结果；
         # 否则用 history 重新 rewrite，使子问题也能继承上下文
         # （如 "成分是什么？禁忌人群呢？" 拆分后 "禁忌人群呢" 需要产品名）
-        sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq, history=history)
+        sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq, history=history, _cached_ctx=_history_ctx)
         route = _detect_route_with_history(subq, sub_rewrite)
         # 同路由的子问题只回答一次（避免重复检索相同 chunk）
         if route in seen_routes:
