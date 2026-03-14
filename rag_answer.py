@@ -213,11 +213,12 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
     with _search_lock:
         scores, ids = index.search(qv, min(top_k, index.ntotal))
     hits = []
+    score_arr = scores[0]
     for i, idx in enumerate(ids[0]):
-        if idx < 0 or idx >= len(docs):
+        if idx < 0 or idx >= len(docs) or i >= len(score_arr):
             continue
         d = dict(docs[idx])
-        d["score"] = float(scores[0][i])
+        d["score"] = float(score_arr[i])
         hits.append(d)
     return hits
 
@@ -767,34 +768,42 @@ def _read_shared_knowledge(dir_name: str) -> str:
     shared_dir = KNOWLEDGE_DIR / dir_name
     if not shared_dir.exists():
         return ""
-    main_file = shared_dir / "main.txt"
-    if main_file.exists():
-        mtime = main_file.stat().st_mtime
+    try:
+        main_file = shared_dir / "main.txt"
+        if main_file.exists():
+            mtime = main_file.stat().st_mtime
+            cached = _shared_knowledge_cache.get(dir_name)
+            if cached and cached[0] == mtime:
+                return cached[1]
+            content = main_file.read_text(encoding="utf-8")
+            _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
+            _shared_knowledge_cache[dir_name] = (mtime, content)
+            return content
+        # 多实例目录：拼接所有子目录的 main.txt
+        parts = []
+        max_mtime = 0.0
+        for inst in sorted(shared_dir.iterdir()):
+            f = inst / "main.txt"
+            if inst.is_dir() and f.exists():
+                mt = f.stat().st_mtime
+                if mt > max_mtime:
+                    max_mtime = mt
+                parts.append(f.read_text(encoding="utf-8"))
         cached = _shared_knowledge_cache.get(dir_name)
-        if cached and cached[0] == mtime:
+        if cached and cached[0] == max_mtime and parts:
             return cached[1]
-        content = main_file.read_text(encoding="utf-8")
-        _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
-        _shared_knowledge_cache[dir_name] = (mtime, content)
+        content = "\n\n".join(parts)
+        if max_mtime > 0:
+            _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
+            _shared_knowledge_cache[dir_name] = (max_mtime, content)
         return content
-    # 多实例目录：拼接所有子目录的 main.txt
-    parts = []
-    max_mtime = 0.0
-    for inst in sorted(shared_dir.iterdir()):
-        f = inst / "main.txt"
-        if inst.is_dir() and f.exists():
-            mt = f.stat().st_mtime
-            if mt > max_mtime:
-                max_mtime = mt
-            parts.append(f.read_text(encoding="utf-8"))
-    cached = _shared_knowledge_cache.get(dir_name)
-    if cached and cached[0] == max_mtime and parts:
-        return cached[1]
-    content = "\n\n".join(parts)
-    if max_mtime > 0:
-        _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
-        _shared_knowledge_cache[dir_name] = (max_mtime, content)
-    return content
+    except OSError as e:
+        from rag_logger import log_error
+        log_error("_read_shared_knowledge", f"共享知识读取失败: {e}",
+                  meta={"dir_name": dir_name})
+        # 返回缓存旧数据（如有），否则返回空
+        cached = _shared_knowledge_cache.get(dir_name)
+        return cached[1] if cached else ""
 
 
 def parse_answer(route: str, product: str, mode: str) -> List[str]:

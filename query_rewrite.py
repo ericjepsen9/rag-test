@@ -111,7 +111,7 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
     # 从末尾向前扫描，用切片避免 reversed() 创建完整拷贝
     scan_slice = history[-(2 * _MAX_HISTORY_SCAN):] if len(history) > 2 * _MAX_HISTORY_SCAN else history
     for item in reversed(scan_slice):
-        content = item.get("content", "")
+        content = (item.get("content") or "")[:500]  # 截断超长消息，避免浪费检测开销
         if item.get("role") != "user":
             continue
         user_count += 1

@@ -1018,3 +1018,35 @@ class TestThreadLocalRouteProduct:
 
         assert results["t1"] == ("risk", "prodA")
         assert results["t2"] == ("aftercare", "prodB")
+
+
+# ============================================================
+# split_multi_question 还是 提前返回测试
+# ============================================================
+
+class TestSplitChoiceQuestion:
+    def test_haishi_no_split(self):
+        """选择式问题 '还是' 不应被拆分"""
+        result = split_multi_question("用水光还是微针好")
+        assert len(result) == 1
+        assert "还是" in result[0]
+
+    def test_haishi_with_comma(self):
+        """包含逗号的选择式问题也不应拆分"""
+        result = split_multi_question("水光好，还是微针好")
+        assert len(result) == 1
+
+    def test_normal_split_still_works(self):
+        """正常多问题拆分不受影响"""
+        result = split_multi_question("成分是什么？禁忌人群有哪些？")
+        assert len(result) >= 2
+
+
+class TestHistoryContentCap:
+    """超长历史消息应被截断处理"""
+    def test_long_content_no_crash(self):
+        long_msg = "菲罗奥" + "x" * 2000
+        history = [{"role": "user", "content": long_msg}]
+        ctx = _extract_history_context(history)
+        # 应正常提取产品，不会因超长内容异常
+        assert ctx["last_user_q"] != ""
