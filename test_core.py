@@ -1232,3 +1232,31 @@ class TestAdminProductsFilterShared:
         # 共享目录名应为字符串
         for name in shared_names:
             assert isinstance(name, str) and len(name) > 0
+
+
+class TestHistoryPairsSafeAccess:
+    """history_pairs 应容忍缺失 key"""
+    def test_missing_keys_no_crash(self):
+        # 模拟 _build_history_pairs 产出的缺损数据
+        pairs = [{"user": "你好"}, {"assistant": "回答"}, {}]
+        # 用与 llm_generate_answer 相同的逻辑
+        result = "\n".join(
+            f"用户：{p.get('user', '')}\n助手：{p.get('assistant', '')}"
+            for p in pairs
+        )
+        assert "你好" in result
+        assert "回答" in result
+
+
+class TestRouteConfigFallback:
+    """未知路由应有合理默认配置"""
+    def test_known_routes_have_config(self):
+        from rag_runtime_config import QUESTION_TYPE_CONFIG
+        # 已知路由应该有配置
+        for route in ["basic", "risk", "ingredient", "operation"]:
+            assert route in QUESTION_TYPE_CONFIG
+
+    def test_unknown_route_returns_none(self):
+        from rag_runtime_config import QUESTION_TYPE_CONFIG
+        # 未知路由应返回 None（触发警告日志）
+        assert QUESTION_TYPE_CONFIG.get("nonexistent_xyz") is None

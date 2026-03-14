@@ -1009,7 +1009,7 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
     if history_pairs:
         # 完整 Q&A 对让 LLM 理解对话全貌
         pairs_text = "\n".join(
-            f"   用户：{p['user']}\n   助手：{p['assistant']}"
+            f"   用户：{p.get('user', '')}\n   助手：{p.get('assistant', '')}"
             for p in history_pairs
         )
         history_block = (
@@ -1051,8 +1051,15 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         )
         if not resp.choices:
             return ""
-        msg = resp.choices[0].message
-        return (msg.content or "").strip() if msg else ""
+        choice = resp.choices[0]
+        msg = choice.message
+        text = (msg.content or "").strip() if msg else ""
+        if not text and getattr(choice, "finish_reason", None) not in (None, "stop"):
+            from rag_logger import log_error
+            log_error("llm_generate_answer",
+                      f"LLM 返回空内容, finish_reason={choice.finish_reason}",
+                      meta={"route": route, "question": question[:100]})
+        return text
     except Exception as e:
         from rag_logger import log_error
         log_error("llm_generate_answer", f"LLM 调用失败: {e}",
@@ -1078,8 +1085,14 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         )
         if not resp.choices:
             return text
-        msg = resp.choices[0].message
+        choice = resp.choices[0]
+        msg = choice.message
         result = (msg.content or "").strip() if msg else ""
+        if not result and getattr(choice, "finish_reason", None) not in (None, "stop"):
+            from rag_logger import log_error
+            log_error("openai_rewrite_answer",
+                      f"LLM 返回空内容, finish_reason={choice.finish_reason}",
+                      meta={"route": route})
         return result or text
     except Exception as e:
         from rag_logger import log_error
@@ -1142,7 +1155,10 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         _log_meta["resolved_question"] = rewrite["original"]
 
     # 根据问题类型使用不同的检索参数
-    route_cfg = QUESTION_TYPE_CONFIG.get(route, {})
+    route_cfg = QUESTION_TYPE_CONFIG.get(route)
+    if route_cfg is None:
+        print(f"[WARN] route '{route}' 无专属配置，使用默认检索参数")
+        route_cfg = {}
     route_top_k = route_cfg.get("k", DEFAULT_TOP_K)
     route_threshold = route_cfg.get("threshold", 0.30)
 
