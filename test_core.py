@@ -459,6 +459,93 @@ class TestEnvTunableConfig:
         assert 0.0 < HYBRID_KEYWORD_WEIGHT <= 1.0
 
 
+class TestMediaRouterCache:
+    def test_invalidate_media_cache(self):
+        from media_router import _media_cache, invalidate_media_cache
+        # 直接写入缓存模拟已加载状态
+        _media_cache["test_product"] = (0.0, [{"title": "test"}])
+        assert "test_product" in _media_cache
+        invalidate_media_cache("test_product")
+        assert "test_product" not in _media_cache
+
+    def test_invalidate_all_media_cache(self):
+        from media_router import _media_cache, invalidate_media_cache
+        _media_cache["p1"] = (0.0, [])
+        _media_cache["p2"] = (0.0, [])
+        invalidate_media_cache()
+        assert len(_media_cache) == 0
+
+
+class TestBuildFaissChunkFilter:
+    def test_short_chunk_filtered(self):
+        from build_faiss import chunk_text
+        # 一个极短文本应被过滤掉
+        result = chunk_text("短")
+        assert len(result) == 0
+
+    def test_normal_chunk_kept(self):
+        from build_faiss import chunk_text
+        # 正常长度的文本应保留
+        result = chunk_text("这是一段测试文本，长度足够被保留在索引中，不会被最小长度过滤器过滤掉。")
+        assert len(result) >= 1
+
+
+class TestBuildFaissDedup:
+    def test_dedup_records(self):
+        from build_faiss import _dedup_records
+        records = [
+            {"text": "同样的内容", "meta": {"source_file": "main.txt"}},
+            {"text": "同样的内容", "meta": {"source_file": "faq.txt"}},
+            {"text": "不同的内容", "meta": {"source_file": "main.txt"}},
+        ]
+        result = _dedup_records(records)
+        assert len(result) == 2
+        # 保留第一个来源
+        assert result[0]["meta"]["source_file"] == "main.txt"
+
+    def test_whitespace_normalization(self):
+        from build_faiss import _dedup_records
+        records = [
+            {"text": "内容  有  空格", "meta": {}},
+            {"text": "内容 有 空格", "meta": {}},
+        ]
+        result = _dedup_records(records)
+        assert len(result) == 1
+
+
+class TestRouteProductCache:
+    def test_get_last_route_product(self):
+        from rag_answer import get_last_route_product
+        # 应返回 tuple(str, str) 不报错
+        route, product = get_last_route_product()
+        assert isinstance(route, str)
+        assert isinstance(product, str)
+
+
+class TestExpandedRouteKeywords:
+    def test_procedure_q_new_keywords(self):
+        assert detect_route("这个项目有什么特点") == "procedure_q"
+        assert detect_route("项目原理是什么") == "procedure_q"
+
+    def test_equipment_q_new_keywords(self):
+        assert detect_route("设备型号有哪些") == "equipment_q"
+
+    def test_script_new_keywords(self):
+        assert detect_route("风险话术怎么回答") == "script"
+
+
+class TestChitchatReplyVariations:
+    def test_greeting_with_suffix(self):
+        from rag_answer import _chitchat_reply
+        reply = _chitchat_reply("你好啊！")
+        assert "助手" in reply or "帮" in reply
+
+    def test_thanks_with_suffix(self):
+        from rag_answer import _chitchat_reply
+        reply = _chitchat_reply("谢谢呀~")
+        assert "客气" in reply or "问题" in reply
+
+
 class TestDetectProduct:
     def test_alias(self):
         assert detect_product("非罗奥成分") == "feiluoao"

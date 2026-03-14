@@ -1021,7 +1021,7 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         resp = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            temperature=LLM_TEMPERATURE,
+            temperature=ROUTE_LLM_TEMPERATURE.get(route, LLM_TEMPERATURE),
             max_tokens=LLM_MAX_TOKENS_BRIEF,
         )
         return (resp.choices[0].message.content or "").strip() or text
@@ -1056,10 +1056,23 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
     return result[:max_lines]
 
 
+# 最近一次 answer_one 的 route/product（供 API 层复用，避免重复检测）
+_last_route = ""
+_last_product = ""
+
+
+def get_last_route_product():
+    """返回最近一次 answer_one 检测到的 (route, product_id)"""
+    return _last_route, _last_product
+
+
 def answer_one(question: str, mode: str, rewrite: dict = None,
                route_override: str = "") -> str:
+    global _last_route, _last_product
     product = detect_product(question)
     route = route_override or detect_route(question)
+    _last_route = route
+    _last_product = product
     if rewrite is None:
         rewrite = rewrite_query(question)
 
@@ -1206,7 +1219,7 @@ _CHITCHAT_REPLIES = {
 
 def _chitchat_reply(raw: str) -> str:
     """根据非提问输入类型返回礼貌回复"""
-    s = raw.strip().rstrip("！!。.~")
+    s = raw.strip().rstrip("！!。.~啊呀哇？?")
     if re.match(r"^(你好|嗨|hi|hello|hey|您好|在吗|在不在)$", s, re.IGNORECASE):
         return _CHITCHAT_REPLIES["greeting"]
     if re.match(r"^(谢谢|感谢|多谢|辛苦了|谢啦|thx|thanks)$", s, re.IGNORECASE):

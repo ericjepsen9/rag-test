@@ -3,17 +3,34 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from rag_runtime_config import KNOWLEDGE_DIR
 
+# media.json 缓存：product_id -> (mtime, items)，避免每次请求读取磁盘
+_media_cache: Dict[str, tuple] = {}
+
 
 def _load_product_media(product_id: str) -> List[Dict]:
-    """加载某个产品的 media.json"""
+    """加载某个产品的 media.json（带 mtime 缓存）"""
     media_file = KNOWLEDGE_DIR / product_id / "media.json"
     if not media_file.exists():
         return []
     try:
+        mtime = media_file.stat().st_mtime
+        cached = _media_cache.get(product_id)
+        if cached and cached[0] == mtime:
+            return cached[1]
         items = json.loads(media_file.read_text(encoding="utf-8"))
-        return [it for it in items if isinstance(it, dict) and "title" in it]
+        result = [it for it in items if isinstance(it, dict) and "title" in it]
+        _media_cache[product_id] = (mtime, result)
+        return result
     except Exception:
         return []
+
+
+def invalidate_media_cache(product_id: str = "") -> None:
+    """清除媒体缓存（产品知识更新后调用）"""
+    if product_id:
+        _media_cache.pop(product_id, None)
+    else:
+        _media_cache.clear()
 
 
 def find_media(question: str,

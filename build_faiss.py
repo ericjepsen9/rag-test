@@ -194,13 +194,18 @@ def _is_separator(para: str) -> bool:
     return bool(re.fullmatch(r"[=\-_\s]+", para.strip()))
 
 
+MIN_CHUNK_CHARS = 30  # 过短的 chunk 对检索无信息量，过滤噪音
+
+
 def chunk_text(text: str) -> List[str]:
     t = normalize_text(text)
     if not t:
         return []
     paras = split_into_paragraphs(t)
     paras = [p for p in paras if not _is_separator(p)]
-    return merge_paragraphs_to_chunks(paras, CHUNK_SIZE, CHUNK_OVERLAP)
+    chunks = merge_paragraphs_to_chunks(paras, CHUNK_SIZE, CHUNK_OVERLAP)
+    # 过滤过短 chunk（纯标题行、残余片段等），减少索引噪音
+    return [c for c in chunks if len(c) >= MIN_CHUNK_CHARS]
 
 
 # ====== 向量编码 ======
@@ -230,6 +235,20 @@ def embed_texts(texts):
 
 # ====== 构建索引 ======
 
+def _dedup_records(records: List[dict]) -> List[dict]:
+    """跨来源去重：相同文本内容（忽略空白差异）只保留第一个来源的记录"""
+    seen_hashes = set()
+    deduped = []
+    for r in records:
+        # 用去空白后的文本做去重键
+        key = re.sub(r"\s+", " ", r["text"].strip())
+        if key in seen_hashes:
+            continue
+        seen_hashes.add(key)
+        deduped.append(r)
+    return deduped
+
+
 def collect_product_records(product: str):
     pdir = KNOWLEDGE_DIR / product
     if not pdir.exists():
@@ -258,6 +277,11 @@ def collect_product_records(product: str):
             })
     if not records:
         raise ValueError(f"{product} 没有可用文本")
+    # 跨来源去重：main.txt + faq.txt 可能有重复段落
+    before = len(records)
+    records = _dedup_records(records)
+    if len(records) < before:
+        print(f"[INFO] {product}: 跨来源去重 {before} → {len(records)} records")
     return records
 
 
@@ -340,6 +364,11 @@ def collect_shared_records():
                             "chunk_id": i,
                         }
                     })
+    # 跨来源去重
+    before = len(records)
+    records = _dedup_records(records)
+    if len(records) < before:
+        print(f"[INFO] shared: 跨来源去重 {before} → {len(records)} records")
     return records
 
 

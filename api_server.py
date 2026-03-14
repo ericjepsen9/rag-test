@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from media_router import find_media
-from rag_answer import answer_question, invalidate_store_cache
+from media_router import find_media, invalidate_media_cache
+from rag_answer import answer_question, invalidate_store_cache, get_last_route_product
 from rag_logger import log_error, get_recent_qa, get_recent_misses, get_recent_errors
 from rag_runtime_config import KNOWLEDGE_DIR, SHARED_ENTITY_DIRS
 
@@ -136,10 +136,12 @@ def ask(req: AskRequest):
 
         answer = answer_question(question, req.mode, history=history, rewrite=rw)
         latency_ms = int((time.monotonic() - t0) * 1000)
-        # 用产品+路由精准匹配媒体，关键词兜底
-        from rag_answer import detect_route, detect_product
-        product_id = detect_product(resolved_q)
-        route = detect_route(resolved_q)
+        # 复用 answer_one 中已计算的 route/product，避免重复检测
+        route, product_id = get_last_route_product()
+        if not route or not product_id:
+            from rag_answer import detect_route, detect_product
+            product_id = product_id or detect_product(resolved_q)
+            route = route or detect_route(resolved_q)
         media = [MediaItem(**m) for m in find_media(resolved_q, product_id=product_id, route=route)]
         debug = None
         if req.debug:
@@ -213,9 +215,10 @@ def admin_rebuild(req: RebuildRequest):
         build_for_product(req.product.strip())
         # 重建后清除缓存，下次请求会加载新索引
         invalidate_store_cache(req.product.strip())
-        # 同时清除关联数据缓存
+        # 同时清除关联数据和媒体缓存
         from relation_engine import invalidate_relations_cache
         invalidate_relations_cache()
+        invalidate_media_cache(req.product.strip())
         return {"ok": True, "product": req.product}
     except Exception as e:
         log_error("admin_rebuild", repr(e), meta={"product": req.product})
