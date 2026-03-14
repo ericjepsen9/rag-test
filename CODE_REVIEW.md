@@ -52,55 +52,31 @@
 
 ---
 
-## 二、建议修复的问题（P1）
+## 二、建议修复的问题（P1）— ✅ 全部已修复
 
-### 5. 向量检索结果仅用于 evidence，未参与答案生成
+### 5. ✅ 向量检索结果仅用于 evidence，未参与答案生成
 **文件**: `rag_answer.py:330-351`
+**状态**: 已修复 — `_fallback_from_hits()` 在 `parse_answer` 返回空时从检索 chunks 提取内容作为 fallback。
 
-当前设计：规则提取（`parse_answer`）生成答案主体，向量/关键词检索结果（`hits`）仅用于 `build_evidence()`（来源引用）。
+### 6. ✅ `build_evidence()` 丢弃了检索到的实际文本
+**文件**: `rag_answer.py:529-545`
+**状态**: 已修复 — `build_evidence()` 现已保留 `text` 字段（经 `_truncate_to_sentence` 截断），支持答案溯源和调试。
 
-根据 `02_产品功能文档.md`："**优先走规则提取（章节抽取），不足时再走检索结果整理**"。代码中"不足时再走检索"这一步**没有实现**——当 `parse_answer` 返回空列表时，直接输出兜底模板，而不是利用检索到的 chunks 拼接答案。
+### 7. ✅ `section_block()` 的边界条件
+**文件**: `search_utils.py:138-162`
+**状态**: 已修复 — 截取时跳过标题行本身（`title_end = start + len(chosen)`），从标题之后开始搜索 stops。
 
-**改进方案**: 在 `body_lines` 为空时，从 `hits` 的 `text` 字段提取内容作为 fallback 答案，而不是固定模板。
+### 8. ✅ 中文关键词检索基本无效
+**文件**: `search_utils.py:165-181`
+**状态**: 已修复 — `_extract_terms()` 对纯中文长词（≥3字）做 bigram 切分，提升部分匹配召回率。同时配合同义词扩展提高中文检索效果。
 
-### 6. `build_evidence()` 丢弃了检索到的实际文本
-**文件**: `rag_answer.py:139-145`
+### 9. ✅ `QUESTION_TYPE_CONFIG` 定义了但未使用
+**文件**: `rag_answer.py:1244-1295`
+**状态**: 已修复 — `answer_one()` 根据 `detect_route()` 动态选取 `route_cfg` 中的 k、threshold、vw、kw 参数。
 
-```python
-def build_evidence(hits):
-    ev = []
-    for h in hits[:6]:
-        ev.append({"meta": h.get("meta", {})})  # 丢弃了 h["text"]
-    return ev
-```
-
-导致 evidence 只有"来源文件/段落/类型"，没有实际内容。如果将来要做答案溯源或 debug，需要保留文本。
-
-### 7. `section_block()` 的边界条件
-**文件**: `search_utils.py:40-61`
-
-stops 搜索从截取后子串（包含标题行本身）开始。如果 stop 关键词出现在标题行中（如"五、防伪鉴别方法"含"防伪"，而"防伪"又是其他 route 的 stop），`section_block` 可能截取到极短或空内容。
-
-当前实际不会触发（因为 stops 列表经过精心设计避开了），但维护风险存在。
-
-**改进方案**: 截取时跳过标题行本身，从标题行之后开始搜索 stops。
-
-### 8. 中文关键词检索基本无效
-**文件**: `search_utils.py:64-73`
-
-`keyword_score()` 用 `re.split(r"[\s,，;；]+", query)` 分词。中文查询（如"术后注意事项"）不含空格/逗号，会作为整体去匹配，只有完全包含时才命中。
-
-**改进方案**: 接入 jieba 分词，或至少对查询做 n-gram 切分。
-
-### 9. `QUESTION_TYPE_CONFIG` 定义了但未使用
-`rag_runtime_config.py` 和 `rag_config.py` 都定义了每个 route 对应的 `k` 和 `threshold`，但 `answer_one()` 对所有 route 用相同的 `VECTOR_TOP_K=12` 和 `DEFAULT_TOP_K=8`。
-
-**改进方案**: 在 `answer_one()` 中根据 `detect_route()` 的结果动态选取 k 和 threshold。
-
-### 10. `split_multi_question` 分隔符过于激进
-**文件**: `search_utils.py:108`
-
-使用 `"。"` 作为分隔符，会把正常陈述句尾的句号当分隔，生成空的子问题。虽然后续有 strip/uniq 过滤空串，但"术后护理注意事项有哪些。请详细说明。"会被拆成"术后护理注意事项有哪些"和"请详细说明"两个子问题，后者脱离了主题上下文。
+### 10. ✅ `split_multi_question` 分隔符过于激进
+**文件**: `search_utils.py:415-485`
+**状态**: 已修复 — 分隔符列表不再包含 `"。"`，避免中文句号误拆。逗号拆分加入 ≥6 字符最小长度限制。
 
 ---
 
