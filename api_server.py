@@ -138,14 +138,20 @@ def ask(req: AskRequest):
     t0 = time.monotonic()
     rw = None
     try:
-        history = [{"role": h.role, "content": h.content[:1000]} for h in req.history[-6:]]
+        history = [{"role": h.role, "content": _sanitize_input(h.content[:1000])} for h in req.history[-6:]]
         # 防御：限制历史总字符数，避免过大 payload 占用内存
         total_chars = sum(len(h.get("content", "")) for h in history)
         if total_chars > MAX_HISTORY_TOTAL_CHARS:
-            # 从最早的消息开始裁剪，保留最近的对话
-            while history and total_chars > MAX_HISTORY_TOTAL_CHARS:
-                total_chars -= len(history[0].get("content", ""))
-                history.pop(0)
+            # 从最早的消息裁剪，保留最近的对话（用累加代替 O(n) pop(0)）
+            cum = 0
+            trim_idx = 0
+            excess = total_chars - MAX_HISTORY_TOTAL_CHARS
+            for i, h in enumerate(history):
+                cum += len(h.get("content", ""))
+                if cum >= excess:
+                    trim_idx = i + 1
+                    break
+            history = history[trim_idx:]
         # rewrite 只做一次，传给 answer_question 复用
         from query_rewrite import rewrite_query
         rw = rewrite_query(question, history=history)
@@ -277,14 +283,14 @@ def admin_rebuild_shared():
 
 @app.get("/admin/logs/qa")
 def admin_logs_qa(limit: int = 20):
-    return {"items": get_recent_qa(limit=limit)}
+    return {"items": get_recent_qa(limit=min(max(1, limit), 100))}
 
 
 @app.get("/admin/logs/miss")
 def admin_logs_miss(limit: int = 20):
-    return {"items": get_recent_misses(limit=limit)}
+    return {"items": get_recent_misses(limit=min(max(1, limit), 100))}
 
 
 @app.get("/admin/logs/error")
 def admin_logs_error(limit: int = 20):
-    return {"items": get_recent_errors(limit=limit)}
+    return {"items": get_recent_errors(limit=min(max(1, limit), 100))}

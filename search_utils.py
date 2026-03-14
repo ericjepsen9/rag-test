@@ -260,11 +260,13 @@ def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dic
     if uncached:
         # 一次遍历文档列表，同时统计所有未缓存 term 的 df
         counts = {t: 0 for t in uncached}
+        # 短列表直接遍历；长列表先收窄为仍有 remaining term 的子集
         for doc_text in texts:
             for t in uncached:
                 if t in doc_text:
                     counts[t] += 1
         cached.update(counts)
+    # 返回时只构建请求的 terms 子集（避免拷贝整个缓存）
 
     return {t: cached.get(t, 0) for t in terms}
 

@@ -13,6 +13,7 @@ except Exception:
     pass
 
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 
 from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT, OUT_PATH, DEFAULT_MODE, DEFAULT_TOP_K,
@@ -54,6 +55,38 @@ _SHARED_ROUTES = {"complication", "course", "anatomy_q", "indication_q",
                   "procedure_q", "equipment_q", "script"}
 # 混合路由：同时检索产品库和共享库
 _HYBRID_ENTITY_ROUTES = {"complication", "course", "anatomy_q", "indication_q"}
+
+# ===== detect_route 消歧信号（模块级常量，避免每次调用重建列表） =====
+_ROUTE_ORDER = [
+    "complication", "script", "procedure_q", "equipment_q",
+    "anatomy_q", "indication_q", "course",
+    "risk", "repair", "combo", "aftercare", "operation", "anti_fake",
+    "contraindication", "design", "effect", "pre_care", "ingredient", "basic",
+]
+_ROUTE_ORDER_IDX = {r: i for i, r in enumerate(_ROUTE_ORDER)}
+
+_CONTRA_SIGNALS = ("体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
+                   "能做", "可以做", "能不能", "能打吗", "可以吗")
+_COMBO_SIGNALS = ("一起做", "联合", "搭配", "同做", "配合", "间隔多久")
+_REPAIR_SIGNALS = ("修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差")
+_SYMPTOM_KWS = ("红肿", "肿胀", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
+                "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
+                "越来越")
+_LIFESTYLE_KWS = ("运动", "健身", "游泳", "桑拿", "化妆", "上妆", "防晒", "晒太阳",
+                  "洗澡", "喝酒", "饮酒", "上班", "出汗", "泡澡", "汗蒸")
+_COURSE_SIGNALS = ("安排", "规划", "几次", "间隔多久", "总共", "多长时间",
+                   "时间表", "多少钱", "费用", "预算")
+_DESIGN_SIGNALS = ("怎么打", "打哪里", "几支", "怎么设计", "方案", "用量")
+_BODY_PARTS = ("苹果肌", "法令纹", "下颌", "额头", "额部", "眼周", "颈部",
+               "鼻部", "手部", "手背")
+_EQUIPMENT_WORDS = ("仪器", "设备", "机器", "仪", "水光仪", "微针仪", "品牌", "适配")
+_PROC_SIGNALS = ("操作流程", "流程", "项目有哪些", "有什么区别", "什么项目")
+_SCRIPT_SIGNALS = ("客户", "怎么介绍", "怎么解释", "怎么回答", "怎么说", "话术")
+_RECOMMENDATION_WORDS = ("适合", "推荐", "用什么好", "选什么")
+_RE_TEMPORAL_SHORT = re.compile(r"术后(第?\d+天|当天|1-3天|一周|1周)")
+_RE_TEMPORAL_LONG = re.compile(r"(术后\d+个月|半年|一年|长期)")
+_RE_PAIN_INQUIRY = re.compile(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛)")
+_RE_PRE_PAIN = re.compile(r"(打的时候|注射时|术中|操作中).{0,4}(疼|痛)")
 
 
 def invalidate_store_cache(product: str) -> None:
@@ -305,19 +338,10 @@ def _detect_special_intent(q: str) -> str:
 
 def detect_route(question: str) -> str:
     q = (question or "").lower()
-    # 跨实体路由优先于产品路由（更具体的先匹配）
-    order = [
-        # 跨实体路由
-        "complication", "script", "procedure_q", "equipment_q",
-        "anatomy_q", "indication_q", "course",
-        # 产品路由
-        "risk", "repair", "combo", "aftercare", "operation", "anti_fake",
-        "contraindication", "design", "effect", "pre_care", "ingredient", "basic",
-    ]
 
     # 收集每个 route 的匹配关键词（使用预计算小写版本避免循环内 .lower()）
     matched = {}
-    for route in order:
+    for route in _ROUTE_ORDER:
         hits = [kw for kw in _QUESTION_ROUTES_LOWER.get(route, []) if kw in q]
         if hits:
             matched[route] = hits
@@ -326,112 +350,85 @@ def detect_route(question: str) -> str:
         return "basic"
 
     # ---- 置信度评分：多路由歧义时用加权分数决定 ----
-    # 每个路由的分数 = 命中关键词数 × 1.0 + 消歧信号加分
     scores = {}
     for route, hits in matched.items():
-        # 基础分：命中关键词数（长关键词加权更高，避免单字误匹配）
         score = sum(max(1.0, len(kw) / 2) for kw in hits)
         scores[route] = score
 
-    # 消歧加分规则（仅对已命中的路由加分）
-    contra_signals = ["体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
-                      "能做", "可以做", "能不能", "能打吗", "可以吗"]
-    if "contraindication" in scores and any(s in q for s in contra_signals):
+    # 消歧加分规则（使用模块级常量，避免每次调用重建列表）
+    if "contraindication" in scores and any(s in q for s in _CONTRA_SIGNALS):
         scores["contraindication"] += 5.0
 
-    combo_signals = ["一起做", "联合", "搭配", "同做", "配合", "间隔多久"]
-    if "combo" in scores and any(s in q for s in combo_signals):
+    if "combo" in scores and any(s in q for s in _COMBO_SIGNALS):
         scores["combo"] += 5.0
 
-    repair_signals = ["修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差"]
-    if "repair" in scores and any(s in q for s in repair_signals):
+    if "repair" in scores and any(s in q for s in _REPAIR_SIGNALS):
         scores["repair"] += 5.0
 
     # complication vs risk — 术后时间线信号
-    temporal_short = re.search(r"术后(第?\d+天|当天|1-3天|一周|1周)", q)
-    temporal_long = re.search(r"(术后\d+个月|半年|一年|长期)", q)
     if "complication" in scores and "risk" in scores:
-        if temporal_long:
+        if _RE_TEMPORAL_LONG.search(q):
             scores["risk"] += 4.0
-        if temporal_short:
+        if _RE_TEMPORAL_SHORT.search(q):
             scores["complication"] += 4.0
 
     # 疼痛体感询问 → operation
-    pain_inquiry = re.search(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛)", q)
-    if pain_inquiry and "operation" in scores:
+    if _RE_PAIN_INQUIRY.search(q) and "operation" in scores:
         scores["operation"] += 4.0
 
     # 术后症状 → risk 优先于 aftercare/operation
-    # 但多症状同时出现 + "正常吗" → complication（综合评估）
-    symptom_kws = ["红肿", "肿胀", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
-                   "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
-                   "越来越"]
-    symptom_count = sum(1 for s in symptom_kws if s in q)
+    symptom_count = sum(1 for s in _SYMPTOM_KWS if s in q)
     if "risk" in scores and ("aftercare" in scores or "operation" in scores):
         if symptom_count >= 1:
             scores["risk"] += 4.0
-    # 多症状并列询问（"红肿怎么办，硬块正常吗"）→ complication 更全面
     if "complication" in scores and symptom_count >= 2:
         scores["complication"] += 3.0
 
     # 术中疼痛 → operation（更精确）
     if "risk" in scores and "operation" in scores:
-        pre_pain = re.search(r"(打的时候|注射时|术中|操作中).{0,4}(疼|痛)", q)
-        if pre_pain:
+        if _RE_PRE_PAIN.search(q):
             scores["operation"] += 5.0
 
     # 生活限制问题 → aftercare
-    lifestyle_kws = ["运动", "健身", "游泳", "桑拿", "化妆", "上妆", "防晒", "晒太阳",
-                     "洗澡", "喝酒", "饮酒", "上班", "出汗", "泡澡", "汗蒸"]
-    if "aftercare" in scores and any(s in q for s in lifestyle_kws):
+    if "aftercare" in scores and any(s in q for s in _LIFESTYLE_KWS):
         scores["aftercare"] += 4.0
 
     # 疗程规划信号 → course
-    course_signals = ["安排", "规划", "几次", "间隔多久", "总共", "多长时间",
-                      "时间表", "多少钱", "费用", "预算"]
     if "course" in scores:
-        if any(s in q for s in course_signals):
+        if any(s in q for s in _COURSE_SIGNALS):
             scores["course"] += 4.0
-    # 无疗程信号但有 operation → 偏向 operation
     if "course" in scores and "operation" in scores:
-        if not any(s in q for s in course_signals):
+        if not any(s in q for s in _COURSE_SIGNALS):
             scores["operation"] += 2.0
 
     # 方案设计信号 → design
-    design_signals = ["怎么打", "打哪里", "几支", "怎么设计", "方案", "用量"]
-    if "design" in scores and any(s in q for s in design_signals):
+    if "design" in scores and any(s in q for s in _DESIGN_SIGNALS):
         scores["design"] += 4.0
 
-    # 部位名 → anatomy_q 优先于 indication_q（具体部位比泛化症状更精确）
-    body_parts = ["苹果肌", "法令纹", "下颌", "额头", "额部", "眼周", "颈部",
-                  "鼻部", "手部", "手背"]
+    # 部位名 → anatomy_q 优先于 indication_q
     if "anatomy_q" in scores and "indication_q" in scores:
-        if any(bp in q for bp in body_parts):
+        if any(bp in q for bp in _BODY_PARTS):
             scores["anatomy_q"] += 3.0
 
     # 设备/仪器关键词 → equipment_q 优先于 operation
-    equipment_words = ["仪器", "设备", "机器", "仪", "水光仪", "微针仪", "品牌", "适配"]
     if "equipment_q" in scores and "operation" in scores:
-        if any(ew in q for ew in equipment_words):
+        if any(ew in q for ew in _EQUIPMENT_WORDS):
             scores["equipment_q"] += 4.0
 
     # 项目流程/对比 → procedure_q 优先于 operation
-    proc_signals = ["操作流程", "流程", "项目有哪些", "有什么区别", "什么项目"]
     if "procedure_q" in scores and "operation" in scores:
-        if any(ps in q for ps in proc_signals):
+        if any(ps in q for ps in _PROC_SIGNALS):
             scores["procedure_q"] += 4.0
 
     # 客户沟通场景 → script 优先于 ingredient/basic
-    script_signals = ["客户", "怎么介绍", "怎么解释", "怎么回答", "怎么说", "话术"]
     if "script" in scores:
-        if any(ss in q for ss in script_signals):
+        if any(ss in q for ss in _SCRIPT_SIGNALS):
             for rival in ("ingredient", "basic", "effect"):
                 if rival in scores:
                     scores["script"] += 4.0
                     break
 
-    # 多实体并列提及 → combo（"菲罗奥和微针"、"水光和光电"）
-    # 产品+项目也算并列（"菲罗奥和水光针"）
+    # 多实体并列提及 → combo
     from rag_runtime_config import PROJECT_ALIASES
     mentioned_projects = detect_terms(q, PROJECT_ALIASES)
     mentioned_products = detect_terms(q, PRODUCT_ALIASES)
@@ -439,23 +436,20 @@ def detect_route(question: str) -> str:
     if "combo" in scores and entity_count >= 2:
         scores["combo"] += 6.0
 
-    # "维持" → effect, "恢复" → risk/complication（分辨持久 vs 恢复期）
+    # "维持" → effect, "恢复" → risk/complication
     if "effect" in scores and "维持" in q and "恢复" not in q:
         scores["effect"] += 3.0
     if "risk" in scores and "恢复" in q and "维持" not in q:
         scores["risk"] += 2.0
 
-    # "适合"/"推荐" 偏向 indication_q 而非 contraindication（推荐 vs 禁忌）
-    recommendation_words = ["适合", "推荐", "用什么好", "选什么"]
+    # "适合"/"推荐" 偏向 indication_q 而非 contraindication
     if "indication_q" in scores and "contraindication" in scores:
-        if any(w in q for w in recommendation_words):
+        if any(w in q for w in _RECOMMENDATION_WORDS):
             scores["indication_q"] += 4.0
 
-    # 按分数排序，相同分数时按 order 优先级
     if not scores:
         return "basic"
-    order_idx = {r: i for i, r in enumerate(order)}
-    best = max(scores.keys(), key=lambda r: (scores[r], -order_idx.get(r, 99)))
+    best = max(scores.keys(), key=lambda r: (scores[r], -_ROUTE_ORDER_IDX.get(r, 99)))
     return best
 
 
@@ -1117,6 +1111,7 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
     query_terms = [t for t in re.split(r"[\s,，;；、？?！!。【】]+", query.lower())
                    if t and (len(t) >= 2 or re.fullmatch(r"[\u4e00-\u9fff]", t))]
     scored_lines = []
+    seen_lines = set()
     for h in hits:
         text = (h.get("text") or "").strip()
         if not text:
@@ -1128,13 +1123,17 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
             # 跳过纯标题行和分隔线
             if re.match(r"^[一二三四五六七八九十]+、", ln) or set(ln) <= {"=", "-", "_", " "}:
                 continue
+            # 早期去重，避免大量重复行进入排序
+            ln_key = re.sub(r"\s+", " ", ln)
+            if ln_key in seen_lines:
+                continue
+            seen_lines.add(ln_key)
             ln_lower = ln.lower()
             match_count = sum(1 for t in query_terms if t in ln_lower) if query_terms else 0
             scored_lines.append((match_count, ln))
     # 按匹配数降序排列
     scored_lines.sort(key=lambda x: x[0], reverse=True)
-    result = uniq([ln for _, ln in scored_lines])
-    return result[:max_lines]
+    return [ln for _, ln in scored_lines[:max_lines]]
 
 
 # 最近一次 answer_one 的 route/product（线程本地存储，避免并发请求互相覆盖）
@@ -1180,7 +1179,6 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     search_shared = route in _SHARED_ROUTES
 
     # 并行执行向量检索和关键词检索（IO/计算密集混合，线程级并行有收益）
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def _do_vector(store_name):
         return vector_search(store_name, search_q, VECTOR_TOP_K)

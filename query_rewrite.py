@@ -260,23 +260,27 @@ def _build_history_pairs(history: List[Dict], max_pairs: int = 3) -> List[Dict]:
     """从对话历史中提取最近 max_pairs 轮完整 Q&A 对，供 LLM 理解完整上下文。
 
     返回 [{"user": "...", "assistant": "..."}, ...] 格式的列表。
-    助手回复截断到 200 字以免超长。
+    助手回复截断到 200 字以免超长。从末尾反向扫描，找到足够对数后提前退出。
     """
     pairs: List[Dict] = []
-    current_user = ""
-    for item in history:
+    current_assistant = ""
+    # 反向扫描：先遇到 assistant 再遇到 user，组成一对
+    for item in reversed(history):
         role = item.get("role", "")
-        content = (item.get("content") or "").strip()
-        if role == "user":
-            current_user = content
-        elif role == "assistant" and current_user:
+        raw = item.get("content")
+        content = (str(raw) if raw is not None else "").strip()
+        if role == "assistant":
+            current_assistant = content[:200]
+        elif role == "user" and current_assistant:
             pairs.append({
-                "user": current_user,
-                "assistant": content[:200],
+                "user": content,
+                "assistant": current_assistant,
             })
-            current_user = ""
-    # 取最近 max_pairs 轮
-    return pairs[-max_pairs:] if len(pairs) > max_pairs else pairs
+            current_assistant = ""
+            if len(pairs) >= max_pairs:
+                break
+    pairs.reverse()
+    return pairs
 
 
 def rewrite_query(question: str, history: Optional[List[Dict]] = None,
