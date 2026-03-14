@@ -67,7 +67,8 @@ def expand_synonyms(query: str) -> str:
             if w not in q_lower:
                 extra.add(w)
     if extra:
-        return query + " " + " ".join(extra)
+        expanded = query + " " + " ".join(extra)
+        return expanded[:2000]  # 防止同义词膨胀过长
     return query
 
 

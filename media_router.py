@@ -64,7 +64,7 @@ def find_media(question: str,
     # 1) 路由精准匹配
     if route:
         route_hits = [it for it in items
-                      if route in (it.get("routes") or [])]
+                      if isinstance(it.get("routes"), list) and route in it["routes"]]
         if route_hits:
             return route_hits[:6]
 
@@ -74,7 +74,7 @@ def find_media(question: str,
         return []
     kw_hits = []
     for it in items:
-        keys = it.get("keywords") or []
+        keys = it.get("keywords") if isinstance(it.get("keywords"), list) else []
         if any(k.lower() in q for k in keys):
             kw_hits.append(it)
     return kw_hits[:6]

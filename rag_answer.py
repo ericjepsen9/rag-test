@@ -438,6 +438,8 @@ def detect_route(question: str) -> str:
             scores["indication_q"] += 4.0
 
     # 按分数排序，相同分数时按 order 优先级
+    if not scores:
+        return "basic"
     order_idx = {r: i for i, r in enumerate(order)}
     best = max(scores.keys(), key=lambda r: (scores[r], -order_idx.get(r, 99)))
     return best

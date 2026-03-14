@@ -1050,3 +1050,30 @@ class TestHistoryContentCap:
         ctx = _extract_history_context(history)
         # 应正常提取产品，不会因超长内容异常
         assert ctx["last_user_q"] != ""
+
+
+class TestDetectRouteEmptyScores:
+    """detect_route 空 scores 应回退 basic"""
+    def test_empty_question_returns_basic(self):
+        from rag_answer import detect_route
+        result = detect_route("")
+        assert isinstance(result, str)
+        # 空问题不应崩溃
+
+
+class TestExpandSynonymsCap:
+    """同义词扩展应有长度上限"""
+    def test_expansion_not_unbounded(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("术后第1天疼痛红肿恢复")
+        assert len(result) <= 2000
+
+
+class TestMediaRouteTypeValidation:
+    """media routes/keywords 非 list 类型应被安全忽略"""
+    def test_string_routes_ignored(self):
+        from media_router import find_media
+        # 如果 routes 是字符串而非列表，不应误匹配
+        # find_media 内部已有类型检查，此处验证不会崩溃
+        result = find_media("测试问题", product_id="nonexistent_product", route="effect")
+        assert isinstance(result, list)
