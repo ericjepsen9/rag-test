@@ -3,6 +3,7 @@ import sys
 import re
 import json
 import argparse
+import tempfile
 from pathlib import Path
 from typing import List
 
@@ -229,6 +230,8 @@ def embed_texts(texts):
     vecs = np.asarray(vecs, dtype="float32")
     if vecs.ndim != 2:
         raise ValueError(f"向量维度异常: {vecs.shape}")
+    if vecs.shape[0] != len(texts):
+        raise ValueError(f"向量行数({vecs.shape[0]})与文本数({len(texts)})不一致")
     _get_faiss().normalize_L2(vecs)
     return vecs
 
@@ -301,10 +304,15 @@ def build_for_product(product: str):
     docs_path = out_dir / "docs.jsonl"
     index_path = out_dir / "index.faiss"
 
-    with docs_path.open("w", encoding="utf-8") as f:
+    # 原子写入：先写临时文件，再 rename，防止进程中断导致文件损坏
+    tmp_docs = out_dir / "docs.jsonl.tmp"
+    tmp_index = out_dir / "index.faiss.tmp"
+    with tmp_docs.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    _get_faiss().write_index(index, str(index_path))
+    _get_faiss().write_index(index, str(tmp_index))
+    os.replace(str(tmp_docs), str(docs_path))
+    os.replace(str(tmp_index), str(index_path))
 
     print(f"[DONE] Built store")
     print(f"       product: {product}")
@@ -392,10 +400,15 @@ def build_shared():
     docs_path = out_dir / "docs.jsonl"
     index_path = out_dir / "index.faiss"
 
-    with docs_path.open("w", encoding="utf-8") as f:
+    # 原子写入：先写临时文件，再 rename
+    tmp_docs = out_dir / "docs.jsonl.tmp"
+    tmp_index = out_dir / "index.faiss.tmp"
+    with tmp_docs.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    _get_faiss().write_index(index, str(index_path))
+    _get_faiss().write_index(index, str(tmp_index))
+    os.replace(str(tmp_docs), str(docs_path))
+    os.replace(str(tmp_index), str(index_path))
 
     print(f"[DONE] Built shared store")
     print(f"       chunks : {len(records)}")

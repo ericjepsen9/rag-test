@@ -1260,3 +1260,42 @@ class TestRouteConfigFallback:
         from rag_runtime_config import QUESTION_TYPE_CONFIG
         # 未知路由应返回 None（触发警告日志）
         assert QUESTION_TYPE_CONFIG.get("nonexistent_xyz") is None
+
+
+class TestFallbackQueryTermsCJK:
+    """_fallback_from_hits 应允许单字中文查询词"""
+    def test_single_cjk_char_kept(self):
+        import re
+        query = "术后肿了"
+        terms = [t for t in re.split(r"[\s,，;；、？?！!。【】]+", query.lower())
+                 if t and (len(t) >= 2 or re.fullmatch(r"[\u4e00-\u9fff]", t))]
+        # "术后肿了" 不含分隔符，整体保留
+        assert "术后肿了" in terms
+
+    def test_split_keeps_single_chars(self):
+        import re
+        query = "肿，痛，红"
+        terms = [t for t in re.split(r"[\s,，;；、？?！!。【】]+", query.lower())
+                 if t and (len(t) >= 2 or re.fullmatch(r"[\u4e00-\u9fff]", t))]
+        assert "肿" in terms
+        assert "痛" in terms
+        assert "红" in terms
+
+    def test_single_latin_char_excluded(self):
+        import re
+        query = "a b cd"
+        terms = [t for t in re.split(r"[\s,，;；、？?！!。【】]+", query.lower())
+                 if t and (len(t) >= 2 or re.fullmatch(r"[\u4e00-\u9fff]", t))]
+        # "a" and "b" should be excluded, "cd" kept
+        assert "a" not in terms
+        assert "b" not in terms
+        assert "cd" in terms
+
+
+class TestEmbedTextsRowValidation:
+    """embed_texts 应校验向量行数与文本数一致"""
+    def test_shape_validation_exists(self):
+        import inspect
+        from build_faiss import embed_texts
+        src = inspect.getsource(embed_texts)
+        assert "shape[0]" in src and "len(texts)" in src

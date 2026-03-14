@@ -1106,7 +1106,9 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
     """当规则提取失败时，从检索结果中提取文本作为 fallback 答案。
     优先选择包含查询关键词的行，其次取各 chunk 的前几行。
     按关键词匹配数排序，去重后返回。"""
-    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if len(t) >= 2]
+    # CJK 单字也有语义（术、痛、肿），允许单字中文；非中文要求 >=2 字符
+    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。【】]+", query.lower())
+                   if t and (len(t) >= 2 or re.fullmatch(r"[\u4e00-\u9fff]", t))]
     scored_lines = []
     for h in hits:
         text = (h.get("text") or "").strip()
