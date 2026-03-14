@@ -127,9 +127,10 @@ def _equipment_label(eid: str) -> str:
 
 # ===== 公开查询接口 =====
 
-def get_combo_info(product_id: str) -> List[str]:
+def get_combo_info(product_id: str, data: Optional[Dict] = None) -> List[str]:
     """获取产品的联合方案信息 + 联合禁忌，用于 combo 路由补充。"""
-    data = _load()
+    if data is None:
+        data = _load()
     lines = []
 
     # 产品-项目兼容性（使用倒排索引）
@@ -159,9 +160,10 @@ def get_combo_info(product_id: str) -> List[str]:
     return lines
 
 
-def get_drug_interactions(route: str = "") -> List[str]:
+def get_drug_interactions(route: str = "", data: Optional[Dict] = None) -> List[str]:
     """获取药物交互信息，用于 contraindication / pre_care 路由补充。"""
-    data = _load()
+    if data is None:
+        data = _load()
     lines = []
     for item in data.get("drug_interactions", []):
         drug = item.get("drug", "")
@@ -175,9 +177,10 @@ def get_drug_interactions(route: str = "") -> List[str]:
     return lines
 
 
-def get_indication_recommendations(query: str) -> List[str]:
+def get_indication_recommendations(query: str, _data: Optional[Dict] = None) -> List[str]:
     """根据查询中的适应症关键词，返回推荐方案。"""
-    _load()
+    if _data is None:
+        _load()
     lines = []
     q_lower = query.lower()
     for indication, items in (_idx_indication or {}).items():
@@ -198,9 +201,10 @@ def get_indication_recommendations(query: str) -> List[str]:
     return lines
 
 
-def get_anatomy_recommendations(query: str) -> List[str]:
+def get_anatomy_recommendations(query: str, _data: Optional[Dict] = None) -> List[str]:
     """根据查询中的部位关键词，返回推荐方案。"""
-    _load()
+    if _data is None:
+        _load()
     lines = []
     q_lower = query.lower()
     for area, items in (_idx_anatomy or {}).items():
@@ -221,9 +225,10 @@ def get_anatomy_recommendations(query: str) -> List[str]:
     return lines
 
 
-def get_procedure_equipment(query: str) -> List[str]:
+def get_procedure_equipment(query: str, _data: Optional[Dict] = None) -> List[str]:
     """根据查询中的项目关键词，返回对应设备信息。"""
-    _load()
+    if _data is None:
+        _load()
     lines = []
     q_lower = query.lower()
     # 使用倒排别名索引：O(aliases) 查找代替 O(procs × aliases) 遍历
@@ -243,9 +248,10 @@ def get_procedure_equipment(query: str) -> List[str]:
     return lines
 
 
-def get_temporal_constraints(product_id: str) -> List[str]:
+def get_temporal_constraints(product_id: str, data: Optional[Dict] = None) -> List[str]:
     """获取产品相关的时序约束：各项目之间的间隔要求。"""
-    data = _load()
+    if data is None:
+        data = _load()
     lines = []
     seen = set()
 
@@ -275,12 +281,13 @@ def get_temporal_constraints(product_id: str) -> List[str]:
     return lines
 
 
-def validate_combo_safety(product_id: str, question: str) -> List[str]:
+def validate_combo_safety(product_id: str, question: str, data: Optional[Dict] = None) -> List[str]:
     """检查问题中提到的联合方案是否存在安全风险。
 
     返回警告信息列表（空列表表示无风险或无法判断）。
     """
-    data = _load()
+    if data is None:
+        data = _load()
     warnings = []
     q_lower = question.lower()
 
@@ -324,22 +331,20 @@ def enrich_answer(route: str, product_id: str, question: str) -> List[str]:
 
     lines = []
     if route == "combo":
-        lines = get_combo_info(product_id)
-        # 追加安全风险检查
-        safety = validate_combo_safety(product_id, question)
+        lines = get_combo_info(product_id, data=data)
+        safety = validate_combo_safety(product_id, question, data=data)
         if safety:
             lines.extend(safety)
     elif route in ("contraindication", "pre_care"):
-        lines = get_drug_interactions(route)
+        lines = get_drug_interactions(route, data=data)
     elif route == "indication_q":
-        lines = get_indication_recommendations(question)
+        lines = get_indication_recommendations(question, _data=data)
     elif route == "anatomy_q":
-        lines = get_anatomy_recommendations(question)
+        lines = get_anatomy_recommendations(question, _data=data)
     elif route == "equipment_q":
-        lines = get_procedure_equipment(question)
+        lines = get_procedure_equipment(question, _data=data)
     elif route == "course":
-        # 疗程路由追加时序约束
-        temporal = get_temporal_constraints(product_id)
+        temporal = get_temporal_constraints(product_id, data=data)
         if temporal:
             lines.append("【间隔要求】")
             lines.extend(temporal)

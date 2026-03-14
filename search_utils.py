@@ -228,18 +228,18 @@ def _corpus_cache_key(docs: List[Dict]) -> Tuple:
     return (n, digest)
 
 
-def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float]:
-    """缓存 docs 的小写文本和平均长度，避免每次请求重复计算"""
+def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float, Tuple]:
+    """缓存 docs 的小写文本和平均长度，避免每次请求重复计算。
+    返回 (texts, n_docs, avg_dl, corpus_key)，调用方可复用 corpus_key。"""
     key = _corpus_cache_key(docs)
     cached = _bm25_cache.get(key)
     if cached:
-        return cached
+        return cached[0], cached[1], cached[2], key
     texts = [(d.get("text") or "").lower() for d in docs]
     n_docs = len(texts)
     avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
-    result = (texts, n_docs, avg_dl)
-    _cache_put(_bm25_cache, key, result)
-    return result
+    _cache_put(_bm25_cache, key, (texts, n_docs, avg_dl))
+    return texts, n_docs, avg_dl, key
 
 
 _df_cache: Dict[Any, Dict[str, int]] = {}  # corpus_key -> {term: df}
@@ -292,9 +292,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
     if not q_terms:
         return []
 
-    texts, n_docs, avg_dl = _get_bm25_corpus(docs)
-    # 复用 _get_bm25_corpus 内部已计算的 cache key，避免重复哈希
-    corpus_key = _corpus_cache_key(docs)
+    texts, n_docs, avg_dl, corpus_key = _get_bm25_corpus(docs)
 
     doc_freqs = _batch_doc_freqs(q_terms, texts, corpus_key)
 

@@ -24,6 +24,11 @@ def _load_product_media(product_id: str) -> List[Dict]:
                       meta={"product_id": product_id})
             return []
         result = [it for it in items if isinstance(it, dict) and "title" in it]
+        # 预小写关键词，避免 find_media 每次调用时在内层循环中重复 .lower()
+        for it in result:
+            kws = it.get("keywords")
+            if isinstance(kws, list):
+                it["_kw_lower"] = [k.lower() for k in kws]
         _media_cache[product_id] = (mtime, result)
         return result
     except Exception as e:
@@ -74,7 +79,9 @@ def find_media(question: str,
         return []
     kw_hits = []
     for it in items:
-        keys = it.get("keywords") if isinstance(it.get("keywords"), list) else []
-        if any(k.lower() in q for k in keys):
+        keys = it.get("_kw_lower") or (
+            [k.lower() for k in it["keywords"]] if isinstance(it.get("keywords"), list) else []
+        )
+        if any(k in q for k in keys):
             kw_hits.append(it)
     return kw_hits[:6]

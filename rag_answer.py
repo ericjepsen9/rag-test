@@ -867,14 +867,19 @@ def _normalize_for_bigram(text: str) -> str:
     return _expand_synonyms(text).lower().replace(" ", "")
 
 
-def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
+def _extract_faq_from_hits(hits: List[Dict], question: str,
+                            _q_bigrams: set = None) -> List[str]:
     """从检索结果中提取与问题高度相关的 FAQ 回答。
     先对双方做同义词归一化，再用 bigram 重叠匹配。
-    短问题（<15字）降低重叠数要求。"""
-    q_norm = _normalize_for_bigram(question)
-    if len(q_norm) < 2:
-        return []
-    q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
+    短问题（<15字）降低重叠数要求。
+    _q_bigrams: 预计算的问题 bigram 集合（可选，避免重复计算）。"""
+    if _q_bigrams is not None:
+        q_bigrams = _q_bigrams
+    else:
+        q_norm = _normalize_for_bigram(question)
+        if len(q_norm) < 2:
+            return []
+        q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
     min_overlap = 2 if len(question) < 15 else 3
 
     faq_candidates = []
@@ -902,7 +907,8 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
 
 
 def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
-                       rewrite: dict, log_meta: dict) -> str:
+                       rewrite: dict, log_meta: dict,
+                       _q_bigrams: set = None) -> str:
     """FAQ 精确匹配快速路径：当检索结果中有高置信度 FAQ 条目时直接返回。
 
     触发条件（全部满足才走快速路径）：
@@ -937,9 +943,12 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
         return ""
 
     # 条件2：bigram 高重叠率（同义词归一化后匹配）
-    q_norm = _normalize_for_bigram(question)
+    if _q_bigrams is not None:
+        q_bigrams = _q_bigrams
+    else:
+        q_norm = _normalize_for_bigram(question)
+        q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
     faq_norm = _normalize_for_bigram(q_part)
-    q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
     faq_bigrams = set(faq_norm[i:i+2] for i in range(len(faq_norm) - 1))
     # 要求双方均有足够 bigrams，防止极短文本（2-3字）的虚假高重叠率
     if len(q_bigrams) < 3 or len(faq_bigrams) < 3:
@@ -1243,11 +1252,16 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # 过滤低于 threshold 的结果
     hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
 
+    # 预计算问题 bigram（FAQ 快速路径和 FAQ 补充共用，避免重复归一化+切分）
+    _q_norm = _normalize_for_bigram(question)
+    _q_bigrams = set(_q_norm[i:i+2] for i in range(len(_q_norm) - 1)) if len(_q_norm) >= 2 else set()
+
     # ---- 策略0: FAQ 精确匹配快速路径 ----
     # 当检索结果中有高置信度 FAQ 条目与问题高度吻合时，直接返回 FAQ 回答，
     # 跳过 LLM/规则提取，提升常见问题的响应质量和速度。
     if hits:
-        faq_answer = _try_faq_fast_path(hits, question, route, rewrite, _log_meta)
+        faq_answer = _try_faq_fast_path(hits, question, route, rewrite, _log_meta,
+                                         _q_bigrams=_q_bigrams)
         if faq_answer:
             return faq_answer
 
@@ -1272,7 +1286,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # 补充 FAQ 命中：规则提取结果不够丰富时，用 FAQ 补充
     # 规则提取已充分（>= 6 条）时跳过 FAQ 补充，避免冗余
     if hits and len(body_lines) < 6:
-        faq_supplement = _extract_faq_from_hits(hits, question)
+        faq_supplement = _extract_faq_from_hits(hits, question, _q_bigrams=_q_bigrams)
         if faq_supplement:
             if body_lines:
                 body_lines = faq_supplement + [""] + body_lines

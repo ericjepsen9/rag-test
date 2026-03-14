@@ -43,8 +43,7 @@ def format_structured_answer(
             source_file = meta.get("source_file", "unknown")
             chunk = meta.get("chunk_id", "?")
             stype = meta.get("source_type", "unknown")
-            # 按 source_file + chunk_id 去重，避免相同来源重复展示
-            key = f"{source_file}#{chunk}"
+            key = (source_file, chunk)
             if key in seen_sources:
                 continue
             seen_sources.add(key)
