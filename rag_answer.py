@@ -211,11 +211,19 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
         return []
     qv = embed_query(query)
     if qv.shape[1] != index.d:
-        # 模型维度与索引不匹配（模型更换后需重建索引）
+        # 模型维度与索引不匹配（模型更换后自动重建索引）
         from rag_logger import log_error
-        log_error("vector_search", f"维度不匹配: query={qv.shape[1]}, index={index.d}",
+        log_error("vector_search", f"维度不匹配: query={qv.shape[1]}, index={index.d}，尝试自动重建",
                   meta={"product": product})
-        return []
+        store_dir = STORE_ROOT / product
+        new_index = _auto_rebuild_index(product, docs, store_dir)
+        if new_index is None or qv.shape[1] != new_index.d:
+            return []
+        index = new_index
+        # 更新缓存（使用当前 mtime）
+        docs_path = store_dir / "docs.jsonl"
+        if docs_path.exists():
+            _store_cache[product] = (index, docs, docs_path.stat().st_mtime)
     with _search_lock:
         scores, ids = index.search(qv, min(top_k, index.ntotal))
     hits = []

@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
@@ -12,6 +13,10 @@ from pydantic import BaseModel, Field
 from media_router import find_media, invalidate_media_cache
 from rag_answer import answer_question, invalidate_store_cache, get_last_route_product
 from rag_logger import log_error, get_recent_qa, get_recent_misses, get_recent_errors
+
+# 每产品重建锁，防止并发 rebuild 导致文件损坏
+_rebuild_locks: Dict[str, threading.Lock] = {}
+_rebuild_locks_guard = threading.Lock()
 from rag_runtime_config import KNOWLEDGE_DIR, SHARED_ENTITY_DIRS
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -209,10 +214,11 @@ def admin_page():
 
 @app.get("/admin/products")
 def admin_products():
+    shared_names = set(SHARED_ENTITY_DIRS.values())
     products = []
     if KNOWLEDGE_DIR.exists():
         for p in sorted(KNOWLEDGE_DIR.iterdir()):
-            if not p.is_dir():
+            if not p.is_dir() or p.name in shared_names:
                 continue
             products.append({
                 "product": p.name,
@@ -224,18 +230,34 @@ def admin_products():
 @app.post("/admin/rebuild")
 def admin_rebuild(req: RebuildRequest):
     from build_faiss import build_for_product
+    product = req.product.strip()
+    # 安全校验：产品名不得包含路径分隔符或特殊字符（防止路径遍历）
+    if "/" in product or "\\" in product or ".." in product or not product:
+        raise HTTPException(status_code=400, detail="非法产品名称")
+    # 校验产品目录确实存在于知识库中
+    if not (KNOWLEDGE_DIR / product).is_dir():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+    # 获取产品级锁，防止并发重建同一产品
+    with _rebuild_locks_guard:
+        if product not in _rebuild_locks:
+            _rebuild_locks[product] = threading.Lock()
+        lock = _rebuild_locks[product]
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail=f"产品 '{product}' 正在重建中，请稍后重试")
     try:
-        build_for_product(req.product.strip())
+        build_for_product(product)
         # 重建后清除缓存，下次请求会加载新索引
-        invalidate_store_cache(req.product.strip())
+        invalidate_store_cache(product)
         # 同时清除关联数据和媒体缓存
         from relation_engine import invalidate_relations_cache
         invalidate_relations_cache()
-        invalidate_media_cache(req.product.strip())
-        return {"ok": True, "product": req.product}
+        invalidate_media_cache(product)
+        return {"ok": True, "product": product}
     except Exception as e:
-        log_error("admin_rebuild", repr(e), meta={"product": req.product})
+        log_error("admin_rebuild", repr(e), meta={"product": product})
         raise HTTPException(status_code=500, detail=repr(e))
+    finally:
+        lock.release()
 
 
 @app.post("/admin/rebuild_shared")

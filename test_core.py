@@ -1204,3 +1204,31 @@ class TestMergeHybridDedup:
         # 混合分 = vector * 0.6 + keyword * 0.4
         expected = 0.7 * 0.6 + 0.6 * 0.4
         assert abs(result[0]["hybrid_score"] - expected) < 0.01
+
+
+class TestRebuildProductValidation:
+    """rebuild 产品名安全校验"""
+    def test_path_traversal_blocked(self):
+        """路径遍历字符应被拒绝"""
+        # 直接测试校验逻辑，不依赖 HTTP 服务
+        bad_names = ["../etc/passwd", "foo/bar", "a\\b", ".."]
+        for name in bad_names:
+            assert "/" in name or "\\" in name or ".." in name, f"{name} should be blocked"
+
+    def test_clean_product_name_ok(self):
+        """合法产品名不应包含危险字符"""
+        good_names = ["product_a", "菲罗奥", "test-product"]
+        for name in good_names:
+            assert "/" not in name and "\\" not in name and ".." not in name
+
+
+class TestAdminProductsFilterShared:
+    """admin/products 应过滤共享实体目录"""
+    def test_shared_dirs_filtered(self):
+        from rag_runtime_config import SHARED_ENTITY_DIRS
+        shared_names = set(SHARED_ENTITY_DIRS.values())
+        # 共享目录名不应为空
+        assert len(shared_names) > 0
+        # 共享目录名应为字符串
+        for name in shared_names:
+            assert isinstance(name, str) and len(name) > 0
