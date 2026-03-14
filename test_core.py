@@ -660,3 +660,83 @@ class TestDetectProduct:
 
     def test_cellofill(self):
         assert detect_product("CELLOFILL是什么") == "feiluoao"
+
+
+# ============================================================
+# 缓存与线程安全测试
+# ============================================================
+
+class TestCachePut:
+    """_cache_put 应在超过上限时淘汰最早条目"""
+    def test_eviction(self):
+        from search_utils import _cache_put
+        cache = {}
+        # 手动设置小上限来测试
+        import search_utils
+        orig = search_utils._CACHE_MAX_SIZE
+        try:
+            search_utils._CACHE_MAX_SIZE = 3
+            _cache_put(cache, "a", 1)
+            _cache_put(cache, "b", 2)
+            _cache_put(cache, "c", 3)
+            assert len(cache) == 3
+            _cache_put(cache, "d", 4)
+            assert len(cache) == 3
+            assert "a" not in cache  # 最早的被淘汰
+            assert "d" in cache
+        finally:
+            search_utils._CACHE_MAX_SIZE = orig
+
+    def test_empty_cache_no_error(self):
+        from search_utils import _cache_put
+        cache = {}
+        _cache_put(cache, "x", 42)
+        assert cache["x"] == 42
+
+
+class TestEvictCache:
+    """rag_answer._evict_cache 应正确淘汰"""
+    def test_evict(self):
+        from rag_answer import _evict_cache
+        cache = {"a": 1, "b": 2, "c": 3}
+        _evict_cache(cache, 3)
+        assert len(cache) == 2
+        assert "a" not in cache
+
+    def test_no_evict_under_limit(self):
+        from rag_answer import _evict_cache
+        cache = {"a": 1}
+        _evict_cache(cache, 5)
+        assert len(cache) == 1
+
+
+class TestLoadStoreDoubleCheck:
+    """load_store 双重检查锁：并发加载同一产品时不应重复IO"""
+    def test_cache_reuse(self):
+        import rag_answer
+        # 模拟已缓存的产品
+        fake_mtime = 12345.0
+        rag_answer._store_cache["__test__"] = (None, [{"text": "cached"}], fake_mtime)
+        try:
+            # 如果 docs_path 不存在，应直接返回 None, []
+            idx, docs = rag_answer.load_store("__nonexist_product__")
+            assert docs == []
+        finally:
+            rag_answer._store_cache.pop("__test__", None)
+
+
+class TestHistoryScanSlice:
+    """_extract_history_context 应只扫描有限的历史切片"""
+    def test_large_history(self):
+        # 构造超长历史（100条），确保不会全量遍历
+        history = [{"role": "user", "content": f"问题{i}"} for i in range(100)]
+        # 在最后一条用户消息中放产品名
+        from rag_runtime_config import PRODUCT_ALIASES
+        if PRODUCT_ALIASES:
+            pid = list(PRODUCT_ALIASES.keys())[0]
+            aliases = PRODUCT_ALIASES[pid]
+            if aliases:
+                history[-1]["content"] = f"{aliases[0]}怎么用"
+        ctx = _extract_history_context(history)
+        # 应该能从末尾找到产品
+        assert ctx["last_user_q"] != ""

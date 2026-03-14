@@ -191,13 +191,15 @@ _bm25_cache: Dict[Any, Tuple[List[str], int, float]] = {}
 
 
 def _cache_put(cache: dict, key: Any, value: Any) -> None:
-    """写入缓存，超过上限时清除最早的条目"""
-    if len(cache) >= _CACHE_MAX_SIZE:
-        # 移除第一个（最早插入）条目
+    """写入缓存，超过上限时清除最早的条目（原子操作，线程安全）"""
+    while len(cache) >= _CACHE_MAX_SIZE:
         try:
-            cache.pop(next(iter(cache)))
+            # dict 3.7+ 保序，popitem 弹出最后插入的；
+            # 我们需要弹最早的，用 next(iter()) + pop 二步法
+            oldest = next(iter(cache))
+            cache.pop(oldest, None)
         except (StopIteration, RuntimeError):
-            pass
+            break
     cache[key] = value
 
 

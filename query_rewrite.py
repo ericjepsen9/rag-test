@@ -108,7 +108,9 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
         "last_routed_q": "",  # 最近一条含路由关键词的用户问题（用于路由继承）
     }
     user_count = 0
-    for item in reversed(history):
+    # 从末尾向前扫描，用切片避免 reversed() 创建完整拷贝
+    scan_slice = history[-(2 * _MAX_HISTORY_SCAN):] if len(history) > 2 * _MAX_HISTORY_SCAN else history
+    for item in reversed(scan_slice):
         content = item.get("content", "")
         if item.get("role") != "user":
             continue

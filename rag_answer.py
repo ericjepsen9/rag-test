@@ -157,16 +157,22 @@ def load_store(product: str):
             return cached[0], cached[1]
 
     # 加载文档（在锁外进行，IO 耗时）
+    skipped = 0
     docs = []
     with docs_path.open("r", encoding="utf-8") as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
             try:
                 docs.append(json.loads(line))
             except json.JSONDecodeError:
-                continue  # 跳过损坏行，不中断整体加载
+                skipped += 1
+                continue
+    if skipped > 0:
+        from rag_logger import log_error
+        log_error("load_store", f"跳过 {skipped} 行损坏数据",
+                  meta={"product": product, "docs_path": str(docs_path)})
 
     # 加载向量索引（可选：无 index.faiss 时仅使用关键词检索）
     index = None
@@ -177,14 +183,19 @@ def load_store(product: str):
             if index.ntotal != len(docs):
                 print(f"[INFO] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. 自动重建索引...")
                 index = _auto_rebuild_index(product, docs, store_dir)
-        except Exception:
+        except Exception as e:
+            from rag_logger import log_error
+            log_error("load_store", f"索引加载失败: {e}",
+                      meta={"product": product, "index_path": str(index_path)})
             index = None
 
+    # 双重检查：防止多线程并发加载同一产品的重复 IO
     with _store_lock:
+        cached = _store_cache.get(product)
+        if cached and cached[2] == mtime:
+            return cached[0], cached[1]
         if index is not None or not index_path.exists():
-            # 正常缓存：有索引或压根没索引文件
             _store_cache[product] = (index, docs, mtime)
-        # else: 索引文件存在但加载失败 → 不缓存，下次请求重试
     return index, docs
 
 
@@ -212,6 +223,7 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
 
 
 _knowledge_file_cache: Dict[str, tuple] = {}  # path -> (mtime, content)
+_KNOWLEDGE_CACHE_MAX = 128  # 防止无限增长（每条缓存 ~几十KB 文本）
 
 def read_knowledge_file(product: str, fname: str) -> str:
     p = KNOWLEDGE_DIR / product / fname
@@ -223,6 +235,7 @@ def read_knowledge_file(product: str, fname: str) -> str:
     if cached and cached[0] == mtime:
         return cached[1]
     content = p.read_text(encoding="utf-8")
+    _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
     _knowledge_file_cache[key] = (mtime, content)
     return content
 
@@ -737,6 +750,17 @@ _SHARED_ROUTE_DIR = {
 
 
 _shared_knowledge_cache: Dict[str, tuple] = {}  # dir_name -> (max_mtime, content)
+_SHARED_CACHE_MAX = 32  # 共享知识目录数量有限，设保守上限
+
+def _evict_cache(cache: dict, max_size: int) -> None:
+    """通用缓存淘汰：超过上限时移除最早条目"""
+    while len(cache) >= max_size:
+        try:
+            oldest = next(iter(cache))
+            cache.pop(oldest, None)
+        except (StopIteration, RuntimeError):
+            break
+
 
 def _read_shared_knowledge(dir_name: str) -> str:
     """读取共享知识目录内容：单文件直接读，多实例拼接所有 main.txt。带 mtime 缓存。"""
@@ -750,6 +774,7 @@ def _read_shared_knowledge(dir_name: str) -> str:
         if cached and cached[0] == mtime:
             return cached[1]
         content = main_file.read_text(encoding="utf-8")
+        _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
         _shared_knowledge_cache[dir_name] = (mtime, content)
         return content
     # 多实例目录：拼接所有子目录的 main.txt
@@ -767,6 +792,7 @@ def _read_shared_knowledge(dir_name: str) -> str:
         return cached[1]
     content = "\n\n".join(parts)
     if max_mtime > 0:
+        _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
         _shared_knowledge_cache[dir_name] = (max_mtime, content)
     return content
 
