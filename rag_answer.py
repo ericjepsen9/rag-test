@@ -96,6 +96,11 @@ _RE_CN_SECTION_TITLE = re.compile(r"^[一二三四五六七八九十]+、")
 _RE_CHAT_GREETING = re.compile(r"^(你好|嗨|hi|hello|hey|您好|在吗|在不在)$", re.IGNORECASE)
 _RE_CHAT_THANKS = re.compile(r"^(谢谢|感谢|多谢|辛苦了|谢啦|thx|thanks)$", re.IGNORECASE)
 _RE_CHAT_BYE = re.compile(r"^(再见|拜拜|bye|回头见|下次再聊)$", re.IGNORECASE)
+# _accept_line / parse_anti_fake 预编译
+_RE_SUBSECTION_NUM = re.compile(r"^\d+[）\)]")
+_RE_STEP_NUM = re.compile(r"STEP\s*(\d+)", re.IGNORECASE)
+# _accept_line 分隔线字符集（含中文破折号）
+_ACCEPT_LINE_SEP_CHARS = frozenset("=-_ —")
 # 临床优先级排序关键词（parse_bullets_from_section 使用）
 _CLINICAL_PRIORITY_KWS = {
     "risk": ("就医", "急诊", "医院", "专业医", "立即", "禁止", "严重", "异常"),
@@ -547,7 +552,7 @@ def parse_anti_fake(main_text: str, faq_text: str, mode: str) -> List[str]:
             in_notes = True
             continue
 
-        m = re.match(r"STEP\s*(\d+)", ln, re.I)
+        m = _RE_STEP_NUM.match(ln)
         if m:
             current = int(m.group(1))
             in_notes = False
@@ -622,10 +627,10 @@ def parse_anti_fake(main_text: str, faq_text: str, mode: str) -> List[str]:
 def _accept_line(clean: str, route: str) -> bool:
     """判断一行是否应保留——按路由类型使用不同策略"""
     # 小节标题始终保留
-    if re.match(r"^\d+[）\)]", clean):
+    if _RE_SUBSECTION_NUM.match(clean):
         return True
     # 分隔线、纯标记跳过
-    if set(clean) <= {"=", "-", "_", " ", "—"}:
+    if not (set(clean) - _ACCEPT_LINE_SEP_CHARS):
         return False
 
     keywords = _ACCEPT_LINE_KEYWORDS.get(route)
@@ -928,7 +933,7 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
         return ""
     # 条件3：路由感知的检索分数门槛（从 config 读取，支持动态调优）
     thresholds = FAQ_FAST_PATH_THRESHOLDS.get(route, FAQ_FAST_PATH_DEFAULT)
-    score = top_hit.get("hybrid_score", top_hit.get("score", 0.0))
+    score = top_hit.get("hybrid_score") or top_hit.get("score", 0.0)
     if score < thresholds["score"]:
         return ""
 
@@ -982,9 +987,10 @@ def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
         if not text:
             continue
         if i <= 3:
-            source = h.get("meta", {}).get("source_file", "unknown")
-            chunk_id = h.get("meta", {}).get("chunk_id", "?")
-            score = h.get("hybrid_score", h.get("score", 0.0))
+            meta = h.get("meta") or {}
+            source = meta.get("source_file", "unknown")
+            chunk_id = meta.get("chunk_id", "?")
+            score = h.get("hybrid_score") or h.get("score", 0.0)
             header = f"[片段{i} | {source}#{chunk_id} | 相关度:{score:.2f}]"
         else:
             header = f"[片段{i}]"
@@ -1261,7 +1267,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     kw = route_cfg.get("kw", HYBRID_KEYWORD_WEIGHT)
     hits = merge_hybrid(vector_hits, keyword_hits, vw, kw, route_top_k, route=route) if (vector_hits or keyword_hits) else []
     # 过滤低于 threshold 的结果
-    hits = [h for h in hits if h.get("hybrid_score", h.get("score", 0.0)) >= route_threshold]
+    hits = [h for h in hits if (h.get("hybrid_score") or h.get("score", 0.0)) >= route_threshold]
 
     # 预计算问题 bigram（FAQ 快速路径和 FAQ 补充共用，避免重复归一化+切分）
     _q_norm = _normalize_for_bigram(question)

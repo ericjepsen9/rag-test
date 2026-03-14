@@ -481,7 +481,7 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
         else:
             final.append(p)
 
-    result = [p.strip().rstrip("。？?") for p in final if len(p.strip()) >= 2]
+    result = [s.rstrip("。？?") for p in final if len(s := p.strip()) >= 2]
     return uniq(result)
 
 

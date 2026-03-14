@@ -1,6 +1,8 @@
 from typing import List, Dict
 from rag_runtime_config import REFERENCE_NOTE, RISK_NOTE, MAX_EVIDENCE_CHUNKS
 
+_SAFETY_ROUTES = frozenset(("contraindication", "complication", "repair", "operation"))
+
 _TITLE_MAP = {
     "basic": "基础资料",
     "operation": "操作说明",
@@ -39,7 +41,8 @@ def format_structured_answer(
         out.append("依据：")
         seen_sources = set()
         for ev in evidence[:MAX_EVIDENCE_CHUNKS]:
-            meta = ev.get("meta") if isinstance(ev.get("meta"), dict) else {}
+            raw_meta = ev.get("meta")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
             source_file = meta.get("source_file", "unknown")
             chunk = meta.get("chunk_id", "?")
             stype = meta.get("source_type", "unknown")
@@ -55,6 +58,6 @@ def format_structured_answer(
         out.append("需医生评估项：")
         out.append(f"- {RISK_NOTE}")
     # 安全相关路由自动追加医生评估提醒
-    elif route in ("contraindication", "complication", "repair", "operation"):
+    elif route in _SAFETY_ROUTES:
         out.append(f"- {RISK_NOTE}")
     return "\n".join(out).strip()

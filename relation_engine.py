@@ -138,7 +138,8 @@ def get_combo_info(product_id: str, data: Optional[Dict] = None) -> List[str]:
         proc = _procedure_label(rel.get("procedure", ""))
         spacing = rel.get("spacing", "")
         note = rel.get("note", "")
-        equip = _equipment_label(rel.get("equipment", "")) if rel.get("equipment") else ""
+        equip_id = rel.get("equipment", "")
+        equip = _equipment_label(equip_id) if equip_id else ""
         line = f"与{proc}联合"
         if equip:
             line += f"（使用{equip}）"
