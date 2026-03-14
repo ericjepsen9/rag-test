@@ -36,6 +36,12 @@ from answer_formatter import format_structured_answer
 from relation_engine import enrich_answer as relation_enrich
 from rag_logger import log_qa
 
+# 预计算小写关键词，避免 detect_route 每次调用重复 .lower()
+_QUESTION_ROUTES_LOWER: Dict[str, List[str]] = {
+    route: [kw.lower() for kw in keywords]
+    for route, keywords in QUESTION_ROUTES.items()
+}
+
 _model = None
 _faiss = None
 _BGEM3 = None
@@ -301,10 +307,10 @@ def detect_route(question: str) -> str:
         "contraindication", "design", "effect", "pre_care", "ingredient", "basic",
     ]
 
-    # 收集每个 route 的匹配关键词
+    # 收集每个 route 的匹配关键词（使用预计算小写版本避免循环内 .lower()）
     matched = {}
     for route in order:
-        hits = [kw for kw in QUESTION_ROUTES.get(route, []) if kw.lower() in q]
+        hits = [kw for kw in _QUESTION_ROUTES_LOWER.get(route, []) if kw in q]
         if hits:
             matched[route] = hits
 

@@ -1114,3 +1114,49 @@ class TestLogErrorStderrFallback:
         from rag_logger import log_error
         # 正常调用不应崩溃（即使 logs 目录不存在也有静默处理）
         log_error("test_stage", "test_error", meta={"test": True})
+
+
+class TestPrecomputedRouteLower:
+    """预计算小写关键词应与原始关键词一一对应"""
+    def test_routes_lower_consistent(self):
+        from rag_answer import _QUESTION_ROUTES_LOWER
+        from rag_runtime_config import QUESTION_ROUTES
+        assert set(_QUESTION_ROUTES_LOWER.keys()) == set(QUESTION_ROUTES.keys())
+        for route, keywords in QUESTION_ROUTES.items():
+            assert len(_QUESTION_ROUTES_LOWER[route]) == len(keywords)
+            for orig, lower in zip(keywords, _QUESTION_ROUTES_LOWER[route]):
+                assert lower == orig.lower()
+
+    def test_detect_route_uses_lower(self):
+        from rag_answer import detect_route
+        # 中文关键词匹配不受影响
+        route = detect_route("注射后红肿怎么办")
+        assert route in ("risk", "operation", "aftercare")
+
+
+class TestRelationEngineTypeValidation:
+    """relation_engine 应跳过非 dict 条目"""
+    def test_build_indices_skips_non_dict(self):
+        from relation_engine import _build_indices
+        # 包含非 dict 条目不应崩溃
+        data = {
+            "indication_product": [None, "bad_entry", {"indication": "痘坑", "products": ["a"]}],
+            "anatomy_product": [123, {"area": "额头", "products": ["b"]}],
+            "product_procedure": [{"product": "p1", "procedure": "pr1"}, False],
+            "procedure_equipment": [[], {"procedure": "pr1", "equipment": "e1"}],
+        }
+        _build_indices(data)
+        from relation_engine import _idx_indication, _idx_anatomy
+        assert "痘坑" in _idx_indication
+        assert "额头" in _idx_anatomy
+
+
+class TestRouteBoostExtendedRange:
+    """route boost 应检查更长范围的文本"""
+    def test_marker_in_extended_range(self):
+        from search_utils import _apply_route_boost
+        # 标记在位置 500 处（旧版 400 截断会错过）
+        text = "x" * 500 + "术后护理" + "y" * 200
+        merged = {"c1": {"text": text, "hybrid_score": 1.0}}
+        _apply_route_boost(merged, "aftercare")
+        assert merged["c1"]["hybrid_score"] > 1.0

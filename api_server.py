@@ -133,7 +133,7 @@ def ask(req: AskRequest):
     t0 = time.monotonic()
     rw = None
     try:
-        history = [{"role": h.role, "content": h.content} for h in req.history[-6:]]
+        history = [{"role": h.role, "content": h.content[:1000]} for h in req.history[-6:]]
         # 防御：限制历史总字符数，避免过大 payload 占用内存
         total_chars = sum(len(h.get("content", "")) for h in history)
         if total_chars > MAX_HISTORY_TOTAL_CHARS:

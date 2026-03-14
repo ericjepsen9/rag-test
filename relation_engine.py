@@ -35,12 +35,14 @@ def invalidate_relations_cache() -> None:
 
 
 def _build_indices(data: Dict) -> None:
-    """从 relations 数据构建倒排索引，O(n) 一次性遍历"""
+    """从 relations 数据构建倒排索引，O(n) 一次性遍历。跳过非 dict 条目。"""
     global _idx_indication, _idx_anatomy, _idx_product_proc, _idx_proc_equip
 
     # indication -> items
     idx_ind: Dict[str, List[Dict]] = {}
     for item in data.get("indication_product", []):
+        if not isinstance(item, dict):
+            continue
         ind = item.get("indication", "")
         if ind:
             idx_ind.setdefault(ind, []).append(item)
@@ -49,6 +51,8 @@ def _build_indices(data: Dict) -> None:
     # anatomy area -> items
     idx_anat: Dict[str, List[Dict]] = {}
     for item in data.get("anatomy_product", []):
+        if not isinstance(item, dict):
+            continue
         area = item.get("area", "")
         if area:
             idx_anat.setdefault(area, []).append(item)
@@ -57,6 +61,8 @@ def _build_indices(data: Dict) -> None:
     # product_id -> product_procedure rels
     idx_pp: Dict[str, List[Dict]] = {}
     for rel in data.get("product_procedure", []):
+        if not isinstance(rel, dict):
+            continue
         pid = rel.get("product", "")
         if pid:
             idx_pp.setdefault(pid, []).append(rel)
@@ -65,6 +71,8 @@ def _build_indices(data: Dict) -> None:
     # procedure_id -> procedure_equipment rels
     idx_pe: Dict[str, List[Dict]] = {}
     for rel in data.get("procedure_equipment", []):
+        if not isinstance(rel, dict):
+            continue
         pid = rel.get("procedure", "")
         if pid:
             idx_pe.setdefault(pid, []).append(rel)

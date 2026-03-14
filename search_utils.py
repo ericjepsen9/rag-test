@@ -373,7 +373,7 @@ def _apply_route_boost(merged: Dict[str, Dict], route: str) -> None:
     if not markers:
         return
     for h in merged.values():
-        text = (h.get("text") or "")[:400]  # 查看 chunk 前400字符（含 overlap 区段）
+        text = (h.get("text") or "")[:800]  # 查看 chunk 前800字符，覆盖更多章节标记
         if any(m in text for m in markers):
             h["hybrid_score"] += _ROUTE_BOOST
 
