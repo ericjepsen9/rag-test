@@ -1043,7 +1043,8 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         )
         if not resp.choices:
             return ""
-        return (resp.choices[0].message.content or "").strip()
+        msg = resp.choices[0].message
+        return (msg.content or "").strip() if msg else ""
     except Exception as e:
         from rag_logger import log_error
         log_error("llm_generate_answer", f"LLM 调用失败: {e}",
@@ -1069,7 +1070,9 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         )
         if not resp.choices:
             return text
-        return (resp.choices[0].message.content or "").strip() or text
+        msg = resp.choices[0].message
+        result = (msg.content or "").strip() if msg else ""
+        return result or text
     except Exception as e:
         from rag_logger import log_error
         log_error("openai_rewrite_answer", f"LLM 润色失败: {e}",

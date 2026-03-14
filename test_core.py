@@ -1160,3 +1160,47 @@ class TestRouteBoostExtendedRange:
         merged = {"c1": {"text": text, "hybrid_score": 1.0}}
         _apply_route_boost(merged, "aftercare")
         assert merged["c1"]["hybrid_score"] > 1.0
+
+
+class TestSigmoidClamp:
+    """sigmoid 归一化应处理极端分数"""
+    def test_extreme_high_score(self):
+        import math
+        from search_utils import SIGMOID_SCALE
+        # 极高分数不应导致 math.exp 溢出
+        z = max(-20.0, min(20.0, 1000.0 / SIGMOID_SCALE))
+        result = 1.0 / (1.0 + math.exp(-z))
+        assert 0.0 < result <= 1.0
+
+    def test_extreme_negative_score(self):
+        import math
+        from search_utils import SIGMOID_SCALE
+        z = max(-20.0, min(20.0, -1000.0 / SIGMOID_SCALE))
+        result = 1.0 / (1.0 + math.exp(-z))
+        assert 0.0 <= result < 1.0
+
+
+class TestMergeHybridDedup:
+    """merge_hybrid 重复文档应取最高分而非累加"""
+    def test_duplicate_vector_hits_use_max(self):
+        v_hits = [
+            {"text": "same doc", "score": 0.8, "meta": {"source_file": "a.txt", "chunk_id": "1"}},
+            {"text": "same doc", "score": 0.5, "meta": {"source_file": "a.txt", "chunk_id": "1"}},
+        ]
+        k_hits = []
+        result = merge_hybrid(v_hits, k_hits, 1.0, 1.0, 10)
+        # 应只有一个文档，分数取最高
+        assert len(result) == 1
+        assert abs(result[0]["hybrid_score"] - 0.8) < 0.01
+
+    def test_vector_and_keyword_merge(self):
+        v_hits = [
+            {"text": "doc A", "score": 0.7, "meta": {"source_file": "a.txt", "chunk_id": "1"}},
+        ]
+        k_hits = [
+            {"text": "doc A", "keyword_score": 0.6, "meta": {"source_file": "a.txt", "chunk_id": "1"}},
+        ]
+        result = merge_hybrid(v_hits, k_hits, 0.6, 0.4, 10)
+        # 混合分 = vector * 0.6 + keyword * 0.4
+        expected = 0.7 * 0.6 + 0.6 * 0.4
+        assert abs(result[0]["hybrid_score"] - expected) < 0.01

@@ -300,7 +300,8 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
     # 归一化到 [0, 1] 区间：sigmoid 函数使不同 query 间的分数可比
     # sigmoid(x/scale) 中 scale=5 使典型 BM25 分数（0~15）映射到 (0.5, 0.95) 区间
     for x in scored:
-        x["keyword_score"] = 1.0 / (1.0 + math.exp(-x["keyword_score"] / SIGMOID_SCALE))
+        z = max(-20.0, min(20.0, x["keyword_score"] / SIGMOID_SCALE))  # 钳位防 exp 溢出
+        x["keyword_score"] = 1.0 / (1.0 + math.exp(-z))
 
     return scored[:top_k]
 
@@ -320,10 +321,17 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
     merged = {}
     for h in vector_hits:
         key = _hit_key(h)
-        merged[key] = dict(h)
         # 安全钳位：FAISS 余弦相似度理论范围 [0,1]，防止超界
         vs = min(1.0, max(0.0, float(h.get("score", 0.0))))
-        merged[key]["hybrid_score"] = vs * vw
+        new_score = vs * vw
+        if key in merged:
+            # 同一文档重复出现时取最高分，而非累加
+            if new_score > merged[key].get("hybrid_score", 0.0):
+                merged[key] = dict(h)
+                merged[key]["hybrid_score"] = new_score
+        else:
+            merged[key] = dict(h)
+            merged[key]["hybrid_score"] = new_score
     for h in keyword_hits:
         key = _hit_key(h)
         if key not in merged:
