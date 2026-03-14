@@ -1383,6 +1383,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
 
 _NO_MATCH_REPLY = "抱歉，暂时无法回答该问题。请尝试询问产品成分、术后护理、禁忌人群等相关问题。"
+_OFFTOPIC_REPLY = "抱歉，该问题不在我的服务范围内。我是医美行业知识助手，可以为您解答医美产品、手术项目、术后护理、皮肤管理等相关问题。"
 _SPECIAL_INTENT_REPLIES = {"price": PRICE_REPLY, "comparison": COMPARISON_REPLY,
                            "location": LOCATION_REPLY}
 
@@ -1456,6 +1457,12 @@ def answer_question(question: str, mode: str, history: list = None,
         log_qa(q, reply, rewritten_query="", matched_sources=[], hit=False,
                meta={"method": "chitchat"})
         return reply
+
+    # 非医美领域快速路径：完全与医美无关的问题直接拒绝，避免返回无关内容
+    if rewrite.get("is_offtopic"):
+        log_qa(q, _OFFTOPIC_REPLY, rewritten_query="", matched_sources=[], hit=False,
+               meta={"method": "offtopic"})
+        return _OFFTOPIC_REPLY
 
     # 特殊意图快速路径：价格/对比/地点等无知识覆盖的问题
     special = _detect_special_intent(q)

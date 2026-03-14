@@ -48,6 +48,43 @@ _OFFTOPIC_PATTERNS = re.compile(
     r"(天气|新闻|股票|电影|音乐|美食|旅游|游戏|足球|篮球|奥运)"
 )
 
+# 完全脱离医美领域的问题检测：命中时直接拒绝回答，避免返回无关知识库内容
+# 注意：只拦截明显与医美无关的问题，医美行业相关（产品、手术、仪器、皮肤、
+# 解剖、并发症、成分、护理等）的问题都应放行
+_OFFTOPIC_FULL_PATTERNS = re.compile(
+    r"(做菜|菜谱|食谱|烹饪|炒菜|炖|煮|蒸|烤|红烧|清蒸|糖醋|锅包|麻辣|酸辣|宫保|鱼香"
+    r"|天气预报|气温|下雨|下雪|台风|暴雨"
+    r"|股票|基金|理财|炒股|A股|港股|美股|比特币|加密货币|区块链"
+    r"|电影|电视剧|综艺|动漫|追剧|票房|演员|导演|明星八卦"
+    r"|歌曲|歌手|演唱会|专辑|歌词"
+    r"|旅游攻略|景点|机票|酒店预订|签证|出境"
+    r"|足球|篮球|排球|乒乓球|羽毛球|网球|世界杯|NBA|奥运|体育"
+    r"|编程|代码|Python|Java|JavaScript|数据库|算法|软件开发"
+    r"|数学题|物理|化学方程|历史事件|地理|语文|英语翻译|考试|高考|考研"
+    r"|小说|诗词|散文|作文|写作技巧"
+    r"|汽车|发动机|轮胎|驾照|交通违章|加油"
+    r"|手机|电脑|笔记本|平板|耳机|显卡|CPU|内存"
+    r"|外卖|快递|物流|淘宝|京东|拼多多|网购"
+    r"|装修|家具|水电|房贷|租房|房价|买房"
+    r"|宠物|养狗|养猫|猫粮|狗粮"
+    r"|星座|算命|风水|周公解梦|占卜"
+    r"|减肥食谱|健身计划|跑步|瑜伽课程"
+    r"|政治|选举|法律咨询|打官司|离婚|遗产"
+    r"|种菜|种花|园艺|农业|养殖)",
+    re.IGNORECASE,
+)
+
+# 医美领域保护词：即使命中了非领域词，如果同时包含这些词则仍认为是医美问题
+_MEDAES_GUARD_PATTERNS = re.compile(
+    r"(注射|填充|玻尿酸|肉毒|胶原蛋白|光子嫩肤|激光|超声刀|热玛吉|水光|微针"
+    r"|术后|术前|恢复期|禁忌|并发症|红肿|肿胀|硬块|瘢痕|疤痕"
+    r"|皮肤|面部|脸部|额头|法令纹|苹果肌|下颌|鼻部|眼周|颈部"
+    r"|医美|美容|整形|抗衰|紧致|提升|嫩肤|祛斑|祛痘|脱毛"
+    r"|菲罗奥|赛罗菲|FILLOUP|PCL|聚己内酯|透明质酸|生长因子"
+    r"|仪器|设备|水光仪|微针仪|射频|超声|冷冻溶脂"
+    r"|操作|治疗|方案|疗程|护理|敷麻|麻醉)"
+)
+
 # 产品切换意图：用户想问另一个/不同的产品，不应继承历史产品
 _SWITCH_PATTERNS = re.compile(
     r"(换一个|另一个|另一款|其他产品|别的产品|不同的产品|有没有其他|还有什么产品)"
@@ -305,6 +342,12 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
     # 快速判断：非提问（问候/致谢/确认）直接返回，跳过后续处理
     is_chitchat = bool(_CHITCHAT_PATTERNS.match(raw))
 
+    # 非医美领域检测：命中非领域关键词且不含医美保护词 → 标记为 offtopic
+    is_offtopic = bool(
+        _OFFTOPIC_FULL_PATTERNS.search(raw)
+        and not _MEDAES_GUARD_PATTERNS.search(raw)
+    )
+
     # 清理纠正前缀："不对，我问的是禁忌人群" → "禁忌人群"（在上下文补全之前清理）
     cleaned = _CORRECTION_PREFIX.sub("", raw).strip() if _CORRECTION_PREFIX.search(raw) else raw
     has_correction = (cleaned != raw)
@@ -364,6 +407,7 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         "raw_input": raw,
         "search_query": search_q,             # 清理后的检索用查询（去除纠正前缀等噪音）
         "is_chitchat": is_chitchat,           # 非提问标记，调用方可直接返回礼貌回复
+        "is_offtopic": is_offtopic,           # 非医美领域标记，调用方可直接返回拒绝回复
         "context_resolved": context_resolved,
         "expanded": expanded_query,
         "products": products,
