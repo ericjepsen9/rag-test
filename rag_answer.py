@@ -796,7 +796,8 @@ def _read_shared_knowledge(dir_name: str) -> str:
             _shared_knowledge_cache[dir_name] = (mtime, content)
             return content
         # 多实例目录：拼接所有子目录的 main.txt
-        parts = []
+        # 先收集 mtime 判断缓存是否有效，避免无谓的文件读取
+        inst_files = []
         max_mtime = 0.0
         for inst in sorted(shared_dir.iterdir()):
             f = inst / "main.txt"
@@ -804,10 +805,12 @@ def _read_shared_knowledge(dir_name: str) -> str:
                 mt = f.stat().st_mtime
                 if mt > max_mtime:
                     max_mtime = mt
-                parts.append(f.read_text(encoding="utf-8"))
+                inst_files.append(f)
         cached = _shared_knowledge_cache.get(dir_name)
-        if cached and cached[0] == max_mtime and parts:
+        if cached and cached[0] == max_mtime and inst_files:
             return cached[1]
+        # 缓存未命中，读取文件内容
+        parts = [fp.read_text(encoding="utf-8") for fp in inst_files]
         content = "\n\n".join(parts)
         if max_mtime > 0:
             _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
@@ -917,7 +920,8 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
     faq_norm = _normalize_for_bigram(q_part)
     q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
     faq_bigrams = set(faq_norm[i:i+2] for i in range(len(faq_norm) - 1))
-    if not q_bigrams or not faq_bigrams:
+    # 要求双方均有足够 bigrams，防止极短文本（2-3字）的虚假高重叠率
+    if len(q_bigrams) < 3 or len(faq_bigrams) < 3:
         return ""
     overlap = len(q_bigrams & faq_bigrams)
     ratio = overlap / max(len(q_bigrams), 1)
@@ -939,7 +943,8 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
 
 def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
     """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断。
-    前3个片段含完整元数据头，后续片段仅标序号以节省 token。"""
+    前3个片段含完整元数据头，后续片段仅标序号以节省 token。
+    用 budget 追踪总长度（含片段间分隔符 \\n\\n），确保不超限。"""
     parts = []
     total = 0
     for i, h in enumerate(hits, 1):
@@ -954,11 +959,13 @@ def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
         else:
             header = f"[片段{i}]"
         part = f"{header}\n{text}"
+        # 计入分隔符长度（片段之间的 \n\n）
+        sep_len = 2 if parts else 0
         # 至少保留 1 个片段；之后按完整 chunk 粒度截断
-        if parts and total + len(part) > max_chars:
+        if parts and total + sep_len + len(part) > max_chars:
             break
         parts.append(part)
-        total += len(part)
+        total += sep_len + len(part)
     return "\n\n".join(parts)
 
 

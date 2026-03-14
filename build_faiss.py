@@ -95,7 +95,7 @@ def _is_major_section(line: str) -> bool:
     这些标题处应强制分 chunk，避免跨章节合并"""
     s = line.strip()
     return bool(re.match(r"^[一二三四五六七八九十]+、", s) or
-                re.match(r"^\d+[）\)]\s*.{2,}", s))
+                re.match(r"^\d{1,2}[）\)]\s*.{2,}", s))
 
 
 def split_into_paragraphs(text: str) -> List[str]:
@@ -167,7 +167,8 @@ def merge_paragraphs_to_chunks(paragraphs: List[str], chunk_size: int, overlap: 
             if chunks and overlap > 0:
                 tail = chunks[-1][-overlap:]
                 # 防止 overlap 跨越主章节边界造成语义污染
-                if _is_major_section(tail.split("\n")[0]):
+                # 检查 tail 中所有行（而非仅首行），避免遗漏嵌入的章节标题
+                if any(_is_major_section(ln) for ln in tail.split("\n") if ln.strip()):
                     cur = para
                 else:
                     cur = (tail + "\n" + para).strip()
@@ -212,6 +213,10 @@ def chunk_text(text: str) -> List[str]:
 # ====== 向量编码 ======
 
 def embed_texts(texts):
+    if not texts:
+        raise ValueError("embed_texts: 输入文本列表为空")
+    # 空白文本用占位符替换，避免模型编码异常或维度不匹配
+    texts = [t if t and t.strip() else " " for t in texts]
     model = get_model()
     out = model.encode(texts, batch_size=EMBED_BATCH_SIZE_BUILD, max_length=EMBED_MAX_LENGTH_BUILD)
     vecs = None
