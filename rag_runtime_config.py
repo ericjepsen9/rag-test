@@ -264,10 +264,32 @@ ROUTE_LLM_TEMPERATURE = {
 
 # ===== 搜索调优 =====
 import os as _os
-BM25_K1 = float(_os.environ.get("RAG_BM25_K1", "1.5"))
-BM25_B = float(_os.environ.get("RAG_BM25_B", "0.75"))
-SIGMOID_SCALE = float(_os.environ.get("RAG_SIGMOID_SCALE", "5.0"))
-ROUTE_BOOST = float(_os.environ.get("RAG_ROUTE_BOOST", "0.12"))
+
+
+def _safe_float(key: str, default: str) -> float:
+    """安全读取环境变量并转为 float，非法值回退默认值并打印警告。"""
+    raw = _os.environ.get(key, default)
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        print(f"[WARN] 环境变量 {key}='{raw}' 无法转为 float，使用默认值 {default}")
+        return float(default)
+
+
+def _safe_int(key: str, default: str) -> int:
+    """安全读取环境变量并转为 int，非法值回退默认值并打印警告。"""
+    raw = _os.environ.get(key, default)
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        print(f"[WARN] 环境变量 {key}='{raw}' 无法转为 int，使用默认值 {default}")
+        return int(default)
+
+
+BM25_K1 = _safe_float("RAG_BM25_K1", "1.5")
+BM25_B = _safe_float("RAG_BM25_B", "0.75")
+SIGMOID_SCALE = _safe_float("RAG_SIGMOID_SCALE", "5.0")
+ROUTE_BOOST = _safe_float("RAG_ROUTE_BOOST", "0.12")
 CACHE_MAX_PRODUCTS = 32
 
 # ===== 回答构建 =====
@@ -275,10 +297,10 @@ MAX_SUB_QUESTIONS = 4    # 单次问答最多拆分的子问题数
 MAX_EVIDENCE_CHUNKS = 6  # build_evidence / answer_formatter 保留的最大证据片段数
 
 # ===== 检索 =====
-VECTOR_TOP_K = int(_os.environ.get("RAG_VECTOR_TOP_K", "12"))
-KEYWORD_TOP_K = int(_os.environ.get("RAG_KEYWORD_TOP_K", "12"))
-HYBRID_VECTOR_WEIGHT = float(_os.environ.get("RAG_HYBRID_VW", "0.65"))
-HYBRID_KEYWORD_WEIGHT = float(_os.environ.get("RAG_HYBRID_KW", "0.35"))
+VECTOR_TOP_K = _safe_int("RAG_VECTOR_TOP_K", "12")
+KEYWORD_TOP_K = _safe_int("RAG_KEYWORD_TOP_K", "12")
+HYBRID_VECTOR_WEIGHT = _safe_float("RAG_HYBRID_VW", "0.65")
+HYBRID_KEYWORD_WEIGHT = _safe_float("RAG_HYBRID_KW", "0.35")
 
 # ===== 按问题类型调整检索参数 =====
 # vw/kw: 向量/关键词权重覆盖（可选）。精确参数类问题提高 kw，语义模糊问题提高 vw。

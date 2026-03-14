@@ -49,6 +49,8 @@ _faiss = None
 _BGEM3 = None
 _store_cache = {}  # {product: (index, docs, mtime)} — 进程内缓存，避免每次请求重读文件
 _store_lock = threading.Lock()   # 保护 _store_cache 读写
+_store_product_locks: Dict[str, threading.Lock] = {}  # 每产品加载锁，防止同一产品并发 I/O
+_store_product_locks_guard = threading.Lock()  # 保护 _store_product_locks 字典
 _search_lock = threading.Lock()  # 保护 FAISS index.search（非线程安全）
 
 # 跨实体路由：这些路由需要检索共享知识库（_shared store）
@@ -143,10 +145,15 @@ def save_answer(text: str):
     _get_out_path().write_text((text or "").strip() + "\n", encoding="utf-8-sig")
 
 
+_model_lock = threading.Lock()
+
+
 def get_model():
     global _model
     if _model is None:
-        _model = get_bg_cls()(EMBED_MODEL_NAME, use_fp16=EMBED_USE_FP16)
+        with _model_lock:
+            if _model is None:
+                _model = get_bg_cls()(EMBED_MODEL_NAME, use_fp16=EMBED_USE_FP16)
     return _model
 
 
@@ -215,46 +222,59 @@ def load_store(product: str):
         if cached and cached[2] == mtime:
             return cached[0], cached[1]
 
-    # 加载文档（在锁外进行，IO 耗时）
-    skipped = 0
-    docs = []
-    with docs_path.open("r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                docs.append(json.loads(line))
-            except json.JSONDecodeError:
-                skipped += 1
-                continue
-    if skipped > 0:
-        from rag_logger import log_error
-        log_error("load_store", f"跳过 {skipped} 行损坏数据",
-                  meta={"product": product, "docs_path": str(docs_path)})
+    # 获取每产品锁：防止同一产品被多个线程并发加载（不同产品可并行）
+    with _store_product_locks_guard:
+        if product not in _store_product_locks:
+            _store_product_locks[product] = threading.Lock()
+        product_lock = _store_product_locks[product]
 
-    # 加载向量索引（可选：无 index.faiss 时仅使用关键词检索）
-    index = None
-    if index_path.exists():
-        try:
-            index = get_faiss().read_index(str(index_path))
-            # 检测索引与文档数不一致（索引过期未重建）→ 自动重建
-            if index.ntotal != len(docs):
-                print(f"[INFO] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. 自动重建索引...")
-                index = _auto_rebuild_index(product, docs, store_dir)
-        except Exception as e:
+    with product_lock:
+        # 获得产品锁后再次检查缓存（另一个线程可能刚完成加载）
+        with _store_lock:
+            cached = _store_cache.get(product)
+            if cached and cached[2] == mtime:
+                return cached[0], cached[1]
+
+        # 加载文档
+        skipped = 0
+        bad_lines = []
+        docs = []
+        with docs_path.open("r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    docs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    skipped += 1
+                    bad_lines.append(line_num)
+                    continue
+        if skipped > 0:
             from rag_logger import log_error
-            log_error("load_store", f"索引加载失败: {e}",
-                      meta={"product": product, "index_path": str(index_path)})
-            index = None
+            log_error("load_store", f"跳过 {skipped} 行损坏数据",
+                      meta={"product": product, "docs_path": str(docs_path),
+                            "bad_lines": bad_lines[:20]})
 
-    # 双重检查：防止多线程并发加载同一产品的重复 IO
-    with _store_lock:
-        cached = _store_cache.get(product)
-        if cached and cached[2] == mtime:
-            return cached[0], cached[1]
-        if index is not None or not index_path.exists():
-            _store_cache[product] = (index, docs, mtime)
+        # 加载向量索引（可选：无 index.faiss 时仅使用关键词检索）
+        index = None
+        if index_path.exists():
+            try:
+                index = get_faiss().read_index(str(index_path))
+                # 检测索引与文档数不一致（索引过期未重建）→ 自动重建
+                if index.ntotal != len(docs):
+                    print(f"[INFO] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. 自动重建索引...")
+                    index = _auto_rebuild_index(product, docs, store_dir)
+            except Exception as e:
+                from rag_logger import log_error
+                log_error("load_store", f"索引加载失败: {e}",
+                          meta={"product": product, "index_path": str(index_path)})
+                index = None
+
+        # 写入缓存
+        with _store_lock:
+            if index is not None or not index_path.exists():
+                _store_cache[product] = (index, docs, mtime)
     return index, docs
 
 
@@ -273,10 +293,11 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
         if new_index is None or qv.shape[1] != new_index.d:
             return []
         index = new_index
-        # 更新缓存（使用当前 mtime）
+        # 更新缓存（使用当前 mtime，加锁保护）
         docs_path = store_dir / "docs.jsonl"
         if docs_path.exists():
-            _store_cache[product] = (index, docs, docs_path.stat().st_mtime)
+            with _store_lock:
+                _store_cache[product] = (index, docs, docs_path.stat().st_mtime)
     with _search_lock:
         scores, ids = index.search(qv, min(top_k, index.ntotal))
     hits = []
@@ -322,26 +343,30 @@ def _is_product_dir(name: str) -> bool:
     return p.is_dir() and (p / "main.txt").exists() and name not in _SHARED_DIR_NAMES
 
 
+_DEFAULT_PRODUCT = os.environ.get("RAG_DEFAULT_PRODUCT", "feiluoao")
+
+
 def detect_product(question: str) -> str:
     global _product_list_cache, _product_list_mtime
     found = detect_terms(question, PRODUCT_ALIASES)
     if found:
         return found[0]
-    if (KNOWLEDGE_DIR / "feiluoao").exists():
-        return "feiluoao"
+    # 优先使用环境变量指定的默认产品
+    if (KNOWLEDGE_DIR / _DEFAULT_PRODUCT).exists():
+        return _DEFAULT_PRODUCT
     if not KNOWLEDGE_DIR.exists():
-        return "feiluoao"
+        return _DEFAULT_PRODUCT
     # 缓存产品列表，按 knowledge 目录 mtime 失效
     try:
         mtime = KNOWLEDGE_DIR.stat().st_mtime
     except OSError:
-        return "feiluoao"
+        return _DEFAULT_PRODUCT
     if _product_list_cache and _product_list_mtime == mtime:
-        return _product_list_cache[0] if _product_list_cache else "feiluoao"
+        return _product_list_cache[0] if _product_list_cache else _DEFAULT_PRODUCT
     dirs = sorted(x.name for x in KNOWLEDGE_DIR.iterdir() if _is_product_dir(x.name))
     _product_list_cache = dirs
     _product_list_mtime = mtime
-    return dirs[0] if dirs else "feiluoao"
+    return dirs[0] if dirs else _DEFAULT_PRODUCT
 
 
 _PRICE_KWS = ("多少钱", "价格", "费用", "贵不贵", "便宜", "一支多少", "疗程多少钱",

@@ -261,8 +261,13 @@ def admin_rebuild(req: RebuildRequest):
     # 安全校验：产品名不得包含路径分隔符或特殊字符（防止路径遍历）
     if "/" in product or "\\" in product or ".." in product or not product:
         raise HTTPException(status_code=400, detail="非法产品名称")
+    # 规范化路径并确认仍在 KNOWLEDGE_DIR 下（防止 symlink 逃逸）
+    product_dir = (KNOWLEDGE_DIR / product).resolve()
+    knowledge_root = KNOWLEDGE_DIR.resolve()
+    if not str(product_dir).startswith(str(knowledge_root) + "/"):
+        raise HTTPException(status_code=400, detail="非法产品名称")
     # 校验产品目录确实存在于知识库中
-    if not (KNOWLEDGE_DIR / product).is_dir():
+    if not product_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
     # 获取产品级锁，防止并发重建同一产品
     with _rebuild_locks_guard:
