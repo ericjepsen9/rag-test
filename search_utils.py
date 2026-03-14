@@ -61,8 +61,8 @@ def expand_synonyms(query: str) -> str:
             for syn in synonyms:
                 if syn not in q_lower:
                     extra.add(syn)
-    # 时间模式扩展：术后第X天/周/月 → 补充恢复相关词
-    if re.search(r"术后[第]?\d+[天日周月]", q_lower):
+    # 时间模式扩展：术后第X天/周/月/小时/范围 → 补充恢复相关词
+    if re.search(r"术后[第]?\d+[-~到]?\d*[天日周月]|术后\d+小时|术后\d+个月|术后当天", q_lower):
         for w in ("恢复", "消退", "正常"):
             if w not in q_lower:
                 extra.add(w)

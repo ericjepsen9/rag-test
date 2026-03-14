@@ -20,21 +20,23 @@ _lock = threading.Lock()
 _idx_indication: Optional[Dict[str, List[Dict]]] = None   # indication -> [items]
 _idx_anatomy: Optional[Dict[str, List[Dict]]] = None      # area -> [items]
 _idx_product_proc: Optional[Dict[str, List[Dict]]] = None  # product_id -> [rels]
+_idx_proc_equip: Optional[Dict[str, List[Dict]]] = None    # procedure_id -> [rels]
 
 
 def invalidate_relations_cache() -> None:
     """清除关联数据缓存（relations.json 更新后调用）"""
-    global _relations, _idx_indication, _idx_anatomy, _idx_product_proc
+    global _relations, _idx_indication, _idx_anatomy, _idx_product_proc, _idx_proc_equip
     with _lock:
         _relations = None
         _idx_indication = None
         _idx_anatomy = None
         _idx_product_proc = None
+        _idx_proc_equip = None
 
 
 def _build_indices(data: Dict) -> None:
     """从 relations 数据构建倒排索引，O(n) 一次性遍历"""
-    global _idx_indication, _idx_anatomy, _idx_product_proc
+    global _idx_indication, _idx_anatomy, _idx_product_proc, _idx_proc_equip
 
     # indication -> items
     idx_ind: Dict[str, List[Dict]] = {}
@@ -59,6 +61,14 @@ def _build_indices(data: Dict) -> None:
         if pid:
             idx_pp.setdefault(pid, []).append(rel)
     _idx_product_proc = idx_pp
+
+    # procedure_id -> procedure_equipment rels
+    idx_pe: Dict[str, List[Dict]] = {}
+    for rel in data.get("procedure_equipment", []):
+        pid = rel.get("procedure", "")
+        if pid:
+            idx_pe.setdefault(pid, []).append(rel)
+    _idx_proc_equip = idx_pe
 
 
 def _load() -> Dict:
@@ -199,21 +209,20 @@ def get_anatomy_recommendations(query: str) -> List[str]:
 
 def get_procedure_equipment(query: str) -> List[str]:
     """根据查询中的项目关键词，返回对应设备信息。"""
-    data = _load()
+    _load()
     lines = []
     q_lower = query.lower()
-    # 检查查询中提到的项目
+    # 检查查询中提到的项目（使用倒排索引）
     for proc_id, aliases in PROCEDURE_ALIASES.items():
         if any(a.lower() in q_lower for a in aliases):
-            for rel in data.get("procedure_equipment", []):
-                if rel.get("procedure") == proc_id:
-                    equip = _equipment_label(rel.get("equipment", ""))
-                    note = rel.get("note", "")
-                    required = "必需" if rel.get("required") else "可选"
-                    line = f"{_procedure_label(proc_id)} → {equip}（{required}）"
-                    if note:
-                        line += f"：{note}"
-                    lines.append(line)
+            for rel in (_idx_proc_equip or {}).get(proc_id, []):
+                equip = _equipment_label(rel.get("equipment", ""))
+                note = rel.get("note", "")
+                required = "必需" if rel.get("required") else "可选"
+                line = f"{_procedure_label(proc_id)} → {equip}（{required}）"
+                if note:
+                    line += f"：{note}"
+                lines.append(line)
     return lines
 
 

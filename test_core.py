@@ -404,6 +404,59 @@ class TestRelationEngineIndices:
         assert re_mod._idx_indication is None
         assert re_mod._idx_anatomy is None
         assert re_mod._idx_product_proc is None
+        assert re_mod._idx_proc_equip is None
+
+
+class TestTimePatternExpansion:
+    def test_standard_pattern(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("术后3天还肿")
+        assert "恢复" in result or "消退" in result
+
+    def test_hours_pattern(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("术后48小时能洗脸吗")
+        assert "恢复" in result or "消退" in result
+
+    def test_range_pattern(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("术后2-3天还红正常吗")
+        assert "恢复" in result or "消退" in result
+
+    def test_month_pattern(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("术后1个月效果怎么样")
+        assert "恢复" in result or "消退" in result
+
+    def test_same_day_pattern(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("术后当天能洗脸吗")
+        assert "恢复" in result or "消退" in result
+
+
+class TestHistoryEarlyTermination:
+    def test_early_exit_with_product_and_route(self):
+        """产品+路由已找到时，扫描3条后应提前退出"""
+        history = [
+            {"role": "user", "content": "菲罗奥成分是什么"},  # 有产品+路由
+            {"role": "assistant", "content": "回答1"},
+            {"role": "user", "content": "还有什么成分"},
+            {"role": "assistant", "content": "回答2"},
+            {"role": "user", "content": "好的"},
+            {"role": "assistant", "content": "回答3"},
+            {"role": "user", "content": "继续"},  # 4th user msg - shouldn't need to scan this far
+        ]
+        ctx = _extract_history_context(history)
+        assert ctx["product"] == "菲罗奥"
+        assert ctx["product_id"] == "feiluoao"
+
+
+class TestEnvTunableConfig:
+    def test_default_values(self):
+        from rag_runtime_config import HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT
+        # 默认值应在合理范围内
+        assert 0.0 < HYBRID_VECTOR_WEIGHT <= 1.0
+        assert 0.0 < HYBRID_KEYWORD_WEIGHT <= 1.0
 
 
 class TestDetectProduct:

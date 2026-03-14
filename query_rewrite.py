@@ -146,8 +146,11 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
                         ctx["last_routed_q"] = content
                     break
 
-        # 全部找到 → 提前退出；否则扫完限额后退出
+        # 全部找到 → 提前退出
         if ctx["product"] and ctx["route"] and ctx["projects"]:
+            break
+        # 已找到产品+路由（最重要的两项），且已扫描足够消息 → 提前退出
+        if ctx["product"] and ctx["route"] and user_count >= 3:
             break
         if user_count >= _MAX_HISTORY_SCAN:
             break
