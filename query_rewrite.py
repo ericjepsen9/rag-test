@@ -245,50 +245,56 @@ def _detect_route_for_expansion(q: str) -> List[str]:
     return matched
 
 
-def _build_history_summary(history: List[Dict], max_turns: int = 3) -> str:
-    """从对话历史中构建多轮摘要，供 LLM 理解完整对话脉络。
+def _build_history_summary_and_pairs(
+    history: List[Dict], max_turns: int = 3, max_pairs: int = 3
+) -> tuple:
+    """单次反向扫描同时构建多轮摘要和 Q&A 对，避免两次独立遍历。
 
-    提取最近 max_turns 轮用户问题，让 LLM 看到话题演变过程。
-    例如: "菲罗奥成分是什么 → 安全吗 → 术后注意什么"
-    从末尾反向扫描，找到 max_turns 条后提前退出（避免扫描全部历史）。
+    返回 (summary: str, pairs: List[Dict])。
+    summary: "菲罗奥成分是什么 → 安全吗 → 术后注意什么" 格式。
+    pairs: [{"user": "...", "assistant": "..."}, ...] 格式。
     """
-    recent: List[str] = []
-    for item in reversed(history):
-        if item.get("role") == "user":
-            raw = item.get("content")
-            content = (str(raw) if raw is not None else "").strip()
-            if content:
-                recent.append(content)
-                if len(recent) >= max_turns:
-                    break
-    recent.reverse()
-    return " → ".join(recent)
-
-
-def _build_history_pairs(history: List[Dict], max_pairs: int = 3) -> List[Dict]:
-    """从对话历史中提取最近 max_pairs 轮完整 Q&A 对，供 LLM 理解完整上下文。
-
-    返回 [{"user": "...", "assistant": "..."}, ...] 格式的列表。
-    助手回复截断到 200 字以免超长。从末尾反向扫描，找到足够对数后提前退出。
-    """
+    recent_questions: List[str] = []
     pairs: List[Dict] = []
     current_assistant = ""
-    # 反向扫描：先遇到 assistant 再遇到 user，组成一对
+    summary_done = False
+    pairs_done = False
+
     for item in reversed(history):
+        if summary_done and pairs_done:
+            break
         role = item.get("role", "")
         raw = item.get("content")
         content = (str(raw) if raw is not None else "").strip()
+
         if role == "assistant":
-            current_assistant = content[:200]
-        elif role == "user" and current_assistant:
-            pairs.append({
-                "user": content,
-                "assistant": current_assistant,
-            })
-            current_assistant = ""
-            if len(pairs) >= max_pairs:
-                break
+            if not pairs_done and not current_assistant:
+                current_assistant = content[:200]
+        elif role == "user":
+            if not summary_done and content:
+                recent_questions.append(content)
+                if len(recent_questions) >= max_turns:
+                    summary_done = True
+            if not pairs_done and current_assistant:
+                pairs.append({"user": content, "assistant": current_assistant})
+                current_assistant = ""
+                if len(pairs) >= max_pairs:
+                    pairs_done = True
+
+    recent_questions.reverse()
     pairs.reverse()
+    return " → ".join(recent_questions), pairs
+
+
+def _build_history_summary(history: List[Dict], max_turns: int = 3) -> str:
+    """向后兼容包装：委托给合并后的单次扫描函数。"""
+    summary, _ = _build_history_summary_and_pairs(history, max_turns=max_turns, max_pairs=0)
+    return summary
+
+
+def _build_history_pairs(history: List[Dict], max_pairs: int = 3) -> List[Dict]:
+    """向后兼容包装：委托给合并后的单次扫描函数。"""
+    _, pairs = _build_history_summary_and_pairs(history, max_turns=0, max_pairs=max_pairs)
     return pairs
 
 
@@ -345,14 +351,12 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([search_q] + expanded_terms))
 
-    # 构建多轮历史摘要供 LLM 使用
+    # 构建多轮历史摘要供 LLM 使用（单次扫描同时提取 summary + pairs）
     history_summary = ""
     history_pairs: List[Dict] = []
     last_user_q = ""
     if history:
-        # 始终构建历史信息，即使没有 context_resolved（LLM 也需要对话上下文）
-        history_summary = _build_history_summary(history)
-        history_pairs = _build_history_pairs(history)
+        history_summary, history_pairs = _build_history_summary_and_pairs(history)
         last_user_q = history_ctx.get("last_user_q", "")
 
     return {

@@ -1337,17 +1337,19 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                     "该问题可能涉及医生判断范围，建议由专业医师评估。",
                 ]
                 method = "no_hit"
-            text = format_structured_answer(route, fallback, build_evidence(hits), add_risk_note=(route == "risk"))
+            evidence = build_evidence(hits)
+            text = format_structured_answer(route, fallback, evidence, add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
-                   matched_sources=build_evidence(hits), hit=False,
+                   matched_sources=evidence, hit=False,
                    meta={**_log_meta, "method": method})
             return text
 
-    text = format_structured_answer(route, body_lines, build_evidence(hits), add_risk_note=(route == "risk"))
+    evidence = build_evidence(hits)
+    text = format_structured_answer(route, body_lines, evidence, add_risk_note=(route == "risk"))
     if USE_OPENAI:
         text = openai_rewrite_answer(text, route)
     log_qa(question, text, rewritten_query=rewrite["expanded"],
-           matched_sources=build_evidence(hits), hit=True,
+           matched_sources=evidence, hit=True,
            meta={**_log_meta, "method": "rule_extract"})
     return text
 

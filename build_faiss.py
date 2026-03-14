@@ -17,7 +17,11 @@ from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT,
     EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_BUILD, EMBED_MAX_LENGTH_BUILD,
     CHUNK_SIZE as _DEFAULT_CHUNK_SIZE, CHUNK_OVERLAP as _DEFAULT_CHUNK_OVERLAP,
+    SHARED_ENTITY_DIRS as _SHARED_ENTITY_DIRS,
 )
+
+# 预计算共享目录名，避免 _is_product_dir 每次调用重建 set
+_SHARED_DIR_NAMES = frozenset(_SHARED_ENTITY_DIRS.values())
 
 MODEL_NAME = EMBED_MODEL_NAME
 CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE", str(_DEFAULT_CHUNK_SIZE)))
@@ -435,9 +439,7 @@ def build_shared():
 
 def _is_product_dir(p: Path) -> bool:
     """顶层目录且有 main.txt，且不是共享知识目录"""
-    from rag_runtime_config import SHARED_ENTITY_DIRS
-    shared_names = set(SHARED_ENTITY_DIRS.values())
-    return p.is_dir() and (p / "main.txt").exists() and p.name not in shared_names
+    return p.is_dir() and (p / "main.txt").exists() and p.name not in _SHARED_DIR_NAMES
 
 
 def list_products():
@@ -449,8 +451,7 @@ def list_products():
         if _is_product_dir(p):
             print(f"[product] {p.name}")
     # 列出共享知识目录
-    from rag_runtime_config import SHARED_ENTITY_DIRS
-    for entity_type, subdir in SHARED_ENTITY_DIRS.items():
+    for entity_type, subdir in _SHARED_ENTITY_DIRS.items():
         edir = KNOWLEDGE_DIR / subdir
         if not edir.exists():
             continue

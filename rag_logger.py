@@ -28,7 +28,11 @@ def _ensure_dir() -> None:
 def _rotate_if_needed(path: Path) -> None:
     """简易日志轮转：超过 LOG_MAX_BYTES 时重命名为 .1, .2, ..."""
     try:
-        if not path.exists() or path.stat().st_size < LOG_MAX_BYTES:
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            return
+        if size < LOG_MAX_BYTES:
             return
         # 删除最老的备份
         for i in range(LOG_BACKUP_COUNT, 0, -1):

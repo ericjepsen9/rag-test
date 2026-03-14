@@ -1,3 +1,4 @@
+import hashlib
 import math
 import re
 import unicodedata
@@ -232,7 +233,6 @@ def _cache_put(cache: dict, key: Any, value: Any) -> None:
 
 def _corpus_cache_key(docs: List[Dict]) -> Tuple:
     """生成稳定的缓存键：使用确定性哈希（跨进程重启不变）"""
-    import hashlib
     n = len(docs)
     if n == 0:
         return (0,)

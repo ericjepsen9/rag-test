@@ -9,7 +9,7 @@
 import json
 import threading
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 from rag_runtime_config import RELATIONS_FILE, PRODUCT_ALIASES, PROCEDURE_ALIASES, EQUIPMENT_ALIASES
 
@@ -321,33 +321,58 @@ def validate_combo_safety(product_id: str, question: str, data: Optional[Dict] =
     return warnings
 
 
+def _enrich_combo(product_id: str, question: str, data: Dict) -> List[str]:
+    lines = get_combo_info(product_id, data=data)
+    safety = validate_combo_safety(product_id, question, data=data)
+    if safety:
+        lines.extend(safety)
+    return lines
+
+
+def _enrich_drug(product_id: str, question: str, data: Dict) -> List[str]:
+    return get_drug_interactions(data=data)
+
+
+def _enrich_indication(product_id: str, question: str, data: Dict) -> List[str]:
+    return get_indication_recommendations(question, _data=data)
+
+
+def _enrich_anatomy(product_id: str, question: str, data: Dict) -> List[str]:
+    return get_anatomy_recommendations(question, _data=data)
+
+
+def _enrich_equipment(product_id: str, question: str, data: Dict) -> List[str]:
+    return get_procedure_equipment(question, _data=data)
+
+
+def _enrich_course(product_id: str, question: str, data: Dict) -> List[str]:
+    temporal = get_temporal_constraints(product_id, data=data)
+    if temporal:
+        return ["【间隔要求】"] + temporal
+    return []
+
+
+# 路由→enricher 映射：O(1) 分发代替 if/elif 链
+_ENRICH_DISPATCH: Dict[str, Any] = {
+    "combo": _enrich_combo,
+    "contraindication": _enrich_drug,
+    "pre_care": _enrich_drug,
+    "indication_q": _enrich_indication,
+    "anatomy_q": _enrich_anatomy,
+    "equipment_q": _enrich_equipment,
+    "course": _enrich_course,
+}
+
+
 def enrich_answer(route: str, product_id: str, question: str) -> List[str]:
     """根据路由类型，从 relations.json 中提取补充信息。
 
     返回补充行列表，调用方拼接到答案末尾。
     """
+    handler = _ENRICH_DISPATCH.get(route)
+    if handler is None:
+        return []
     data = _load()
     if not data:
         return []
-
-    lines = []
-    if route == "combo":
-        lines = get_combo_info(product_id, data=data)
-        safety = validate_combo_safety(product_id, question, data=data)
-        if safety:
-            lines.extend(safety)
-    elif route in ("contraindication", "pre_care"):
-        lines = get_drug_interactions(route, data=data)
-    elif route == "indication_q":
-        lines = get_indication_recommendations(question, _data=data)
-    elif route == "anatomy_q":
-        lines = get_anatomy_recommendations(question, _data=data)
-    elif route == "equipment_q":
-        lines = get_procedure_equipment(question, _data=data)
-    elif route == "course":
-        temporal = get_temporal_constraints(product_id, data=data)
-        if temporal:
-            lines.append("【间隔要求】")
-            lines.extend(temporal)
-
-    return lines
+    return handler(product_id, question, data)
