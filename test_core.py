@@ -623,6 +623,37 @@ class TestFallbackTermExtraction:
         assert any("红肿" in line for line in result)
 
 
+class TestRegressionRoutes:
+    """从 regression_cases.json 导入路由检测回归用例"""
+
+    @pytest.fixture(scope="class")
+    def route_cases(self):
+        import json
+        from pathlib import Path
+        cases_file = Path(__file__).parent / "regression_cases.json"
+        if not cases_file.exists():
+            pytest.skip("regression_cases.json not found")
+        raw = json.loads(cases_file.read_text(encoding="utf-8"))
+        # 只测试有明确路由期望的用例（route=null 表示特殊意图，由其他逻辑处理）
+        return [c for c in raw if "q" in c and c.get("route")]
+
+    def test_route_detection_regression(self, route_cases):
+        """所有回归用例的路由检测应通过"""
+        failures = []
+        for case in route_cases:
+            actual = detect_route(case["q"])
+            if actual != case["route"]:
+                failures.append(
+                    f"  {case['q'][:40]}: expected={case['route']} got={actual}"
+                )
+        if failures:
+            msg = f"{len(failures)}/{len(route_cases)} route detection failures:\n"
+            msg += "\n".join(failures[:10])
+            if len(failures) > 10:
+                msg += f"\n  ... and {len(failures) - 10} more"
+            pytest.fail(msg)
+
+
 class TestDetectProduct:
     def test_alias(self):
         assert detect_product("非罗奥成分") == "feiluoao"

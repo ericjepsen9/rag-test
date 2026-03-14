@@ -199,13 +199,15 @@ def _resolve_context(question: str, history_ctx: Dict[str, Any]) -> str:
     m = _PRONOUN_PATTERNS.search(q)
     if m:
         pos = m.start()
-        if pos == 0 or q[pos - 1] in "，。？！；、,;!? ":
-            # 额外检查：排除 "和它""跟它""比它""与它" 等宾语位指代
-            if pos >= 1 and q[pos - 1:pos] in ("和", "跟", "比", "与"):
-                pass  # 宾语位指代不替换
-            else:
-                resolved = q[:pos] + prefix + q[m.end():]
-                return resolved
+        # 句首直接替换
+        if pos == 0:
+            resolved = prefix + q[m.end():]
+            return resolved
+        # 句中：仅标点/空格后替换，排除 "和它""跟它""比它""与它" 宾语位
+        prev = q[pos - 1]
+        if prev in "，。？！；、,;!? " and (pos < 2 or q[pos - 2] not in "和跟比与"):
+            resolved = q[:pos] + prefix + q[m.end():]
+            return resolved
 
     # 模式2: 追问/延续补全 — "还有别的吗" "成分呢" "禁忌人群有哪些" → 补充上下文
     if _FOLLOWUP_PATTERNS.search(q):

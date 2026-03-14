@@ -101,20 +101,47 @@ def log_error(stage: str, error: str, *, meta: Optional[Dict[str, Any]] = None) 
 
 
 def read_recent(path: Path, limit: int = 20) -> list[Dict[str, Any]]:
+    """读取日志文件的最近 N 条记录（从文件末尾反向读取，避免全量扫描）"""
     if not path.exists():
         return []
     cap = max(1, limit)
-    buf: deque[Dict[str, Any]] = deque(maxlen=cap)
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
+    try:
+        size = path.stat().st_size
+        if size == 0:
+            return []
+        # 小文件直接全量读取
+        if size <= 64 * 1024:
+            buf: deque[Dict[str, Any]] = deque(maxlen=cap)
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        buf.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+            return list(reversed(buf))
+        # 大文件：从末尾反向读取足够的块
+        read_size = min(size, cap * 2048)  # 估算每行 ~2KB
+        with path.open("rb") as f:
+            f.seek(max(0, size - read_size))
+            tail = f.read().decode("utf-8", errors="replace")
+        lines = tail.strip().split("\n")
+        results = []
+        for line in reversed(lines):
             line = line.strip()
             if not line:
                 continue
             try:
-                buf.append(json.loads(line))
+                results.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return list(reversed(buf))
+            if len(results) >= cap:
+                break
+        return results
+    except OSError:
+        return []
 
 
 def get_recent_qa(limit: int = 20) -> list[Dict[str, Any]]:

@@ -238,6 +238,21 @@ def admin_rebuild(req: RebuildRequest):
         raise HTTPException(status_code=500, detail=repr(e))
 
 
+@app.post("/admin/rebuild_shared")
+def admin_rebuild_shared():
+    """重建共享知识索引（procedures、equipment、anatomy 等）"""
+    from build_faiss import build_shared
+    try:
+        build_shared()
+        invalidate_store_cache("_shared")
+        from relation_engine import invalidate_relations_cache
+        invalidate_relations_cache()
+        return {"ok": True, "store": "_shared"}
+    except Exception as e:
+        log_error("admin_rebuild_shared", repr(e))
+        raise HTTPException(status_code=500, detail=repr(e))
+
+
 @app.get("/admin/logs/qa")
 def admin_logs_qa(limit: int = 20):
     return {"items": get_recent_qa(limit=limit)}

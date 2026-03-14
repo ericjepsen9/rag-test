@@ -36,10 +36,16 @@ def format_structured_answer(
 
     if evidence:
         out.append("依据：")
+        seen_sources = set()
         for ev in evidence[:MAX_EVIDENCE_CHUNKS]:
             source_file = ev.get("meta", {}).get("source_file", "unknown")
             chunk = ev.get("meta", {}).get("chunk_id", "?")
             stype = ev.get("meta", {}).get("source_type", "unknown")
+            # 按 source_file + chunk_id 去重，避免相同来源重复展示
+            key = f"{source_file}#{chunk}"
+            if key in seen_sources:
+                continue
+            seen_sources.add(key)
             out.append(f"- 来源文件：{source_file}｜段落：{chunk}｜类型：{stype}")
 
     out.append("注意事项：")
