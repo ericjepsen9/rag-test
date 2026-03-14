@@ -1,3 +1,4 @@
+import os as _os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -7,9 +8,15 @@ KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 STORE_ROOT = BASE_DIR / "stores"
 OUT_PATH = BASE_DIR / "answer.txt"
 
-# ===== OpenAI 开关 =====
-USE_OPENAI = False
-OPENAI_MODEL = "gpt-4o-mini"
+# ===== OpenAI / 兼容 API 开关 =====
+# 支持 Cherry Studio 等 OpenAI 兼容 API 服务：
+#   export RAG_USE_OPENAI=1
+#   export OPENAI_API_KEY=cs-sk-...
+#   export OPENAI_API_BASE=http://127.0.0.1:23333/v1
+#   export RAG_OPENAI_MODEL=your-model-name
+USE_OPENAI = _os.environ.get("RAG_USE_OPENAI", "").strip().lower() in ("1", "true", "yes")
+OPENAI_MODEL = _os.environ.get("RAG_OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_BASE = _os.environ.get("OPENAI_API_BASE", "").strip() or None
 
 # ===== 输出与调试 =====
 DEFAULT_MODE = "brief"   # brief / full
@@ -263,7 +270,6 @@ ROUTE_LLM_TEMPERATURE = {
 }
 
 # ===== 搜索调优 =====
-import os as _os
 
 
 def _safe_float(key: str, default: str) -> float:

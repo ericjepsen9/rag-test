@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT, OUT_PATH, DEFAULT_MODE, DEFAULT_TOP_K,
-    USE_OPENAI, OPENAI_MODEL, QUESTION_ROUTES, SECTION_RULES,
+    USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE, QUESTION_ROUTES, SECTION_RULES,
     PRODUCT_ALIASES, PROJECT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
     HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
     MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
@@ -1048,7 +1048,10 @@ def _get_openai_client():
         return None
     try:
         from openai import OpenAI
-        _openai_client = OpenAI(api_key=key)
+        client_kwargs = {"api_key": key}
+        if OPENAI_API_BASE:
+            client_kwargs["base_url"] = OPENAI_API_BASE
+        _openai_client = OpenAI(**client_kwargs)
     except Exception:
         _openai_client = None
     _openai_client_checked = True
