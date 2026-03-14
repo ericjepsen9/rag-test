@@ -171,23 +171,24 @@ def _count_term(term: str, text: str) -> int:
     return text.count(term)
 
 
-def bm25_score(query: str, text: str, avg_dl: float, n_docs: int,
+def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
                doc_freqs: Dict[str, int], k1: float = BM25_K1, b: float = BM25_B) -> float:
-    """BM25 评分：考虑词频、文档长度、逆文档频率"""
-    q_terms = _extract_terms(query)
-    t = (text or "").lower()
-    dl = len(t)
-    if not q_terms or dl == 0:
+    """BM25 评分：考虑词频、文档长度、逆文档频率。
+    query_or_terms: 预提取的查询词列表，或查询字符串（自动提取）。"""
+    if isinstance(query_or_terms, str):
+        query_or_terms = _extract_terms(query_or_terms)
+    dl = len(text)
+    if not query_or_terms or dl == 0:
         return 0.0
 
     score = 0.0
-    for term in q_terms:
-        tf = _count_term(term, t)
+    effective_n = max(n_docs, 100)
+    for term in query_or_terms:
+        tf = text.count(term)
         if tf == 0:
             continue
         df = doc_freqs.get(term, 0)
         # IDF: 对小语料库平滑，防止稀有词分数膨胀
-        effective_n = max(n_docs, 100)
         idf = math.log((effective_n - df + 0.5) / (df + 0.5) + 1.0)
         # TF normalization
         tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1)))
@@ -292,13 +293,15 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
         return []
 
     texts, n_docs, avg_dl = _get_bm25_corpus(docs)
+    # 复用 _get_bm25_corpus 内部已计算的 cache key，避免重复哈希
     corpus_key = _corpus_cache_key(docs)
 
     doc_freqs = _batch_doc_freqs(q_terms, texts, corpus_key)
 
     scored = []
     for i, d in enumerate(docs):
-        s = bm25_score(query, texts[i], avg_dl, n_docs, doc_freqs)
+        # 传入预提取的 q_terms 和预小写的 texts[i]，避免 per-doc 重复解析
+        s = bm25_score(q_terms, texts[i], avg_dl, n_docs, doc_freqs)
         if s <= 0:
             continue
         x = dict(d)
@@ -469,6 +472,8 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
 
 
 def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
+    """检测问题中提到的实体（产品/项目等），返回匹配的 key 列表。
+    每个 key 最多匹配一次（内部 break），结果天然唯一，无需 uniq。"""
     q = question.lower()
     found = []
     for key, aliases in term_map.items():
@@ -476,4 +481,4 @@ def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
             if a.lower() in q:
                 found.append(key)
                 break
-    return uniq(found)
+    return found

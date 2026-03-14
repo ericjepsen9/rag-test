@@ -302,50 +302,65 @@ def read_knowledge_file(product: str, fname: str) -> str:
     return content
 
 
+from rag_runtime_config import SHARED_ENTITY_DIRS as _SHARED_ENTITY_DIRS
+_SHARED_DIR_NAMES = frozenset(_SHARED_ENTITY_DIRS.values())
+
+# 产品列表缓存：避免每次 detect_product fallback 时遍历文件系统
+_product_list_cache: list = []
+_product_list_mtime: float = 0.0
+
+
 def _is_product_dir(name: str) -> bool:
     """判断 knowledge/ 下的目录是否为产品目录（排除共享知识目录）"""
-    from rag_runtime_config import SHARED_ENTITY_DIRS
-    shared_names = set(SHARED_ENTITY_DIRS.values())
     p = KNOWLEDGE_DIR / name
-    return p.is_dir() and (p / "main.txt").exists() and name not in shared_names
+    return p.is_dir() and (p / "main.txt").exists() and name not in _SHARED_DIR_NAMES
 
 
 def detect_product(question: str) -> str:
+    global _product_list_cache, _product_list_mtime
     found = detect_terms(question, PRODUCT_ALIASES)
     if found:
         return found[0]
     if (KNOWLEDGE_DIR / "feiluoao").exists():
         return "feiluoao"
-    if KNOWLEDGE_DIR.exists():
-        dirs = [x.name for x in KNOWLEDGE_DIR.iterdir() if _is_product_dir(x.name)]
-    else:
-        dirs = []
+    if not KNOWLEDGE_DIR.exists():
+        return "feiluoao"
+    # 缓存产品列表，按 knowledge 目录 mtime 失效
+    try:
+        mtime = KNOWLEDGE_DIR.stat().st_mtime
+    except OSError:
+        return "feiluoao"
+    if _product_list_cache and _product_list_mtime == mtime:
+        return _product_list_cache[0] if _product_list_cache else "feiluoao"
+    dirs = sorted(x.name for x in KNOWLEDGE_DIR.iterdir() if _is_product_dir(x.name))
+    _product_list_cache = dirs
+    _product_list_mtime = mtime
     return dirs[0] if dirs else "feiluoao"
+
+
+_PRICE_KWS = ("多少钱", "价格", "费用", "贵不贵", "便宜", "一支多少", "疗程多少钱",
+              "收费", "报价", "花多少", "怎么收费", "优惠", "打折", "一次多少",
+              "一针多少", "总花费", "预算多少")
+_COMPARE_KWS_SIMPLE = ("区别", "对比", "vs", "哪个好", "哪个更", "差别",
+                       "不同点", "优劣", "比较")
+_COMPARE_KWS_RE = re.compile(r"哪里比.*好|和.*区别|和.*哪个|好还是")
+_INTERNAL_COMPARE = ("PCL", "聚己内酯", "透明质酸", "成分")
+_LOCATION_KWS = ("哪里可以做", "哪家医院", "附近", "哪里有", "哪能做", "去哪",
+                 "哪个城市", "北京能做", "上海能做", "哪里能打", "哪里做",
+                 "哪个机构", "哪个诊所", "推荐医院")
 
 
 def _detect_special_intent(q: str) -> str:
     """检测无知识兜底的特殊意图：价格、对比、地点。返回意图名或空字符串。"""
-    price_kws = ["多少钱", "价格", "费用", "贵不贵", "便宜", "一支多少", "疗程多少钱",
-                 "收费", "报价", "花多少", "怎么收费", "优惠", "打折", "一次多少",
-                 "一针多少", "总花费", "预算多少"]
-    if any(k in q for k in price_kws):
+    if any(k in q for k in _PRICE_KWS):
         return "price"
 
     # 对比意图：需排除产品自身成分对比（如"PCL和透明质酸的作用"属于 ingredient）
-    compare_kws = ["区别", "对比", "vs", "哪个好", "哪个更", "差别",
-                   "不同点", "优劣", "比较", "哪里比.*好", "和.*区别",
-                   "和.*哪个", "好还是"]
-    # 排除成分层面的内部对比
-    _internal_compare = ["PCL", "聚己内酯", "透明质酸", "成分"]
-    if not any(ic in q for ic in _internal_compare):
-        for k in compare_kws:
-            if re.search(k, q):
-                return "comparison"
+    if not any(ic in q for ic in _INTERNAL_COMPARE):
+        if any(k in q for k in _COMPARE_KWS_SIMPLE) or _COMPARE_KWS_RE.search(q):
+            return "comparison"
 
-    location_kws = ["哪里可以做", "哪家医院", "附近", "哪里有", "哪能做", "去哪",
-                    "哪个城市", "北京能做", "上海能做", "哪里能打", "哪里做",
-                    "哪个机构", "哪个诊所", "推荐医院"]
-    if any(k in q for k in location_kws):
+    if any(k in q for k in _LOCATION_KWS):
         return "location"
     return ""
 
@@ -844,10 +859,12 @@ def parse_answer(route: str, product: str, mode: str) -> List[str]:
     return parse_bullets_from_section(main_text, faq_text, route, mode)
 
 
+from search_utils import expand_synonyms as _expand_synonyms
+
+
 def _normalize_for_bigram(text: str) -> str:
     """归一化文本用于 bigram 匹配：同义词展开后取小写去空格"""
-    from search_utils import expand_synonyms
-    return expand_synonyms(text).lower().replace(" ", "")
+    return _expand_synonyms(text).lower().replace(" ", "")
 
 
 def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
@@ -1305,6 +1322,8 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
 
 _NO_MATCH_REPLY = "抱歉，暂时无法回答该问题。请尝试询问产品成分、术后护理、禁忌人群等相关问题。"
+_SPECIAL_INTENT_REPLIES = {"price": PRICE_REPLY, "comparison": COMPARISON_REPLY,
+                           "location": LOCATION_REPLY}
 
 # 非提问的礼貌回复映射
 _CHITCHAT_REPLIES = {
@@ -1380,9 +1399,7 @@ def answer_question(question: str, mode: str, history: list = None,
     # 特殊意图快速路径：价格/对比/地点等无知识覆盖的问题
     special = _detect_special_intent(q)
     if special:
-        _SPECIAL_REPLIES = {"price": PRICE_REPLY, "comparison": COMPARISON_REPLY,
-                            "location": LOCATION_REPLY}
-        reply = _SPECIAL_REPLIES.get(special, "")
+        reply = _SPECIAL_INTENT_REPLIES.get(special, "")
         if reply:
             log_qa(q, reply, rewritten_query="", matched_sources=[], hit=False,
                    meta={"method": "special_intent", "intent": special})
