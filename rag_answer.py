@@ -25,6 +25,7 @@ from rag_runtime_config import (
     LLM_TEMPERATURE, LLM_MAX_TOKENS_BRIEF, LLM_MAX_TOKENS_FULL, ROUTE_LLM_TEMPERATURE,
     RELATIONS_FILE,
     PRICE_REPLY, COMPARISON_REPLY, LOCATION_REPLY,
+    FAQ_FAST_PATH_THRESHOLDS, FAQ_FAST_PATH_DEFAULT,
 )
 from search_utils import (
     normalize_lines, uniq, is_faq_line, section_block,
@@ -843,16 +844,8 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
     meta = top_hit.get("meta", {})
     if meta.get("source_type") != "faq":
         return ""
-    # 条件3：路由感知的检索分数门槛
-    _ROUTE_FAQ_THRESHOLDS = {
-        "aftercare": {"score": 0.35, "ratio": 0.40},
-        "effect":    {"score": 0.35, "ratio": 0.45},
-        "basic":     {"score": 0.38, "ratio": 0.45},
-        "risk":      {"score": 0.45, "ratio": 0.55},
-        "contraindication": {"score": 0.45, "ratio": 0.55},
-        "complication": {"score": 0.45, "ratio": 0.55},
-    }
-    thresholds = _ROUTE_FAQ_THRESHOLDS.get(route, {"score": 0.40, "ratio": 0.50})
+    # 条件3：路由感知的检索分数门槛（从 config 读取，支持动态调优）
+    thresholds = FAQ_FAST_PATH_THRESHOLDS.get(route, FAQ_FAST_PATH_DEFAULT)
     score = top_hit.get("hybrid_score", top_hit.get("score", 0.0))
     if score < thresholds["score"]:
         return ""
@@ -1034,7 +1027,7 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
     """当规则提取失败时，从检索结果中提取文本作为 fallback 答案。
     优先选择包含查询关键词的行，其次取各 chunk 的前几行。
     按关键词匹配数排序，去重后返回。"""
-    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if len(t) >= 3]
+    query_terms = [t for t in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if len(t) >= 2]
     scored_lines = []
     for h in hits:
         text = (h.get("text") or "").strip()

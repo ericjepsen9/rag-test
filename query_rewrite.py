@@ -195,13 +195,17 @@ def _resolve_context(question: str, history_ctx: Dict[str, Any]) -> str:
     prefix = " ".join(prefix_parts)
 
     # 模式1: 指代词替换 — "它的成分呢" → "菲罗奥的成分呢"
-    # 仅替换句首或标点后的指代词，避免句中错误替换（如 "和它一起用"）
+    # 仅替换句首或标点后的指代词，排除介词/连词后的宾语位（"和它""跟它""比它"等）
     m = _PRONOUN_PATTERNS.search(q)
     if m:
         pos = m.start()
         if pos == 0 or q[pos - 1] in "，。？！；、,;!? ":
-            resolved = q[:pos] + prefix + q[m.end():]
-            return resolved
+            # 额外检查：排除 "和它""跟它""比它""与它" 等宾语位指代
+            if pos >= 1 and q[pos - 1:pos] in ("和", "跟", "比", "与"):
+                pass  # 宾语位指代不替换
+            else:
+                resolved = q[:pos] + prefix + q[m.end():]
+                return resolved
 
     # 模式2: 追问/延续补全 — "还有别的吗" "成分呢" "禁忌人群有哪些" → 补充上下文
     if _FOLLOWUP_PATTERNS.search(q):
@@ -312,13 +316,13 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
 
     # 路由感知扩展：补充路由专属的高区分度词
     detected_routes = _detect_route_for_expansion(q)
-    for route in detected_routes:
-        expanded_terms.extend(_ROUTE_EXPANSION.get(route, []))
+    for rt in detected_routes:
+        expanded_terms.extend(_ROUTE_EXPANSION.get(rt, []))
 
     # 当没有检测到路由但有历史路由时，也补充对应的扩展词（支持追问继承场景）
     if not detected_routes and history_ctx.get("route"):
-        inherited_route = history_ctx["route"]
-        expanded_terms.extend(_ROUTE_EXPANSION.get(inherited_route, []))
+        inherited_rt = history_ctx["route"]
+        expanded_terms.extend(_ROUTE_EXPANSION.get(inherited_rt, []))
 
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([search_q] + expanded_terms))
@@ -345,6 +349,7 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         "times": uniq(times),
         "symptoms": uniq(symptoms),
         "sub_questions": sub_questions,
+        "detected_routes": detected_routes,   # rewrite 阶段检测到的路由（供 answer_one 参考）
         "history_summary": history_summary,   # 多轮摘要，供 LLM prompt
         "history_pairs": history_pairs,       # 完整 Q&A 对，供 LLM 深度理解
         "last_user_q": last_user_q,           # 上一轮用户问题

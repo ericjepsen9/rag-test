@@ -546,6 +546,83 @@ class TestChitchatReplyVariations:
         assert "客气" in reply or "问题" in reply
 
 
+class TestPronounResolutionSafety:
+    def test_subject_pronoun_replaced(self):
+        """句首指代词应被替换"""
+        ctx = {"product": "菲罗奥", "product_id": "feiluoao", "projects": [], "route": ""}
+        result = _resolve_context("它的成分是什么", ctx)
+        assert "菲罗奥" in result
+        assert "它" not in result
+
+    def test_object_pronoun_not_replaced(self):
+        """'和它比较' 中的宾语位指代词不应被替换"""
+        ctx = {"product": "菲罗奥", "product_id": "feiluoao", "projects": [], "route": ""}
+        result = _resolve_context("和它比较怎么样", ctx)
+        # 不应替换 "和它" 中的 "它"（通过指代词路径）
+        # 但可能通过 followup/implicit 路径补充产品名前缀
+        # 关键是不应产生 "和菲罗奥比较怎么样" 这种错误替换
+        assert "和菲罗奥比较" not in result
+
+
+class TestInputSanitization:
+    def test_html_stripped(self):
+        """HTML 标签应被去除"""
+        import re
+        _HTML_TAG_RE = re.compile(r"<[^>]+>")
+        result = _HTML_TAG_RE.sub("", "<script>alert(1)</script>hello")
+        assert result == "alert(1)hello"
+
+    def test_control_chars_stripped(self):
+        """控制字符应被去除"""
+        import re
+        _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+        result = _CONTROL_CHAR_RE.sub("", "hello\x00\x01world")
+        assert result == "helloworld"
+
+    def test_normal_text_unchanged(self):
+        """正常中文输入不受影响"""
+        import re
+        _HTML_TAG_RE = re.compile(r"<[^>]+>")
+        _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+        text = "菲罗奥成分是什么？"
+        result = _CONTROL_CHAR_RE.sub("", _HTML_TAG_RE.sub("", text))
+        assert result == text
+
+
+class TestFaqThresholdsConfig:
+    def test_config_has_safety_routes(self):
+        from rag_runtime_config import FAQ_FAST_PATH_THRESHOLDS
+        # 安全路由应有更高阈值
+        assert FAQ_FAST_PATH_THRESHOLDS["risk"]["score"] >= 0.45
+        assert FAQ_FAST_PATH_THRESHOLDS["contraindication"]["score"] >= 0.45
+        assert FAQ_FAST_PATH_THRESHOLDS["complication"]["score"] >= 0.45
+        assert FAQ_FAST_PATH_THRESHOLDS["repair"]["score"] >= 0.45
+
+    def test_default_threshold_exists(self):
+        from rag_runtime_config import FAQ_FAST_PATH_DEFAULT
+        assert "score" in FAQ_FAST_PATH_DEFAULT
+        assert "ratio" in FAQ_FAST_PATH_DEFAULT
+
+
+class TestRewriteDetectedRoutes:
+    def test_detected_routes_in_result(self):
+        """rewrite 结果应包含 detected_routes"""
+        result = rewrite_query("菲罗奥术后护理怎么做")
+        assert "detected_routes" in result
+        assert isinstance(result["detected_routes"], list)
+        assert "aftercare" in result["detected_routes"]
+
+
+class TestFallbackTermExtraction:
+    def test_two_char_terms_extracted(self):
+        """2字中文词应能被提取用于匹配"""
+        from rag_answer import _fallback_from_hits
+        hits = [{"text": "注射后需要冰敷处理\n红肿属于正常反应", "meta": {}}]
+        result = _fallback_from_hits(hits, query="红肿怎么办")
+        # 应能匹配到包含"红肿"的行
+        assert any("红肿" in line for line in result)
+
+
 class TestDetectProduct:
     def test_alias(self):
         assert detect_product("非罗奥成分") == "feiluoao"

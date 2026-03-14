@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
@@ -41,6 +42,17 @@ def _warmup_models():
 
 MAX_QUESTION_LEN = 500
 MAX_HISTORY_TOTAL_CHARS = 3000  # 防止历史内容过大
+
+# 输入清理：去除 HTML 标签和控制字符，防止注入
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_input(text: str) -> str:
+    """清理用户输入：去除 HTML 标签和控制字符"""
+    text = _HTML_TAG_RE.sub("", text)
+    text = _CONTROL_CHAR_RE.sub("", text)
+    return text.strip()
 
 
 # ===== 数据模型 =====
@@ -114,7 +126,7 @@ def chat_page():
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
-    question = req.question.strip()
+    question = _sanitize_input(req.question)
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
@@ -174,8 +186,9 @@ def ask(req: AskRequest):
         # 尝试捕获已解析的上下文信息
         try:
             if rw:
-                error_meta["route"] = detect_route(rw.get("original", question))
-                error_meta["product"] = detect_product(rw.get("original", question))
+                cached_route, cached_product = get_last_route_product()
+                error_meta["route"] = cached_route or None
+                error_meta["product"] = cached_product or None
         except Exception:
             pass
         log_error("api_ask", repr(e), meta=error_meta)
