@@ -67,9 +67,12 @@ def read_text_auto(p: Path) -> str:
 
 # ====== 段落感知切块 ======
 
+_RE_MULTI_NEWLINES = re.compile(r"\n{3,}")
+
+
 def normalize_text(text: str) -> str:
     t = (text or "").replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
-    t = re.sub(r"\n{3,}", "\n\n", t)
+    t = _RE_MULTI_NEWLINES.sub("\n\n", t)
     return t.strip()
 
 

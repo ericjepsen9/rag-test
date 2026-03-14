@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from rag_runtime_config import (
     KNOWLEDGE_DIR, STORE_ROOT, OUT_PATH, DEFAULT_MODE, DEFAULT_TOP_K,
     USE_OPENAI, OPENAI_MODEL, QUESTION_ROUTES, SECTION_RULES,
-    PRODUCT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
+    PRODUCT_ALIASES, PROJECT_ALIASES, VECTOR_TOP_K, KEYWORD_TOP_K,
     HYBRID_VECTOR_WEIGHT, HYBRID_KEYWORD_WEIGHT, QUESTION_TYPE_CONFIG,
     MAX_SUB_QUESTIONS, MAX_EVIDENCE_CHUNKS,
     EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_QUERY, EMBED_MAX_LENGTH_QUERY,
@@ -459,7 +459,6 @@ def detect_route(question: str) -> str:
                     break
 
     # 多实体并列提及 → combo
-    from rag_runtime_config import PROJECT_ALIASES
     mentioned_projects = detect_terms(q, PROJECT_ALIASES)
     mentioned_products = detect_terms(q, PRODUCT_ALIASES)
     entity_count = len(mentioned_projects) + len(mentioned_products)

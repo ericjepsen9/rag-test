@@ -316,9 +316,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
         s = bm25_score(q_terms, texts[i], avg_dl, n_docs, doc_freqs)
         if s <= 0:
             continue
-        x = dict(d)
-        x["keyword_score"] = s
-        scored.append(x)
+        scored.append({**d, "keyword_score": s})
 
     scored.sort(key=lambda x: x.get("keyword_score", 0.0), reverse=True)
 
@@ -351,17 +349,13 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
         if key in merged:
             # 同一文档重复出现时取最高分，而非累加
             if new_score > merged[key].get("hybrid_score", 0.0):
-                merged[key] = dict(h)
-                merged[key]["hybrid_score"] = new_score
+                merged[key] = {**h, "hybrid_score": new_score}
         else:
-            merged[key] = dict(h)
-            merged[key]["hybrid_score"] = new_score
+            merged[key] = {**h, "hybrid_score": new_score}
     for h in keyword_hits:
         key = _hit_key(h)
         if key not in merged:
-            merged[key] = dict(h)
-            merged[key]["score"] = 0.0
-            merged[key]["hybrid_score"] = 0.0
+            merged[key] = {**h, "score": 0.0, "hybrid_score": 0.0}
         merged[key]["hybrid_score"] += float(h.get("keyword_score", 0.0)) * kw
 
     # 路由感知加分：匹配目标章节标题的 chunk 得到小幅提升
@@ -410,6 +404,14 @@ def _apply_route_boost(merged: Dict[str, Dict], route: str) -> None:
             h["hybrid_score"] += _ROUTE_BOOST
 
 
+# split_multi_question 预编译正则（避免每次调用隐式编译）
+_RE_LIST_SPLIT = re.compile(r"^(.+?)(分别|各自)(是什么|有哪些|怎么样|怎么办)$")
+_RE_PAIR_SPLIT = re.compile(r"^(.+?)和(.+?)(分别|各自)?(是什么|有哪些|怎么样)$")
+_RE_ENUM_TAIL = re.compile(r"^(.+?)(怎么选|怎么样|是什么|有什么区别|哪个好)$")
+_RE_ENUM_ITEMS = re.compile(r"[、和]")
+_RE_COMMA_SPLIT = re.compile(r"[，,]")
+
+
 def split_multi_question(question: str, separators: List[str] = None) -> List[str]:
     # 选择式问题（"A还是B"）不应拆分，提前返回
     if "还是" in question:
@@ -432,13 +434,14 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
     # "A、B和C分别是什么" → ["A是什么", "B是什么", "C是什么"]
     expanded = []
     for p in parts:
+        ps = p.strip()
         # 先尝试带顿号的多项列举："A、B、C分别是什么"
-        m_list = re.match(r"^(.+?)(分别|各自)(是什么|有哪些|怎么样|怎么办)$", p.strip())
+        m_list = _RE_LIST_SPLIT.match(ps)
         if m_list:
             items_str = m_list.group(1)
             suffix = m_list.group(3)
             # 用顿号和"和"分割列举项
-            items = re.split(r"[、和]", items_str)
+            items = _RE_ENUM_ITEMS.split(items_str)
             if len(items) >= 2:
                 for item in items:
                     item = item.strip()
@@ -446,7 +449,7 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
                         expanded.append(item + suffix)
                 continue
         # 简单的 "A和B是什么" 模式
-        m = re.match(r"^(.+?)和(.+?)(分别|各自)?(是什么|有哪些|怎么样)$", p.strip())
+        m = _RE_PAIR_SPLIT.match(ps)
         if m:
             suffix = m.group(4)
             expanded.append(m.group(1).strip() + suffix)
@@ -459,7 +462,7 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
     enum_expanded = []
     for p in expanded:
         if "、" in p:
-            m_enum = re.match(r"^(.+?)(怎么选|怎么样|是什么|有什么区别|哪个好)$", p.strip())
+            m_enum = _RE_ENUM_TAIL.match(p.strip())
             if m_enum:
                 items_str = m_enum.group(1)
                 suffix = m_enum.group(2)
@@ -472,7 +475,7 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
     # 逗号分隔：仅当两侧都 ≥6 字符时才拆分（避免 "术后1天，可以洗脸" 被误拆）
     final = []
     for p in enum_expanded:
-        comma_parts = re.split(r"[，,]", p)
+        comma_parts = _RE_COMMA_SPLIT.split(p)
         if len(comma_parts) >= 2 and all(len(cp.strip()) >= 6 for cp in comma_parts):
             final.extend(comma_parts)
         else:
@@ -482,14 +485,23 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
     return uniq(result)
 
 
+_detect_terms_cache: Dict[int, Dict[str, List[str]]] = {}  # id(term_map) -> lowered map
+
+
 def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
     """检测问题中提到的实体（产品/项目等），返回匹配的 key 列表。
     每个 key 最多匹配一次（内部 break），结果天然唯一，无需 uniq。"""
+    # 缓存小写别名映射（term_map 通常是模块级常量，id 稳定）
+    map_id = id(term_map)
+    lowered = _detect_terms_cache.get(map_id)
+    if lowered is None:
+        lowered = {k: [a.lower() for a in aliases] for k, aliases in term_map.items()}
+        _detect_terms_cache[map_id] = lowered
     q = question.lower()
     found = []
-    for key, aliases in term_map.items():
+    for key, aliases in lowered.items():
         for a in aliases:
-            if a.lower() in q:
+            if a in q:
                 found.append(key)
                 break
     return found

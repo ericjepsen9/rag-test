@@ -85,6 +85,12 @@ _ALL_ROUTE_KEYWORDS = set()
 for _kws in QUESTION_ROUTES.values():
     _ALL_ROUTE_KEYWORDS.update(kw.lower() for kw in _kws)
 
+# 预计算小写路由关键词，避免 _detect_route_for_expansion / _extract_history_context 每次调用 .lower()
+_QUESTION_ROUTES_LOWER = {
+    route: [kw.lower() for kw in keywords]
+    for route, keywords in QUESTION_ROUTES.items()
+}
+
 
 _MAX_HISTORY_SCAN = 12  # 最多回溯的用户消息数，支持深度对话链
 
@@ -141,8 +147,8 @@ def _extract_history_context(history: List[Dict]) -> Dict[str, Any]:
 
         if not ctx["route"]:
             content_lower = content.lower()
-            for route, keywords in QUESTION_ROUTES.items():
-                if any(kw.lower() in content_lower for kw in keywords):
+            for route, keywords in _QUESTION_ROUTES_LOWER.items():
+                if any(kw in content_lower for kw in keywords):
                     ctx["route"] = route
                     # 记录含路由关键词的原始问题，而非可能是 "还有吗" 的 last_user_q
                     if not ctx["last_routed_q"]:
@@ -233,8 +239,8 @@ def _detect_route_for_expansion(q: str) -> List[str]:
     """检测问题命中的路由，返回匹配到的路由列表"""
     q_lower = q.lower()
     matched = []
-    for route, keywords in QUESTION_ROUTES.items():
-        if any(kw.lower() in q_lower for kw in keywords):
+    for route, keywords in _QUESTION_ROUTES_LOWER.items():
+        if any(kw in q_lower for kw in keywords):
             matched.append(route)
     return matched
 
