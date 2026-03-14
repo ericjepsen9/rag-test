@@ -849,7 +849,7 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
             if a_part:
                 faq_candidates.append((ratio, a_part))
     faq_candidates.sort(key=lambda x: x[0], reverse=True)
-    return [c[1] for c in faq_candidates[:2]]
+    return [a_part for _, a_part in faq_candidates[:2]]
 
 
 def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
@@ -1348,6 +1348,11 @@ def answer_question(question: str, mode: str, history: list = None,
         key = ans.strip()
         if key:
             outputs.append(ans)
+    if not outputs and len(rewrite["sub_questions"]) > 1:
+        from rag_logger import log_error
+        log_error("answer_question", "所有子问题均未产生有效回答",
+                  meta={"question": q[:100],
+                        "sub_questions": [sq[:50] for sq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]]})
     return "\n\n".join(outputs) if outputs else _NO_MATCH_REPLY
 
 

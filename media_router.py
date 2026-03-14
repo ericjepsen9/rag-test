@@ -18,6 +18,11 @@ def _load_product_media(product_id: str) -> List[Dict]:
         if cached and cached[0] == mtime:
             return cached[1]
         items = json.loads(media_file.read_text(encoding="utf-8"))
+        if not isinstance(items, list):
+            from rag_logger import log_error
+            log_error("media_router", f"media.json 应为数组，实际为 {type(items).__name__}",
+                      meta={"product_id": product_id})
+            return []
         result = [it for it in items if isinstance(it, dict) and "title" in it]
         _media_cache[product_id] = (mtime, result)
         return result
