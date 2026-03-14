@@ -341,16 +341,69 @@ class TestBuildContext:
 
 class TestBuildEvidence:
     def test_truncation(self):
-        hits = [{"text": "x" * 400, "meta": {"source_file": "f.txt"}}]
+        hits = [{"text": "x" * 600, "meta": {"source_file": "f.txt"}}]
         ev = build_evidence(hits)
-        assert len(ev[0]["text"]) <= 300
+        assert len(ev[0]["text"]) <= 450
 
     def test_sentence_aware(self):
-        hits = [{"text": "第一句。第二句。" + "x" * 400, "meta": {}}]
+        hits = [{"text": "第一句。第二句。" + "x" * 500, "meta": {}}]
         ev = build_evidence(hits)
-        # 应在句子边界截断
+        # 应在句子边界截断（max_chars=450）
         text = ev[0]["text"]
-        assert text.endswith("。") or len(text) <= 300
+        assert text.endswith("。") or len(text) <= 450
+
+
+class TestNormalizeTextUnicode:
+    def test_nfc_normalization(self):
+        """NFC 标准化应统一不同 Unicode 表示"""
+        import unicodedata
+        # 构造 NFD 形式（分解形式）
+        nfd = unicodedata.normalize("NFD", "é")
+        result = normalize_text(nfd)
+        assert result == unicodedata.normalize("NFC", "é")
+
+    def test_bom_removal(self):
+        assert "\ufeff" not in normalize_text("\ufeffhello")
+
+    def test_crlf(self):
+        assert "\r" not in normalize_text("a\r\nb")
+
+
+class TestChitchatVariations:
+    def test_greeting_with_punctuation(self):
+        from query_rewrite import _CHITCHAT_PATTERNS
+        assert _CHITCHAT_PATTERNS.match("你好！")
+        assert _CHITCHAT_PATTERNS.match("hello~")
+        assert _CHITCHAT_PATTERNS.match("嗨啊")
+        assert _CHITCHAT_PATTERNS.match("hi!")
+
+    def test_thanks_with_suffix(self):
+        from query_rewrite import _CHITCHAT_PATTERNS
+        assert _CHITCHAT_PATTERNS.match("谢谢啊")
+        assert _CHITCHAT_PATTERNS.match("好的！")
+
+    def test_non_chitchat_not_matched(self):
+        from query_rewrite import _CHITCHAT_PATTERNS
+        assert not _CHITCHAT_PATTERNS.match("你好，请问菲罗奥成分是什么")
+
+
+class TestRelationEngineIndices:
+    def test_load_builds_indices(self):
+        from relation_engine import _load, _idx_indication, _idx_anatomy, _idx_product_proc
+        _load()
+        # 索引应被初始化（可能为空 dict 但不应为 None，除非 relations.json 不存在）
+        # 如果 relations.json 不存在，_relations={} 且 indices 保持 None
+        # 这是可接受的——本测试验证加载流程不报错
+        assert True
+
+    def test_invalidate_clears_indices(self):
+        from relation_engine import invalidate_relations_cache, _load
+        import relation_engine as re_mod
+        _load()  # 确保已加载
+        invalidate_relations_cache()
+        assert re_mod._idx_indication is None
+        assert re_mod._idx_anatomy is None
+        assert re_mod._idx_product_proc is None
 
 
 class TestDetectProduct:

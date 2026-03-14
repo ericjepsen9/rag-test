@@ -40,6 +40,7 @@ def _warmup_models():
         print(f"[WARN] 模型预热失败: {e}")
 
 MAX_QUESTION_LEN = 500
+MAX_HISTORY_TOTAL_CHARS = 3000  # 防止历史内容过大
 
 
 # ===== 数据模型 =====
@@ -121,6 +122,13 @@ def ask(req: AskRequest):
     rw = None
     try:
         history = [{"role": h.role, "content": h.content} for h in req.history[-6:]]
+        # 防御：限制历史总字符数，避免过大 payload 占用内存
+        total_chars = sum(len(h.get("content", "")) for h in history)
+        if total_chars > MAX_HISTORY_TOTAL_CHARS:
+            # 从最早的消息开始裁剪，保留最近的对话
+            while history and total_chars > MAX_HISTORY_TOTAL_CHARS:
+                total_chars -= len(history[0].get("content", ""))
+                history.pop(0)
         # rewrite 只做一次，传给 answer_question 复用
         from query_rewrite import rewrite_query
         rw = rewrite_query(question, history=history)

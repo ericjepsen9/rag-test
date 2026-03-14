@@ -240,10 +240,22 @@ ROUTE_LLM_TEMPERATURE = {
     "risk":              0.1,
     "contraindication":  0.1,
     "complication":      0.1,
+    "repair":            0.1,
     "operation":         0.2,
+    "pre_care":          0.2,
+    "anti_fake":         0.2,
+    "basic":             0.3,
+    "ingredient":        0.3,
+    "aftercare":         0.3,
+    "combo":             0.3,
+    "course":            0.3,
     "effect":            0.4,
     "design":            0.4,
     "script":            0.4,
+    "anatomy_q":         0.3,
+    "indication_q":      0.3,
+    "procedure_q":       0.3,
+    "equipment_q":       0.3,
 }
 
 # ===== 搜索调优 =====

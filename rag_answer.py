@@ -940,6 +940,8 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
     """
     client = _get_openai_client()
     if client is None:
+        from rag_logger import log_error
+        log_error("llm_generate_answer", "OpenAI client 不可用（未配置 API key 或初始化失败）")
         return ""
 
     length_hint = "简洁扼要，控制在300字以内" if mode == "brief" else "详细全面，可适当展开"

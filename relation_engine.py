@@ -16,12 +16,49 @@ from rag_runtime_config import RELATIONS_FILE, PRODUCT_ALIASES, PROCEDURE_ALIASE
 _relations: Optional[Dict] = None
 _lock = threading.Lock()
 
+# 预建倒排索引：加载时一次性构建，避免每次查询 O(n) 遍历
+_idx_indication: Optional[Dict[str, List[Dict]]] = None   # indication -> [items]
+_idx_anatomy: Optional[Dict[str, List[Dict]]] = None      # area -> [items]
+_idx_product_proc: Optional[Dict[str, List[Dict]]] = None  # product_id -> [rels]
+
 
 def invalidate_relations_cache() -> None:
     """清除关联数据缓存（relations.json 更新后调用）"""
-    global _relations
+    global _relations, _idx_indication, _idx_anatomy, _idx_product_proc
     with _lock:
         _relations = None
+        _idx_indication = None
+        _idx_anatomy = None
+        _idx_product_proc = None
+
+
+def _build_indices(data: Dict) -> None:
+    """从 relations 数据构建倒排索引，O(n) 一次性遍历"""
+    global _idx_indication, _idx_anatomy, _idx_product_proc
+
+    # indication -> items
+    idx_ind: Dict[str, List[Dict]] = {}
+    for item in data.get("indication_product", []):
+        ind = item.get("indication", "")
+        if ind:
+            idx_ind.setdefault(ind, []).append(item)
+    _idx_indication = idx_ind
+
+    # anatomy area -> items
+    idx_anat: Dict[str, List[Dict]] = {}
+    for item in data.get("anatomy_product", []):
+        area = item.get("area", "")
+        if area:
+            idx_anat.setdefault(area, []).append(item)
+    _idx_anatomy = idx_anat
+
+    # product_id -> product_procedure rels
+    idx_pp: Dict[str, List[Dict]] = {}
+    for rel in data.get("product_procedure", []):
+        pid = rel.get("product", "")
+        if pid:
+            idx_pp.setdefault(pid, []).append(rel)
+    _idx_product_proc = idx_pp
 
 
 def _load() -> Dict:
@@ -35,9 +72,14 @@ def _load() -> Dict:
             _relations = {}
             return _relations
         try:
-            _relations = json.loads(RELATIONS_FILE.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(RELATIONS_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            from rag_logger import log_error
+            log_error("relation_engine", f"relations.json 加载失败: {exc}")
             _relations = {}
+            return _relations
+        _build_indices(data)
+        _relations = data
     return _relations
 
 
@@ -66,21 +108,20 @@ def get_combo_info(product_id: str) -> List[str]:
     data = _load()
     lines = []
 
-    # 产品-项目兼容性
-    for rel in data.get("product_procedure", []):
-        if rel.get("product") == product_id:
-            proc = _procedure_label(rel.get("procedure", ""))
-            spacing = rel.get("spacing", "")
-            note = rel.get("note", "")
-            equip = _equipment_label(rel.get("equipment", "")) if rel.get("equipment") else ""
-            line = f"与{proc}联合"
-            if equip:
-                line += f"（使用{equip}）"
-            if spacing:
-                line += f"：{spacing}"
-            if note:
-                line += f"。{note}"
-            lines.append(line)
+    # 产品-项目兼容性（使用倒排索引）
+    for rel in (_idx_product_proc or {}).get(product_id, []):
+        proc = _procedure_label(rel.get("procedure", ""))
+        spacing = rel.get("spacing", "")
+        note = rel.get("note", "")
+        equip = _equipment_label(rel.get("equipment", "")) if rel.get("equipment") else ""
+        line = f"与{proc}联合"
+        if equip:
+            line += f"（使用{equip}）"
+        if spacing:
+            line += f"：{spacing}"
+        if note:
+            line += f"。{note}"
+        lines.append(line)
 
     # 联合禁忌
     for rule in data.get("combo_contraindications", []):
@@ -112,47 +153,47 @@ def get_drug_interactions(route: str = "") -> List[str]:
 
 def get_indication_recommendations(query: str) -> List[str]:
     """根据查询中的适应症关键词，返回推荐方案。"""
-    data = _load()
+    _load()
     lines = []
     q_lower = query.lower()
-    for item in data.get("indication_product", []):
-        indication = item.get("indication", "")
-        if indication and indication in q_lower:
-            products = [_product_label(p) for p in item.get("products", [])]
-            procedures = [_procedure_label(p) for p in item.get("procedures", [])]
-            note = item.get("note", "")
-            parts = []
-            if products:
-                parts.append("推荐产品：" + "、".join(products))
-            if procedures:
-                parts.append("推荐项目：" + "、".join(procedures))
-            if note:
-                parts.append(note)
-            if parts:
-                lines.append(f"【{indication}】" + "；".join(parts))
+    for indication, items in (_idx_indication or {}).items():
+        if indication in q_lower:
+            for item in items:
+                products = [_product_label(p) for p in item.get("products", [])]
+                procedures = [_procedure_label(p) for p in item.get("procedures", [])]
+                note = item.get("note", "")
+                parts = []
+                if products:
+                    parts.append("推荐产品：" + "、".join(products))
+                if procedures:
+                    parts.append("推荐项目：" + "、".join(procedures))
+                if note:
+                    parts.append(note)
+                if parts:
+                    lines.append(f"【{indication}】" + "；".join(parts))
     return lines
 
 
 def get_anatomy_recommendations(query: str) -> List[str]:
     """根据查询中的部位关键词，返回推荐方案。"""
-    data = _load()
+    _load()
     lines = []
     q_lower = query.lower()
-    for item in data.get("anatomy_product", []):
-        area = item.get("area", "")
-        if area and area in q_lower:
-            products = [_product_label(p) for p in item.get("products", [])]
-            procedures = [_procedure_label(p) for p in item.get("procedures", [])]
-            note = item.get("note", "")
-            parts = []
-            if products:
-                parts.append("推荐产品：" + "、".join(products))
-            if procedures:
-                parts.append("推荐项目：" + "、".join(procedures))
-            if note:
-                parts.append(note)
-            if parts:
-                lines.append(f"【{area}】" + "；".join(parts))
+    for area, items in (_idx_anatomy or {}).items():
+        if area in q_lower:
+            for item in items:
+                products = [_product_label(p) for p in item.get("products", [])]
+                procedures = [_procedure_label(p) for p in item.get("procedures", [])]
+                note = item.get("note", "")
+                parts = []
+                if products:
+                    parts.append("推荐产品：" + "、".join(products))
+                if procedures:
+                    parts.append("推荐项目：" + "、".join(procedures))
+                if note:
+                    parts.append(note)
+                if parts:
+                    lines.append(f"【{area}】" + "；".join(parts))
     return lines
 
 
@@ -182,14 +223,13 @@ def get_temporal_constraints(product_id: str) -> List[str]:
     lines = []
     seen = set()
 
-    # 产品-项目间隔
-    for rel in data.get("product_procedure", []):
-        if rel.get("product") == product_id:
-            proc = _procedure_label(rel.get("procedure", ""))
-            spacing = rel.get("spacing", "")
-            if spacing and spacing not in seen:
-                lines.append(f"与{proc}：{spacing}")
-                seen.add(spacing)
+    # 产品-项目间隔（使用倒排索引）
+    for rel in (_idx_product_proc or {}).get(product_id, []):
+        proc = _procedure_label(rel.get("procedure", ""))
+        spacing = rel.get("spacing", "")
+        if spacing and spacing not in seen:
+            lines.append(f"与{proc}：{spacing}")
+            seen.add(spacing)
 
     # 产品-产品间隔
     for rel in data.get("product_product", []):
@@ -238,10 +278,8 @@ def validate_combo_safety(product_id: str, question: str) -> List[str]:
             if len(mentioned_injections) >= 2 and "同一部位" in text:
                 warnings.append(f"⚠ {text}")
 
-    # 检查时序冲突：如果两个项目都有 spacing 要求
-    for rel in data.get("product_procedure", []):
-        if rel.get("product") != product_id:
-            continue
+    # 检查时序冲突：如果两个项目都有 spacing 要求（使用倒排索引）
+    for rel in (_idx_product_proc or {}).get(product_id, []):
         proc = rel.get("procedure", "")
         if proc in mentioned_procs:
             spacing = rel.get("spacing", "")

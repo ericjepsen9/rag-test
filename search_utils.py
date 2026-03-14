@@ -1,5 +1,6 @@
 import math
 import re
+import unicodedata
 from typing import Any, List, Dict, Tuple
 
 from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST
@@ -73,7 +74,10 @@ def expand_synonyms(query: str) -> str:
 def normalize_text(text: str) -> str:
     text = text or ""
     text = text.replace("\ufeff", "")
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # NFC 标准化：统一 CJK 字符和全角/半角变体，避免同义词匹配遗漏
+    text = unicodedata.normalize("NFC", text)
+    return text
 
 
 def normalize_lines(text: str) -> List[str]:
@@ -425,11 +429,11 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
                     continue
         enum_expanded.append(p)
 
-    # 逗号分隔：仅当两侧都 ≥4 字符时才拆分（避免 "术后1天，可以洗脸" 被误拆）
+    # 逗号分隔：仅当两侧都 ≥6 字符时才拆分（避免 "术后1天，可以洗脸" 被误拆）
     final = []
     for p in enum_expanded:
         comma_parts = re.split(r"[，,]", p)
-        if len(comma_parts) >= 2 and all(len(cp.strip()) >= 4 for cp in comma_parts):
+        if len(comma_parts) >= 2 and all(len(cp.strip()) >= 6 for cp in comma_parts):
             final.extend(comma_parts)
         else:
             final.append(p)
