@@ -5,6 +5,14 @@ from typing import Any, List, Dict, Tuple
 
 from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST
 
+# 预编译常用正则（避免每次函数调用时隐式编译）
+_RE_WHITESPACE = re.compile(r"\s+")
+_RE_TERM_SPLIT = re.compile(r"[\s,，;；、？?！!。]+")
+_RE_CJK_WORD = re.compile(r"^[\u4e00-\u9fff]+$")
+_RE_TIME_PATTERN = re.compile(
+    r"术后[第]?\d+[-~到]?\d*[天日周月]|术后\d+小时|术后\d+个月|术后当天"
+)
+
 # 中文医美术语同义词映射表：将口语/变体统一为规范术语，提升 BM25 召回率
 # key: 变体形式, value: 规范形式
 _SYNONYM_MAP = {
@@ -62,7 +70,7 @@ def expand_synonyms(query: str) -> str:
                 if syn not in q_lower:
                     extra.add(syn)
     # 时间模式扩展：术后第X天/周/月/小时/范围 → 补充恢复相关词
-    if re.search(r"术后[第]?\d+[-~到]?\d*[天日周月]|术后\d+小时|术后\d+个月|术后当天", q_lower):
+    if _RE_TIME_PATTERN.search(q_lower):
         for w in ("恢复", "消退", "正常"):
             if w not in q_lower:
                 extra.add(w)
@@ -84,7 +92,7 @@ def normalize_text(text: str) -> str:
 def normalize_lines(text: str) -> List[str]:
     out = []
     for ln in normalize_text(text).split("\n"):
-        s = re.sub(r"\s+", " ", ln).strip()
+        s = " ".join(ln.split())
         if not s:
             continue
         if set(s) <= {"=", "-", "_", " "}:
@@ -97,7 +105,7 @@ def uniq(items: List[str]) -> List[str]:
     seen = set()
     out = []
     for x in items:
-        key = re.sub(r"\s+", " ", (x or "").strip())
+        key = " ".join((x or "").split())
         if not key or key in seen:
             continue
         seen.add(key)
@@ -139,7 +147,7 @@ def section_block(text: str, titles: List[str], stops: List[str]) -> str:
 
 def _extract_terms(query: str) -> List[str]:
     """从查询中提取搜索词：先按空格/标点分割，再对中文长词做 bigram 切分"""
-    raw = [x for x in re.split(r"[\s,，;；、？?！!。]+", query.lower()) if x]
+    raw = [x for x in _RE_TERM_SPLIT.split(query.lower()) if x]
     terms = []
     seen = set()
     for w in raw:
@@ -147,7 +155,7 @@ def _extract_terms(query: str) -> List[str]:
             terms.append(w)
             seen.add(w)
         # 对纯中文且长度>=3的词做 bigram 切分，提高部分匹配能力
-        if len(w) >= 3 and re.fullmatch(r"[\u4e00-\u9fff]+", w):
+        if len(w) >= 3 and _RE_CJK_WORD.match(w):
             for i in range(len(w) - 1):
                 bg = w[i:i+2]
                 if bg not in seen:
