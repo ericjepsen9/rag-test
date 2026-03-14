@@ -16,6 +16,12 @@ from rag_runtime_config import RELATIONS_FILE, PRODUCT_ALIASES, PROCEDURE_ALIASE
 _relations: Optional[Dict] = None
 _lock = threading.Lock()
 
+# 预建倒排别名索引：alias_lower → proc_id，O(1) 查找代替 O(m×n) 遍历
+_PROC_ALIAS_INV: Dict[str, str] = {}
+for _pid, _aliases in PROCEDURE_ALIASES.items():
+    for _a in _aliases:
+        _PROC_ALIAS_INV[_a.lower()] = _pid
+
 # 预建倒排索引：加载时一次性构建，避免每次查询 O(n) 遍历
 _idx_indication: Optional[Dict[str, List[Dict]]] = None   # indication -> [items]
 _idx_anatomy: Optional[Dict[str, List[Dict]]] = None      # area -> [items]
@@ -220,17 +226,20 @@ def get_procedure_equipment(query: str) -> List[str]:
     _load()
     lines = []
     q_lower = query.lower()
-    # 检查查询中提到的项目（使用倒排索引）
-    for proc_id, aliases in PROCEDURE_ALIASES.items():
-        if any(a.lower() in q_lower for a in aliases):
-            for rel in (_idx_proc_equip or {}).get(proc_id, []):
-                equip = _equipment_label(rel.get("equipment", ""))
-                note = rel.get("note", "")
-                required = "必需" if rel.get("required") else "可选"
-                line = f"{_procedure_label(proc_id)} → {equip}（{required}）"
-                if note:
-                    line += f"：{note}"
-                lines.append(line)
+    # 使用倒排别名索引：O(aliases) 查找代替 O(procs × aliases) 遍历
+    matched_procs = set()
+    for alias, proc_id in _PROC_ALIAS_INV.items():
+        if alias in q_lower:
+            matched_procs.add(proc_id)
+    for proc_id in matched_procs:
+        for rel in (_idx_proc_equip or {}).get(proc_id, []):
+            equip = _equipment_label(rel.get("equipment", ""))
+            note = rel.get("note", "")
+            required = "必需" if rel.get("required") else "可选"
+            line = f"{_procedure_label(proc_id)} → {equip}（{required}）"
+            if note:
+                line += f"：{note}"
+            lines.append(line)
     return lines
 
 
@@ -275,11 +284,8 @@ def validate_combo_safety(product_id: str, question: str) -> List[str]:
     warnings = []
     q_lower = question.lower()
 
-    # 检测问题中提到的项目
-    mentioned_procs = []
-    for proc_id, aliases in PROCEDURE_ALIASES.items():
-        if any(a.lower() in q_lower for a in aliases):
-            mentioned_procs.append(proc_id)
+    # 检测问题中提到的项目（使用倒排别名索引）
+    mentioned_procs = list({pid for alias, pid in _PROC_ALIAS_INV.items() if alias in q_lower})
 
     if len(mentioned_procs) < 2:
         return []

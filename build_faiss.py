@@ -73,29 +73,35 @@ def normalize_text(text: str) -> str:
     return t.strip()
 
 
+# 预编译标题判断模式，避免每次调用 is_title_like 时隐式编译
+_TITLE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
+    r"^[一二三四五六七八九十]+、",
+    r"^\d+[）\.\)]",
+    r"^第[一二三四五六七八九十0-9]+",
+    r"^STEP\s*\d+",
+    r"^【.+】$",
+    r"^#+\s*",
+    r"^=+$",
+    r"^-{3,}$",
+]]
+
+
 def is_title_like(line: str) -> bool:
     s = line.strip()
     if not s:
         return False
-    patterns = [
-        r"^[一二三四五六七八九十]+、",
-        r"^\d+[）\.\)]",
-        r"^第[一二三四五六七八九十0-9]+",
-        r"^STEP\s*\d+",
-        r"^【.+】$",
-        r"^#+\s*",
-        r"^=+$",
-        r"^-{3,}$",
-    ]
-    return any(re.match(p, s, flags=re.IGNORECASE) for p in patterns)
+    return any(p.match(s) for p in _TITLE_PATTERNS)
+
+
+_RE_MAJOR_SECTION_A = re.compile(r"^[一二三四五六七八九十]+、")
+_RE_MAJOR_SECTION_B = re.compile(r"^\d{1,2}[）\)]\s*.{2,}")
 
 
 def _is_major_section(line: str) -> bool:
     """判断是否为主章节标题（一、二、...）或编号子节标题（1）2）...），
     这些标题处应强制分 chunk，避免跨章节合并"""
     s = line.strip()
-    return bool(re.match(r"^[一二三四五六七八九十]+、", s) or
-                re.match(r"^\d{1,2}[）\)]\s*.{2,}", s))
+    return bool(_RE_MAJOR_SECTION_A.match(s) or _RE_MAJOR_SECTION_B.match(s))
 
 
 def split_into_paragraphs(text: str) -> List[str]:
@@ -184,16 +190,20 @@ def merge_paragraphs_to_chunks(paragraphs: List[str], chunk_size: int, overlap: 
     dedup: List[str] = []
     seen = set()
     for c in chunks:
-        k = re.sub(r"\s+", " ", c.strip())
+        k = " ".join(c.split())
         if k and k not in seen:
             dedup.append(c.strip())
             seen.add(k)
     return dedup
 
 
+_RE_SEPARATOR = re.compile(r"^[=\-_\s]+$")
+_RE_STRIP_SEPARATORS = re.compile(r"^[=\-_]{3,}\s*$", re.MULTILINE)
+
+
 def _is_separator(para: str) -> bool:
     """判断是否为纯分隔线（====, ----, 空白符号行）"""
-    return bool(re.fullmatch(r"[=\-_\s]+", para.strip()))
+    return bool(_RE_SEPARATOR.match(para.strip()))
 
 
 MIN_CHUNK_CHARS = 30  # 过短的 chunk 对检索无信息量，过滤噪音
@@ -248,8 +258,8 @@ def _dedup_records(records: List[dict]) -> List[dict]:
     seen_hashes = set()
     deduped = []
     for r in records:
-        # 用去空白后的文本做去重键
-        key = re.sub(r"\s+", " ", r["text"].strip())
+        # 用去空白后的文本做去重键（" ".join(split()) 比 re.sub 快 3-5 倍）
+        key = " ".join(r["text"].split())
         if key in seen_hashes:
             continue
         seen_hashes.add(key)
@@ -269,7 +279,7 @@ def collect_product_records(product: str):
             continue
         text = read_text_auto(f)
         # 清除纯分隔线
-        text = re.sub(r"^[=\-_]{3,}\s*$", "", text, flags=re.MULTILINE).strip()
+        text = _RE_STRIP_SEPARATORS.sub("", text).strip()
         # alias 不切块，整体入库
         chunks = [text] if stype == "alias" else chunk_text(text)
         print(f"[OK] {product}/{fname}: {len(chunks)} chunks")
@@ -338,7 +348,7 @@ def collect_shared_records():
         if main_file.exists():
             # 单文件实体（anatomy、indications、complications、courses、scripts）
             text = read_text_auto(main_file)
-            text = re.sub(r"^[=\-_]{3,}\s*$", "", text, flags=re.MULTILINE).strip()
+            text = _RE_STRIP_SEPARATORS.sub("", text).strip()
             chunks = chunk_text(text)
             print(f"[OK] {subdir}/main.txt: {len(chunks)} chunks")
             for i, chunk in enumerate(chunks, 1):
@@ -361,7 +371,7 @@ def collect_shared_records():
                 if not f.exists():
                     continue
                 text = read_text_auto(f)
-                text = re.sub(r"^[=\-_]{3,}\s*$", "", text, flags=re.MULTILINE).strip()
+                text = _RE_STRIP_SEPARATORS.sub("", text).strip()
                 chunks = [text] if stype == "alias" else chunk_text(text)
                 label = f"{subdir}/{inst.name}/{fname}"
                 print(f"[OK] {label}: {len(chunks)} chunks")

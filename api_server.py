@@ -95,8 +95,19 @@ class RebuildRequest(BaseModel):
 
 # ===== 问答接口 =====
 
+# 健康检查缓存：避免频繁的文件系统探测（Kubernetes probes 等）
+_health_cache: Dict[str, Any] = {}
+_health_cache_ts: float = 0.0
+_HEALTH_CACHE_TTL = 15.0  # 秒
+
+
 @app.get("/health")
 def health():
+    global _health_cache, _health_cache_ts
+    now = time.monotonic()
+    if _health_cache and (now - _health_cache_ts) < _HEALTH_CACHE_TTL:
+        return _health_cache
+
     from rag_runtime_config import STORE_ROOT
     shared_names = set(SHARED_ENTITY_DIRS.values())
     products = []
@@ -114,12 +125,15 @@ def health():
     shared_store = STORE_ROOT / "_shared"
     shared_indexed = (shared_store / "index.faiss").exists() and (shared_store / "docs.jsonl").exists()
     all_indexed = all(p["index_exists"] and p["docs_exists"] for p in products) if products else False
-    return {
+    result = {
         "status": "ok" if all_indexed else "degraded",
         "knowledge_exists": KNOWLEDGE_DIR.exists(),
         "products": products,
         "shared_knowledge_indexed": shared_indexed,
     }
+    _health_cache = result
+    _health_cache_ts = now
+    return result
 
 
 @app.get("/chat")
@@ -254,6 +268,8 @@ def admin_rebuild(req: RebuildRequest):
         build_for_product(product)
         # 重建后清除缓存，下次请求会加载新索引
         invalidate_store_cache(product)
+        global _health_cache
+        _health_cache = {}  # 索引变更后清除健康检查缓存
         # 同时清除关联数据和媒体缓存
         from relation_engine import invalidate_relations_cache
         invalidate_relations_cache()
@@ -273,6 +289,8 @@ def admin_rebuild_shared():
     try:
         build_shared()
         invalidate_store_cache("_shared")
+        global _health_cache
+        _health_cache = {}  # 索引变更后清除健康检查缓存
         from relation_engine import invalidate_relations_cache
         invalidate_relations_cache()
         return {"ok": True, "store": "_shared"}

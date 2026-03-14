@@ -244,15 +244,18 @@ def _build_history_summary(history: List[Dict], max_turns: int = 3) -> str:
 
     提取最近 max_turns 轮用户问题，让 LLM 看到话题演变过程。
     例如: "菲罗奥成分是什么 → 安全吗 → 术后注意什么"
+    从末尾反向扫描，找到 max_turns 条后提前退出（避免扫描全部历史）。
     """
-    user_qs = []
-    for item in history:
+    recent: List[str] = []
+    for item in reversed(history):
         if item.get("role") == "user":
-            content = item.get("content", "").strip()
+            raw = item.get("content")
+            content = (str(raw) if raw is not None else "").strip()
             if content:
-                user_qs.append(content)
-    # 取最近 max_turns 轮
-    recent = user_qs[-max_turns:] if len(user_qs) > max_turns else user_qs
+                recent.append(content)
+                if len(recent) >= max_turns:
+                    break
+    recent.reverse()
     return " → ".join(recent)
 
 
