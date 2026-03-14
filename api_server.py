@@ -22,7 +22,7 @@ app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

@@ -801,3 +801,220 @@ class TestEvictCacheHelper:
         cache = {"a": 1, "b": 2}
         _evict_cache(cache, 2)
         assert len(cache) == 1  # 淘汰一个
+
+
+# ============================================================
+# answer_formatter 测试
+# ============================================================
+
+class TestFormatStructuredAnswer:
+    def test_basic_format(self):
+        from answer_formatter import format_structured_answer
+        result = format_structured_answer("basic", ["产品A信息"])
+        assert "基础资料" in result
+        assert "- 产品A信息" in result
+        assert "注意事项" in result
+
+    def test_unknown_route_fallback(self):
+        from answer_formatter import format_structured_answer
+        result = format_structured_answer("unknown_route", ["内容"])
+        assert "回答" in result  # 默认标题
+
+    def test_empty_body(self):
+        from answer_formatter import format_structured_answer
+        result = format_structured_answer("basic", [])
+        assert "基础资料" in result
+
+    def test_risk_note_auto_append(self):
+        """安全相关路由应自动追加医生评估提醒"""
+        from answer_formatter import format_structured_answer
+        for route in ("contraindication", "complication", "repair", "operation"):
+            result = format_structured_answer(route, ["内容"], add_risk_note=False)
+            from rag_runtime_config import RISK_NOTE
+            assert RISK_NOTE in result, f"{route} 应自动追加风险提醒"
+
+    def test_evidence_dedup(self):
+        from answer_formatter import format_structured_answer
+        evidence = [
+            {"meta": {"source_file": "a.txt", "chunk_id": "1", "source_type": "main"}, "text": "t1"},
+            {"meta": {"source_file": "a.txt", "chunk_id": "1", "source_type": "main"}, "text": "t1dup"},
+            {"meta": {"source_file": "b.txt", "chunk_id": "2", "source_type": "faq"}, "text": "t2"},
+        ]
+        result = format_structured_answer("basic", ["x"], evidence=evidence)
+        assert result.count("a.txt") == 1  # 去重后只出现一次
+
+
+# ============================================================
+# query_rewrite 辅助函数测试
+# ============================================================
+
+class TestBuildHistorySummary:
+    def test_normal(self):
+        from query_rewrite import _build_history_summary
+        history = [
+            {"role": "user", "content": "问题1"},
+            {"role": "assistant", "content": "回答1"},
+            {"role": "user", "content": "问题2"},
+        ]
+        result = _build_history_summary(history)
+        assert "问题1" in result
+        assert "→" in result
+
+    def test_empty_history(self):
+        from query_rewrite import _build_history_summary
+        assert _build_history_summary([]) == ""
+
+    def test_max_turns(self):
+        from query_rewrite import _build_history_summary
+        history = [{"role": "user", "content": f"Q{i}"} for i in range(10)]
+        result = _build_history_summary(history, max_turns=2)
+        assert "Q8" in result
+        assert "Q9" in result
+        assert "Q0" not in result
+
+
+class TestBuildHistoryPairs:
+    def test_normal_pairs(self):
+        from query_rewrite import _build_history_pairs
+        history = [
+            {"role": "user", "content": "问题1"},
+            {"role": "assistant", "content": "回答1"},
+            {"role": "user", "content": "问题2"},
+            {"role": "assistant", "content": "回答2"},
+        ]
+        pairs = _build_history_pairs(history)
+        assert len(pairs) == 2
+        assert pairs[0]["user"] == "问题1"
+        assert pairs[1]["assistant"] == "回答2"
+
+    def test_truncation(self):
+        """助手回复应截断到 200 字"""
+        from query_rewrite import _build_history_pairs
+        long_reply = "x" * 500
+        history = [
+            {"role": "user", "content": "Q"},
+            {"role": "assistant", "content": long_reply},
+        ]
+        pairs = _build_history_pairs(history)
+        assert len(pairs[0]["assistant"]) == 200
+
+    def test_orphan_user_msg(self):
+        """末尾无配对助手回复的用户消息不应产生 pair"""
+        from query_rewrite import _build_history_pairs
+        history = [
+            {"role": "user", "content": "Q1"},
+            {"role": "assistant", "content": "A1"},
+            {"role": "user", "content": "Q2"},  # 无配对
+        ]
+        pairs = _build_history_pairs(history)
+        assert len(pairs) == 1
+
+    def test_empty(self):
+        from query_rewrite import _build_history_pairs
+        assert _build_history_pairs([]) == []
+
+
+class TestDetectRouteForExpansion:
+    def test_multi_route(self):
+        from query_rewrite import _detect_route_for_expansion
+        # "术后红肿" 应同时命中 risk 和 complication
+        routes = _detect_route_for_expansion("术后红肿怎么办")
+        assert len(routes) >= 1
+
+    def test_no_route(self):
+        from query_rewrite import _detect_route_for_expansion
+        routes = _detect_route_for_expansion("你好")
+        assert routes == []
+
+
+# ============================================================
+# build_faiss 辅助函数测试
+# ============================================================
+
+class TestIsTitleLike:
+    def test_chinese_numbered(self):
+        from build_faiss import is_title_like
+        assert is_title_like("一、产品概述") is True
+        assert is_title_like("三、术后护理") is True
+
+    def test_arabic_numbered(self):
+        from build_faiss import is_title_like
+        assert is_title_like("1）成分") is True
+        assert is_title_like("2.步骤") is True
+
+    def test_step(self):
+        from build_faiss import is_title_like
+        assert is_title_like("STEP 1") is True
+        assert is_title_like("step3") is True
+
+    def test_bracket(self):
+        from build_faiss import is_title_like
+        assert is_title_like("【防伪步骤】") is True
+
+    def test_not_title(self):
+        from build_faiss import is_title_like
+        assert is_title_like("普通文本内容") is False
+        assert is_title_like("") is False
+
+
+class TestIsMajorSection:
+    def test_chinese_section(self):
+        from build_faiss import _is_major_section
+        assert _is_major_section("一、产品概述") is True
+
+    def test_numbered_section(self):
+        from build_faiss import _is_major_section
+        assert _is_major_section("1）核心成分") is True
+        # 编号后内容太短（<2字）不算主章节
+        assert _is_major_section("1）a") is False
+
+    def test_not_major(self):
+        from build_faiss import _is_major_section
+        assert _is_major_section("STEP 1") is False
+        assert _is_major_section("普通文本") is False
+
+
+class TestDetectSpecialIntent:
+    def test_price(self):
+        from rag_answer import _detect_special_intent
+        assert _detect_special_intent("菲罗奥多少钱一支") == "price"
+        assert _detect_special_intent("费用大概多少") == "price"
+
+    def test_location(self):
+        from rag_answer import _detect_special_intent
+        assert _detect_special_intent("北京哪里可以做") == "location"
+
+    def test_comparison(self):
+        from rag_answer import _detect_special_intent
+        assert _detect_special_intent("和其他产品有什么区别") == "comparison"
+
+    def test_internal_compare_excluded(self):
+        """成分内部对比不应触发 comparison 意图"""
+        from rag_answer import _detect_special_intent
+        assert _detect_special_intent("PCL和透明质酸有什么区别") != "comparison"
+
+    def test_no_intent(self):
+        from rag_answer import _detect_special_intent
+        assert _detect_special_intent("术后怎么护理") == ""
+
+
+class TestThreadLocalRouteProduct:
+    """thread-local 存储不应跨线程泄漏"""
+    def test_thread_isolation(self):
+        import threading
+        from rag_answer import get_last_route_product, _thread_local
+        results = {}
+
+        def worker(name, route, product):
+            _thread_local.route = route
+            _thread_local.product = product
+            import time; time.sleep(0.01)  # 模拟并发
+            results[name] = get_last_route_product()
+
+        t1 = threading.Thread(target=worker, args=("t1", "risk", "prodA"))
+        t2 = threading.Thread(target=worker, args=("t2", "aftercare", "prodB"))
+        t1.start(); t2.start()
+        t1.join(); t2.join()
+
+        assert results["t1"] == ("risk", "prodA")
+        assert results["t2"] == ("aftercare", "prodB")

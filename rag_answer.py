@@ -1087,23 +1087,22 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
     return result[:max_lines]
 
 
-# 最近一次 answer_one 的 route/product（供 API 层复用，避免重复检测）
-_last_route = ""
-_last_product = ""
+# 最近一次 answer_one 的 route/product（线程本地存储，避免并发请求互相覆盖）
+_thread_local = threading.local()
 
 
 def get_last_route_product():
-    """返回最近一次 answer_one 检测到的 (route, product_id)"""
-    return _last_route, _last_product
+    """返回当前线程最近一次 answer_one 检测到的 (route, product_id)"""
+    return (getattr(_thread_local, "route", ""),
+            getattr(_thread_local, "product", ""))
 
 
 def answer_one(question: str, mode: str, rewrite: dict = None,
                route_override: str = "") -> str:
-    global _last_route, _last_product
     product = detect_product(question)
     route = route_override or detect_route(question)
-    _last_route = route
-    _last_product = product
+    _thread_local.route = route
+    _thread_local.product = product
     if rewrite is None:
         rewrite = rewrite_query(question)
 
