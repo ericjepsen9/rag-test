@@ -19,6 +19,9 @@ _rebuild_locks: Dict[str, threading.Lock] = {}
 _rebuild_locks_guard = threading.Lock()
 from rag_runtime_config import KNOWLEDGE_DIR, SHARED_ENTITY_DIRS
 
+# 预计算共享目录名集合，避免 health/admin_products 每次调用重建 set
+_SHARED_DIR_NAMES = frozenset(SHARED_ENTITY_DIRS.values())
+
 BASE_DIR = Path(__file__).resolve().parent
 ADMIN_PAGE = BASE_DIR / "admin_page.html"
 CHAT_PAGE = BASE_DIR / "web" / "chat.html"
@@ -99,17 +102,19 @@ class RebuildRequest(BaseModel):
 _health_cache: Dict[str, Any] = {}
 _health_cache_ts: float = 0.0
 _HEALTH_CACHE_TTL = 15.0  # 秒
+_health_lock = threading.Lock()
 
 
 @app.get("/health")
 def health():
     global _health_cache, _health_cache_ts
     now = time.monotonic()
+    # 快速路径：无锁读取（GIL 保护 dict 引用读取安全性）
     if _health_cache and (now - _health_cache_ts) < _HEALTH_CACHE_TTL:
         return _health_cache
 
     from rag_runtime_config import STORE_ROOT
-    shared_names = set(SHARED_ENTITY_DIRS.values())
+    shared_names = _SHARED_DIR_NAMES
     products = []
     if KNOWLEDGE_DIR.exists():
         for p in sorted(KNOWLEDGE_DIR.iterdir()):
@@ -131,8 +136,9 @@ def health():
         "products": products,
         "shared_knowledge_indexed": shared_indexed,
     }
-    _health_cache = result
-    _health_cache_ts = now
+    with _health_lock:
+        _health_cache = result
+        _health_cache_ts = now
     return result
 
 
@@ -234,7 +240,7 @@ def admin_page():
 
 @app.get("/admin/products")
 def admin_products():
-    shared_names = set(SHARED_ENTITY_DIRS.values())
+    shared_names = _SHARED_DIR_NAMES
     products = []
     if KNOWLEDGE_DIR.exists():
         for p in sorted(KNOWLEDGE_DIR.iterdir()):
@@ -249,6 +255,7 @@ def admin_products():
 
 @app.post("/admin/rebuild")
 def admin_rebuild(req: RebuildRequest):
+    global _health_cache
     from build_faiss import build_for_product
     product = req.product.strip()
     # 安全校验：产品名不得包含路径分隔符或特殊字符（防止路径遍历）
@@ -268,8 +275,8 @@ def admin_rebuild(req: RebuildRequest):
         build_for_product(product)
         # 重建后清除缓存，下次请求会加载新索引
         invalidate_store_cache(product)
-        global _health_cache
-        _health_cache = {}  # 索引变更后清除健康检查缓存
+        with _health_lock:
+            _health_cache = {}  # 索引变更后清除健康检查缓存
         # 同时清除关联数据和媒体缓存
         from relation_engine import invalidate_relations_cache
         invalidate_relations_cache()
@@ -285,12 +292,13 @@ def admin_rebuild(req: RebuildRequest):
 @app.post("/admin/rebuild_shared")
 def admin_rebuild_shared():
     """重建共享知识索引（procedures、equipment、anatomy 等）"""
+    global _health_cache
     from build_faiss import build_shared
     try:
         build_shared()
         invalidate_store_cache("_shared")
-        global _health_cache
-        _health_cache = {}  # 索引变更后清除健康检查缓存
+        with _health_lock:
+            _health_cache = {}  # 索引变更后清除健康检查缓存
         from relation_engine import invalidate_relations_cache
         invalidate_relations_cache()
         return {"ok": True, "store": "_shared"}

@@ -30,7 +30,8 @@ from rag_runtime_config import (
 )
 from search_utils import (
     normalize_lines, uniq, is_faq_line, section_block,
-    keyword_search, merge_hybrid, detect_terms
+    keyword_search, merge_hybrid, detect_terms,
+    _SEPARATOR_CHARS,
 )
 from query_rewrite import rewrite_query
 from answer_formatter import format_structured_answer
@@ -275,12 +276,12 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
         scores, ids = index.search(qv, min(top_k, index.ntotal))
     hits = []
     score_arr = scores[0]
+    n_docs = len(docs)
+    n_scores = len(score_arr)
     for i, idx in enumerate(ids[0]):
-        if idx < 0 or idx >= len(docs) or i >= len(score_arr):
+        if idx < 0 or idx >= n_docs or i >= n_scores:
             continue
-        d = dict(docs[idx])
-        d["score"] = float(score_arr[i])
-        hits.append(d)
+        hits.append({**docs[idx], "score": float(score_arr[i])})
     return hits
 
 
@@ -999,18 +1000,29 @@ def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
     return "\n\n".join(parts)
 
 
+_openai_client = None
+_openai_client_checked = False
+
+
 def _get_openai_client():
-    """获取 OpenAI client，失败返回 None"""
+    """获取 OpenAI client（单例缓存），失败返回 None"""
+    global _openai_client, _openai_client_checked
+    if _openai_client_checked:
+        return _openai_client
     if not USE_OPENAI:
+        _openai_client_checked = True
         return None
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
+        _openai_client_checked = True
         return None
     try:
         from openai import OpenAI
-        return OpenAI(api_key=key)
+        _openai_client = OpenAI(api_key=key)
     except Exception:
-        return None
+        _openai_client = None
+    _openai_client_checked = True
+    return _openai_client
 
 
 def llm_generate_answer(question: str, context: str, route: str, mode: str,
@@ -1157,7 +1169,7 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
             if not ln or len(ln) <= 6:
                 continue
             # 跳过纯标题行和分隔线
-            if _RE_CN_SECTION_TITLE.match(ln) or set(ln) <= {"=", "-", "_", " "}:
+            if _RE_CN_SECTION_TITLE.match(ln) or not (set(ln) - _SEPARATOR_CHARS):
                 continue
             # 早期去重，避免大量重复行进入排序
             ln_key = " ".join(ln.split())

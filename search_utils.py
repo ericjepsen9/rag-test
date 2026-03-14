@@ -1,6 +1,7 @@
 import math
 import re
 import unicodedata
+from functools import lru_cache
 from typing import Any, List, Dict, Tuple
 
 from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST
@@ -12,6 +13,21 @@ _RE_CJK_WORD = re.compile(r"^[\u4e00-\u9fff]+$")
 _RE_TIME_PATTERN = re.compile(
     r"术后[第]?\d+[-~到]?\d*[天日周月]|术后\d+小时|术后\d+个月|术后当天"
 )
+# 分隔线字符集：用于快速判断一行是否为纯分隔线（避免每次 set(ln) 构造临时集合）
+_SEPARATOR_CHARS = frozenset("=-_ ")
+
+
+def _sigmoid_norm(raw_score: float) -> float:
+    """BM25 分数归一化：sigmoid(score/scale)，钳位防 exp 溢出。
+    将 raw_score 量化到 2 位小数以提高 LRU 缓存命中率。"""
+    z = round(raw_score / SIGMOID_SCALE, 2)
+    return _sigmoid_cached(max(-20.0, min(20.0, z)))
+
+
+@lru_cache(maxsize=512)
+def _sigmoid_cached(z: float) -> float:
+    """LRU 缓存的 sigmoid：典型 BM25 分数分布在有限区间，命中率高。"""
+    return 1.0 / (1.0 + math.exp(-z))
 
 # 中文医美术语同义词映射表：将口语/变体统一为规范术语，提升 BM25 召回率
 # key: 变体形式, value: 规范形式
@@ -95,7 +111,7 @@ def normalize_lines(text: str) -> List[str]:
         s = " ".join(ln.split())
         if not s:
             continue
-        if set(s) <= {"=", "-", "_", " "}:
+        if not (set(s) - _SEPARATOR_CHARS):
             continue
         out.append(s)
     return out
@@ -264,19 +280,17 @@ def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dic
         cached = {}
         _cache_put(_df_cache, corpus_key, cached)
 
-    # 找出未缓存的 terms
+    # 找出未缓存的 terms（用 set 加速后续内循环 membership 测试）
     uncached = [t for t in terms if t not in cached]
     if uncached:
         # 一次遍历文档列表，同时统计所有未缓存 term 的 df
         counts = {t: 0 for t in uncached}
-        # 短列表直接遍历；长列表先收窄为仍有 remaining term 的子集
         for doc_text in texts:
             for t in uncached:
                 if t in doc_text:
                     counts[t] += 1
         cached.update(counts)
-    # 返回时只构建请求的 terms 子集（避免拷贝整个缓存）
-
+    # 直接从缓存取值，避免构建中间 dict（大多数 terms 已缓存）
     return {t: cached.get(t, 0) for t in terms}
 
 
@@ -311,8 +325,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
     # 归一化到 [0, 1] 区间：sigmoid 函数使不同 query 间的分数可比
     # sigmoid(x/scale) 中 scale=5 使典型 BM25 分数（0~15）映射到 (0.5, 0.95) 区间
     for x in scored:
-        z = max(-20.0, min(20.0, x["keyword_score"] / SIGMOID_SCALE))  # 钳位防 exp 溢出
-        x["keyword_score"] = 1.0 / (1.0 + math.exp(-z))
+        x["keyword_score"] = _sigmoid_norm(x["keyword_score"])
 
     return scored[:top_k]
 
