@@ -1,6 +1,28 @@
 from typing import List, Dict
 from rag_runtime_config import REFERENCE_NOTE, RISK_NOTE, MAX_EVIDENCE_CHUNKS
 
+_TITLE_MAP = {
+    "basic": "基础资料",
+    "operation": "操作说明",
+    "aftercare": "术后护理",
+    "risk": "风险/异常反应",
+    "combo": "联合方案",
+    "anti_fake": "防伪鉴别",
+    "contraindication": "禁忌人群",
+    "ingredient": "核心成分与作用",
+    "effect": "效果与维持时间",
+    "pre_care": "术前准备",
+    "design": "方案设计与面部评估",
+    "repair": "修复与补救方案",
+    "complication": "术后并发症处理",
+    "course": "疗程规划",
+    "anatomy_q": "部位治疗方案",
+    "indication_q": "适应症推荐",
+    "procedure_q": "项目介绍",
+    "equipment_q": "设备信息",
+    "script": "客户沟通话术",
+}
+
 
 def format_structured_answer(
     route: str,
@@ -8,28 +30,7 @@ def format_structured_answer(
     evidence: List[Dict] = None,
     add_risk_note: bool = False,
 ) -> str:
-    title_map = {
-        "basic": "基础资料",
-        "operation": "操作说明",
-        "aftercare": "术后护理",
-        "risk": "风险/异常反应",
-        "combo": "联合方案",
-        "anti_fake": "防伪鉴别",
-        "contraindication": "禁忌人群",
-        "ingredient": "核心成分与作用",
-        "effect": "效果与维持时间",
-        "pre_care": "术前准备",
-        "design": "方案设计与面部评估",
-        "repair": "修复与补救方案",
-        "complication": "术后并发症处理",
-        "course": "疗程规划",
-        "anatomy_q": "部位治疗方案",
-        "indication_q": "适应症推荐",
-        "procedure_q": "项目介绍",
-        "equipment_q": "设备信息",
-        "script": "客户沟通话术",
-    }
-    title = title_map.get(route, "回答")
+    title = _TITLE_MAP.get(route, "回答")
     out = [f"{title}（资料提取）：", "结论："]
     for ln in body_lines:
         out.append(f"- {ln}")
@@ -38,9 +39,10 @@ def format_structured_answer(
         out.append("依据：")
         seen_sources = set()
         for ev in evidence[:MAX_EVIDENCE_CHUNKS]:
-            source_file = ev.get("meta", {}).get("source_file", "unknown")
-            chunk = ev.get("meta", {}).get("chunk_id", "?")
-            stype = ev.get("meta", {}).get("source_type", "unknown")
+            meta = ev.get("meta") if isinstance(ev.get("meta"), dict) else {}
+            source_file = meta.get("source_file", "unknown")
+            chunk = meta.get("chunk_id", "?")
+            stype = meta.get("source_type", "unknown")
             # 按 source_file + chunk_id 去重，避免相同来源重复展示
             key = f"{source_file}#{chunk}"
             if key in seen_sources:

@@ -90,14 +90,22 @@ def log_qa(
 
 
 def log_error(stage: str, error: str, *, meta: Optional[Dict[str, Any]] = None) -> None:
-    _append_jsonl(
-        ERROR_LOG,
-        {
-            "stage": stage,
-            "error": error,
-            "meta": meta or {},
-        },
-    )
+    try:
+        _append_jsonl(
+            ERROR_LOG,
+            {
+                "stage": stage,
+                "error": error,
+                "meta": meta or {},
+            },
+        )
+    except Exception:
+        # 日志写入本身失败时，输出到 stderr 避免错误完全丢失
+        import sys
+        try:
+            print(f"[LOG_ERROR_FAIL] stage={stage} error={error}", file=sys.stderr)
+        except Exception:
+            pass
 
 
 def read_recent(path: Path, limit: int = 20) -> list[Dict[str, Any]]:
@@ -112,7 +120,7 @@ def read_recent(path: Path, limit: int = 20) -> list[Dict[str, Any]]:
         # 小文件直接全量读取
         if size <= 64 * 1024:
             buf: deque[Dict[str, Any]] = deque(maxlen=cap)
-            with path.open("r", encoding="utf-8") as f:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not line:

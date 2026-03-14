@@ -1077,3 +1077,40 @@ class TestMediaRouteTypeValidation:
         # find_media 内部已有类型检查，此处验证不会崩溃
         result = find_media("测试问题", product_id="nonexistent_product", route="effect")
         assert isinstance(result, list)
+
+
+class TestTitleMapModuleLevel:
+    """title_map 应为模块级常量"""
+    def test_title_map_exists(self):
+        from answer_formatter import _TITLE_MAP
+        assert isinstance(_TITLE_MAP, dict)
+        assert "basic" in _TITLE_MAP
+        assert "aftercare" in _TITLE_MAP
+
+    def test_format_uses_title_map(self):
+        from answer_formatter import format_structured_answer
+        result = format_structured_answer("risk", ["测试内容"])
+        assert "风险/异常反应" in result
+
+
+class TestEvidenceMetaSafety:
+    """evidence meta 字段非 dict 时不应崩溃"""
+    def test_none_meta(self):
+        from answer_formatter import format_structured_answer
+        evidence = [{"meta": None}]
+        result = format_structured_answer("basic", ["测试"], evidence=evidence)
+        assert "unknown" in result
+
+    def test_missing_meta(self):
+        from answer_formatter import format_structured_answer
+        evidence = [{}]
+        result = format_structured_answer("basic", ["测试"], evidence=evidence)
+        assert "unknown" in result
+
+
+class TestLogErrorStderrFallback:
+    """log_error 写入失败时应不崩溃"""
+    def test_log_error_no_crash(self):
+        from rag_logger import log_error
+        # 正常调用不应崩溃（即使 logs 目录不存在也有静默处理）
+        log_error("test_stage", "test_error", meta={"test": True})
