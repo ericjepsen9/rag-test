@@ -740,3 +740,64 @@ class TestHistoryScanSlice:
         ctx = _extract_history_context(history)
         # 应该能从末尾找到产品
         assert ctx["last_user_q"] != ""
+
+
+# ============================================================
+# 新增：FAQ 解析安全性、缓存优化、LLM 响应校验
+# ============================================================
+
+class TestFaqPartition:
+    """FAQ 解析使用 partition() 而非 split()[1]，对畸形数据不崩溃"""
+    def test_normal_faq(self):
+        from rag_answer import _extract_faq_from_hits
+        hits = [{"text": "【Q】术后能洗脸吗【A】术后当天不建议洗脸",
+                 "meta": {"source_type": "faq"}, "score": 0.9}]
+        result = _extract_faq_from_hits(hits, "术后可以洗脸吗")
+        assert len(result) >= 1
+        assert "洗脸" in result[0]
+
+    def test_missing_answer_marker(self):
+        """text 有 Q 但缺少 A 分隔符时不应崩溃"""
+        from rag_answer import _extract_faq_from_hits
+        hits = [{"text": "【Q】术后能洗脸吗 这里没有A标记",
+                 "meta": {"source_type": "faq"}, "score": 0.9}]
+        # 不应抛出 IndexError
+        result = _extract_faq_from_hits(hits, "术后可以洗脸吗")
+        assert isinstance(result, list)
+
+
+class TestCachePutUpdate:
+    """_cache_put 已有 key 时直接覆盖不淘汰"""
+    def test_update_no_eviction(self):
+        from search_utils import _cache_put
+        import search_utils
+        orig = search_utils._CACHE_MAX_SIZE
+        try:
+            search_utils._CACHE_MAX_SIZE = 3
+            cache = {}
+            _cache_put(cache, "a", 1)
+            _cache_put(cache, "b", 2)
+            _cache_put(cache, "c", 3)
+            # 更新已有 key 不应触发淘汰
+            _cache_put(cache, "b", 20)
+            assert len(cache) == 3
+            assert cache["a"] == 1  # a 不应被淘汰
+            assert cache["b"] == 20
+            assert cache["c"] == 3
+        finally:
+            search_utils._CACHE_MAX_SIZE = orig
+
+
+class TestEvictCacheHelper:
+    """_evict_cache 边界情况"""
+    def test_empty_cache(self):
+        from rag_answer import _evict_cache
+        cache = {}
+        _evict_cache(cache, 5)  # 不应报错
+        assert len(cache) == 0
+
+    def test_exact_limit(self):
+        from rag_answer import _evict_cache
+        cache = {"a": 1, "b": 2}
+        _evict_cache(cache, 2)
+        assert len(cache) == 1  # 淘汰一个

@@ -21,7 +21,13 @@ def _load_product_media(product_id: str) -> List[Dict]:
         result = [it for it in items if isinstance(it, dict) and "title" in it]
         _media_cache[product_id] = (mtime, result)
         return result
-    except Exception:
+    except Exception as e:
+        try:
+            from rag_logger import log_error
+            log_error("media_router", f"media.json 加载失败: {e}",
+                      meta={"product_id": product_id, "path": str(media_file)})
+        except Exception:
+            pass
         return []
 
 

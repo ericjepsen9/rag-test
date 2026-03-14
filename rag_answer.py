@@ -844,7 +844,8 @@ def _extract_faq_from_hits(hits: List[Dict], question: str) -> List[str]:
         overlap = len(q_bigrams & faq_bigrams)
         ratio = overlap / max(len(q_bigrams), 1)
         if overlap >= min_overlap and ratio >= 0.3:
-            a_part = text.split("【A】")[1].strip()
+            _, _, a_part = text.partition("【A】")
+            a_part = a_part.strip()
             if a_part:
                 faq_candidates.append((ratio, a_part))
     faq_candidates.sort(key=lambda x: x[0], reverse=True)
@@ -881,7 +882,8 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
         return ""
 
     q_part = text.split("【A】")[0].replace("【Q】", "")
-    a_part = text.split("【A】")[1].strip()
+    _, _, a_part = text.partition("【A】")
+    a_part = a_part.strip()
     if not a_part:
         return ""
 
@@ -1022,8 +1024,13 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
             temperature=ROUTE_LLM_TEMPERATURE.get(route, LLM_TEMPERATURE),
             max_tokens=LLM_MAX_TOKENS_BRIEF if mode == "brief" else LLM_MAX_TOKENS_FULL,
         )
+        if not resp.choices:
+            return ""
         return (resp.choices[0].message.content or "").strip()
-    except Exception:
+    except Exception as e:
+        from rag_logger import log_error
+        log_error("llm_generate_answer", f"LLM 调用失败: {e}",
+                  meta={"route": route, "question": question[:100]})
         return ""
 
 
@@ -1043,8 +1050,13 @@ def openai_rewrite_answer(text: str, route: str) -> str:
             temperature=ROUTE_LLM_TEMPERATURE.get(route, LLM_TEMPERATURE),
             max_tokens=LLM_MAX_TOKENS_BRIEF,
         )
+        if not resp.choices:
+            return text
         return (resp.choices[0].message.content or "").strip() or text
-    except Exception:
+    except Exception as e:
+        from rag_logger import log_error
+        log_error("openai_rewrite_answer", f"LLM 润色失败: {e}",
+                  meta={"route": route})
         return text
 
 
@@ -1135,7 +1147,13 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             futures["v_shared"] = pool.submit(_do_vector, "_shared")
             futures["k_shared"] = pool.submit(_do_keyword, "_shared")
         for key, fut in futures.items():
-            result = fut.result()
+            try:
+                result = fut.result(timeout=30)
+            except Exception as e:
+                from rag_logger import log_error
+                log_error("answer_one", f"搜索超时/异常: {key}: {e}",
+                          meta={"product": product, "route": route})
+                result = []
             if key.startswith("v_"):
                 vector_hits.extend(result)
             else:
