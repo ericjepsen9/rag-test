@@ -447,6 +447,46 @@ def admin_rebuild_shared():
         raise HTTPException(status_code=500, detail=repr(e))
 
 
+# ===== 词库管理接口 =====
+
+@app.get("/admin/synonyms/all")
+def admin_synonyms_all():
+    """返回完整词库：静态同义词 + LLM 学习到的同义词"""
+    from synonym_store import get_all_synonyms_combined
+    return get_all_synonyms_combined()
+
+
+@app.get("/admin/synonyms/learned")
+def admin_synonyms_learned():
+    """返回所有 LLM 学习到的同义词映射"""
+    from synonym_store import get_all_learned
+    return {"items": get_all_learned()}
+
+
+@app.post("/admin/synonyms/learned/approve")
+def admin_synonyms_approve(original: str):
+    """审核通过一条学习到的同义词"""
+    from synonym_store import approve_learned
+    if not original or not original.strip():
+        raise HTTPException(status_code=400, detail="original 不能为空")
+    ok = approve_learned(original.strip())
+    if not ok:
+        raise HTTPException(status_code=404, detail="未找到该同义词")
+    return {"ok": True, "original": original.strip()}
+
+
+@app.delete("/admin/synonyms/learned")
+def admin_synonyms_delete(original: str):
+    """删除一条学习到的同义词"""
+    from synonym_store import delete_learned
+    if not original or not original.strip():
+        raise HTTPException(status_code=400, detail="original 不能为空")
+    ok = delete_learned(original.strip())
+    if not ok:
+        raise HTTPException(status_code=404, detail="未找到该同义词")
+    return {"ok": True, "deleted": original.strip()}
+
+
 @app.get("/admin/logs/qa")
 def admin_logs_qa(limit: int = 20):
     return {"items": get_recent_qa(limit=min(max(1, limit), 100))}

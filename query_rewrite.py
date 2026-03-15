@@ -558,6 +558,12 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
                                     is_chitchat, is_offtopic):
         llm_rewritten = _llm_rewrite_query(q)
         if llm_rewritten:
+            # 自动沉淀：将成功的 LLM 改写持久化到学习词库
+            try:
+                from synonym_store import save_learned
+                save_learned(q, llm_rewritten)
+            except Exception:
+                pass  # 沉淀失败不影响主流程
             # LLM 改写成功：用改写结果替换检索查询，同时保留原始查询做混合检索
             search_q = llm_rewritten
             # 重新检测改写后的产品/项目/路由（可能映射到了已知实体）

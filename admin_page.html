@@ -5,22 +5,91 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RAG 后台管理页</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 24px; background:#f7f7f9; color:#222; }
-    .card { background:#fff; border-radius:12px; padding:16px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,.06); }
-    button { padding:8px 14px; border:none; border-radius:8px; cursor:pointer; }
-    input { padding:8px; width:240px; }
-    pre { white-space:pre-wrap; word-break:break-word; background:#fafafa; padding:12px; border-radius:8px; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+           margin: 0; padding: 16px 24px; background:#f5f6fa; color:#222; }
+    h1 { font-size: 22px; margin-bottom: 20px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    .card { background:#fff; border-radius:12px; padding:16px 20px; margin-bottom:16px;
+            box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    button { padding:7px 14px; border:none; border-radius:6px; cursor:pointer;
+             background:#4f6ef7; color:#fff; font-size:13px; transition: background .15s; }
+    button:hover { background:#3b5de7; }
+    button.secondary { background:#e8e8ec; color:#333; }
+    button.secondary:hover { background:#d4d4da; }
+    button.danger { background:#e54d42; }
+    button.danger:hover { background:#c93a30; }
+    button.success { background:#2db84d; }
+    button.success:hover { background:#24a043; }
+    input { padding:7px 10px; border:1px solid #d0d0d6; border-radius:6px; width:220px; font-size:13px; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#fafafa;
+          padding:12px; border-radius:8px; max-height:400px; overflow-y:auto;
+          font-size:12px; line-height:1.5; }
+    .tabs { display:flex; gap:8px; margin-bottom:12px; }
+    .tabs button { font-size:13px; }
+    .tabs button.active { background:#4f6ef7; color:#fff; }
+    .tabs button:not(.active) { background:#e8e8ec; color:#333; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th { text-align:left; padding:8px 10px; background:#f0f1f5; border-bottom:2px solid #ddd;
+         font-weight:600; position:sticky; top:0; }
+    td { padding:7px 10px; border-bottom:1px solid #eee; }
+    tr:hover td { background:#f8f9ff; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+    .badge-approved { background:#e6f9ed; color:#1a8c3f; }
+    .badge-pending { background:#fff3e0; color:#b36b00; }
+    .badge-static { background:#e8ecff; color:#3b5de7; }
+    .stats { display:flex; gap:16px; margin-bottom:12px; }
+    .stat-box { background:#f0f1f5; border-radius:8px; padding:10px 16px; text-align:center; }
+    .stat-num { font-size:24px; font-weight:700; color:#4f6ef7; }
+    .stat-label { font-size:11px; color:#888; margin-top:2px; }
+    .table-wrap { max-height:500px; overflow-y:auto; border:1px solid #eee; border-radius:8px; }
+    .search-bar { margin-bottom:10px; }
+    .search-bar input { width:300px; }
   </style>
 </head>
 <body>
-  <h1>RAG 后台管理页</h1>
+  <h1>RAG 后台管理</h1>
 
+  <!-- 词库管理 -->
+  <div class="card">
+    <h2>词库管理</h2>
+    <div class="stats" id="synonym_stats">
+      <div class="stat-box"><div class="stat-num" id="stat_static">-</div><div class="stat-label">静态词条</div></div>
+      <div class="stat-box"><div class="stat-num" id="stat_learned">-</div><div class="stat-label">学习词条</div></div>
+      <div class="stat-box"><div class="stat-num" id="stat_total">-</div><div class="stat-label">总计</div></div>
+    </div>
+    <div class="tabs">
+      <button class="active" onclick="switchSynTab('learned')">LLM 学习词库</button>
+      <button onclick="switchSynTab('static')">静态同义词表</button>
+    </div>
+    <div class="search-bar">
+      <input id="syn_search" placeholder="搜索词条..." oninput="filterSynTable()">
+      <button onclick="loadSynonyms()">刷新</button>
+    </div>
+    <div id="syn_learned" class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>原始词</th><th>映射到</th><th>命中次数</th><th>首次出现</th><th>最近使用</th><th>状态</th><th>操作</th>
+        </tr></thead>
+        <tbody id="learned_tbody"></tbody>
+      </table>
+    </div>
+    <div id="syn_static" class="table-wrap" style="display:none">
+      <table>
+        <thead><tr><th>变体</th><th>规范形式</th></tr></thead>
+        <tbody id="static_tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 知识库产品列表 -->
   <div class="card">
     <h2>知识库产品列表</h2>
     <button onclick="loadProducts()">刷新</button>
     <pre id="products">点击刷新查看</pre>
   </div>
 
+  <!-- 一键重建索引 -->
   <div class="card">
     <h2>一键重建索引</h2>
     <input id="product" placeholder="例如 feiluoao" value="feiluoao">
@@ -28,6 +97,7 @@
     <pre id="rebuild_out">等待执行</pre>
   </div>
 
+  <!-- 日志 -->
   <div class="card">
     <h2>最近问答日志</h2>
     <button onclick="loadLogs('qa')">刷新问答</button>
@@ -41,6 +111,93 @@
   </div>
 
   <script>
+    // ===== 词库管理 =====
+    let synData = { static: [], learned: [] };
+    let currentSynTab = 'learned';
+
+    async function loadSynonyms() {
+      try {
+        const r = await fetch('/admin/synonyms/all');
+        const j = await r.json();
+        synData = j;
+        document.getElementById('stat_static').textContent = j.static_count || 0;
+        document.getElementById('stat_learned').textContent = j.learned_count || 0;
+        document.getElementById('stat_total').textContent = j.total_count || 0;
+        renderLearnedTable(j.learned || []);
+        renderStaticTable(j.static || []);
+      } catch (e) {
+        console.error('loadSynonyms error:', e);
+      }
+    }
+
+    function renderLearnedTable(items) {
+      const tbody = document.getElementById('learned_tbody');
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:24px">暂无学习到的词条，当用户提问触发 LLM 改写后会自动积累</td></tr>';
+        return;
+      }
+      tbody.innerHTML = items.map(it => `<tr data-original="${esc(it.original)}">
+        <td><strong>${esc(it.original)}</strong></td>
+        <td>${esc(it.mapped_to)}</td>
+        <td style="text-align:center">${it.count}</td>
+        <td>${formatTime(it.first_seen)}</td>
+        <td>${formatTime(it.last_seen)}</td>
+        <td>${it.approved
+          ? '<span class="badge badge-approved">已审核</span>'
+          : '<span class="badge badge-pending">待审核</span>'}</td>
+        <td>
+          ${!it.approved ? `<button class="success" onclick="approveSyn('${esc(it.original)}')" style="margin-right:4px;padding:4px 10px;font-size:12px">通过</button>` : ''}
+          <button class="danger" onclick="deleteSyn('${esc(it.original)}')" style="padding:4px 10px;font-size:12px">删除</button>
+        </td>
+      </tr>`).join('');
+    }
+
+    function renderStaticTable(items) {
+      const tbody = document.getElementById('static_tbody');
+      tbody.innerHTML = items.map(it => `<tr>
+        <td>${esc(it.original)}</td>
+        <td>${esc(it.mapped_to)}</td>
+      </tr>`).join('');
+    }
+
+    function switchSynTab(tab) {
+      currentSynTab = tab;
+      document.getElementById('syn_learned').style.display = tab === 'learned' ? '' : 'none';
+      document.getElementById('syn_static').style.display = tab === 'static' ? '' : 'none';
+      document.querySelectorAll('.tabs button').forEach((btn, i) => {
+        btn.classList.toggle('active', (i === 0 && tab === 'learned') || (i === 1 && tab === 'static'));
+      });
+    }
+
+    function filterSynTable() {
+      const q = document.getElementById('syn_search').value.trim().toLowerCase();
+      const tableId = currentSynTab === 'learned' ? 'learned_tbody' : 'static_tbody';
+      document.querySelectorAll(`#${tableId} tr`).forEach(tr => {
+        tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    async function approveSyn(original) {
+      try {
+        const r = await fetch('/admin/synonyms/learned/approve?original=' + encodeURIComponent(original), { method: 'POST' });
+        if (r.ok) loadSynonyms();
+        else alert('操作失败: ' + (await r.json()).detail);
+      } catch (e) { alert('请求失败: ' + e); }
+    }
+
+    async function deleteSyn(original) {
+      if (!confirm(`确定删除「${original}」的映射吗？`)) return;
+      try {
+        const r = await fetch('/admin/synonyms/learned?original=' + encodeURIComponent(original), { method: 'DELETE' });
+        if (r.ok) loadSynonyms();
+        else alert('操作失败: ' + (await r.json()).detail);
+      } catch (e) { alert('请求失败: ' + e); }
+    }
+
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function formatTime(ts) { return ts ? ts.replace('T', ' ') : '-'; }
+
+    // ===== 原有功能 =====
     async function loadProducts() {
       const r = await fetch('/admin/products');
       const j = await r.json();
@@ -65,6 +222,9 @@
       const j = await r.json();
       document.getElementById(kind + '_logs').textContent = JSON.stringify(j, null, 2);
     }
+
+    // 页面加载时自动加载词库
+    loadSynonyms();
   </script>
 </body>
 </html>
