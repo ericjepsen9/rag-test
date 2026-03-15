@@ -2,12 +2,13 @@ import os
 import re
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from media_router import find_media, invalidate_media_cache
@@ -94,6 +95,24 @@ class AskResponse(BaseModel):
 class RebuildRequest(BaseModel):
     product: str = Field(..., min_length=1, max_length=50)
     timeout_sec: int = Field(default=120, ge=10, le=600)
+
+
+# ===== OpenAI 兼容数据模型 =====
+
+_MODEL_NAME = os.environ.get("OPENAI_COMPAT_MODEL", "medical-rag")
+
+
+class OAIMessage(BaseModel):
+    role: Literal["system", "user", "assistant"] = "user"
+    content: str
+
+
+class OAIChatRequest(BaseModel):
+    model: str = _MODEL_NAME
+    messages: List[OAIMessage] = Field(..., min_length=1)
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    stream: bool = False
 
 
 # ===== 问答接口 =====
@@ -227,6 +246,122 @@ def ask(req: AskRequest):
             ok=False,
             answer="接口执行异常，请稍后重试",
         )
+
+
+# ===== OpenAI 兼容接口 =====
+
+def _oai_messages_to_question_and_history(messages: List[OAIMessage]):
+    """将 OpenAI messages 格式转换为 question + history"""
+    # 过滤掉 system 消息，提取 user/assistant 对话
+    conv = [m for m in messages if m.role in ("user", "assistant")]
+    if not conv:
+        return "", []
+    question = _sanitize_input(conv[-1].content[:MAX_QUESTION_LEN])
+    history = [
+        {"role": m.role, "content": _sanitize_input(m.content[:1000])}
+        for m in conv[:-1]
+    ][-6:]
+    return question, history
+
+
+def _build_oai_response(answer: str, model: str) -> Dict[str, Any]:
+    """构建 OpenAI 兼容的响应格式"""
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": answer},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+
+def _build_oai_stream_chunk(content: str, model: str, chunk_id: str, finish: bool = False) -> str:
+    """构建 SSE 格式的流式响应块"""
+    import json
+    if finish:
+        delta = {}
+        finish_reason = "stop"
+    else:
+        delta = {"role": "assistant", "content": content}
+        finish_reason = None
+    chunk = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+
+@app.post("/v1/chat/completions")
+def oai_chat_completions(req: OAIChatRequest):
+    question, history = _oai_messages_to_question_and_history(req.messages)
+    if not question:
+        raise HTTPException(status_code=400, detail="No user message found")
+
+    t0 = time.monotonic()
+    try:
+        # 限制历史总字符数
+        total_chars = sum(len(h.get("content", "")) for h in history)
+        if total_chars > MAX_HISTORY_TOTAL_CHARS:
+            cum = 0
+            trim_idx = 0
+            excess = total_chars - MAX_HISTORY_TOTAL_CHARS
+            for i, h in enumerate(history):
+                cum += len(h.get("content", ""))
+                if cum >= excess:
+                    trim_idx = i + 1
+                    break
+            history = history[trim_idx:]
+
+        from query_rewrite import rewrite_query
+        rw = rewrite_query(question, history=history)
+        answer = answer_question(question, "brief", history=history, rewrite=rw)
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        log_error("oai_chat", repr(e), meta={"question": question[:200], "latency_ms": latency_ms})
+        answer = "接口执行异常，请稍后重试"
+
+    if req.stream:
+        chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+        def _generate():
+            yield _build_oai_stream_chunk(answer, req.model, chunk_id)
+            yield _build_oai_stream_chunk("", req.model, chunk_id, finish=True)
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(_generate(), media_type="text/event-stream")
+
+    return _build_oai_response(answer, req.model)
+
+
+@app.get("/v1/models")
+def oai_models():
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": _MODEL_NAME,
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "local",
+            }
+        ],
+    }
 
 
 # ===== 管理接口 =====
