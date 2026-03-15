@@ -62,8 +62,9 @@ _SHARED_ROUTES = {"complication", "course", "anatomy_q", "indication_q",
 # 混合路由：同时检索产品库和共享库
 # procedure_q/equipment_q/script 也需要同时搜产品库：
 # 用户问"水光"时，产品库中可能有配合该项目的专属信息（如搭配方案、操作参数）
+# ingredient 也需要搜共享库：用户问"玻尿酸"等通用材料时，共享库有更丰富的材料知识
 _HYBRID_ENTITY_ROUTES = {"complication", "course", "anatomy_q", "indication_q",
-                         "procedure_q", "equipment_q", "script"}
+                         "procedure_q", "equipment_q", "script", "ingredient"}
 
 # ===== detect_route 消歧信号（模块级常量，避免每次调用重建列表） =====
 _ROUTE_ORDER = [
@@ -100,7 +101,8 @@ _OPERATION_CONTEXT_SIGNALS = ("深度", "参数", "针头", "几号", "0.8", "0.
                                "中胚层", "涂抹", "菲罗奥")
 # 成分上下文信号：用户在讨论成分时，ingredient 路由更合理
 _INGREDIENT_CONTEXT_SIGNALS = ("成分", "PCL", "聚己内酯", "谷胱甘肽", "肽",
-                                "生长因子", "抗氧化", "再生")
+                                "生长因子", "抗氧化", "再生", "交联", "分子量",
+                                "材料", "HA", "胶原蛋白")
 _RE_TEMPORAL_SHORT = re.compile(r"术后(第?\d+天|当天|1-3天|一周|1周)")
 _RE_TEMPORAL_LONG = re.compile(r"(术后\d+个月|半年|一年|长期)")
 _RE_PAIN_INQUIRY = re.compile(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛)")
@@ -531,10 +533,21 @@ def detect_route(question: str) -> str:
             scores["procedure_q"] += 4.0
 
     # 项目实体名 vs ingredient：当用户提到"玻尿酸"等既是成分又是项目的词，
-    # 但没有成分上下文时 → procedure_q 优先
+    # 需要根据上下文区分用户意图：
+    # - 有项目上下文（"怎么打"、"操作"等）→ procedure_q
+    # - 有成分上下文（"成分"、"原理"等）→ ingredient
+    # - 都没有（单独问"玻尿酸"）→ ingredient 优先（物质名称更像成分/产品询问）
     if "procedure_q" in scores and "ingredient" in scores:
-        if not any(s in q for s in _INGREDIENT_CONTEXT_SIGNALS):
+        has_proc_context = any(s in q for s in _PROC_SIGNALS) or any(
+            s in q for s in ("怎么打", "打哪里", "注射", "操作", "项目"))
+        has_ingr_context = any(s in q for s in _INGREDIENT_CONTEXT_SIGNALS)
+        if has_proc_context and not has_ingr_context:
             scores["procedure_q"] += 4.0
+        elif has_ingr_context and not has_proc_context:
+            scores["ingredient"] += 4.0
+        else:
+            # 无上下文 或 双方都有 → ingredient 优先（物质名本身是成分概念）
+            scores["ingredient"] += 3.0
 
     # procedure_q 不应抢夺有明确非项目意图的路由
     # 当用户问题同时包含项目实体名 + 其他路由的独立关键词时，
@@ -1339,7 +1352,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
     # 决定搜索哪些 store
     search_product = route not in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
-    search_shared = route in _SHARED_ROUTES
+    search_shared = route in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
 
     # 并行执行向量检索和关键词检索（IO/计算密集混合，线程级并行有收益）
 
