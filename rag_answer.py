@@ -918,8 +918,35 @@ def _evict_cache(cache: dict, max_size: int) -> None:
             break
 
 
-def _read_shared_knowledge(dir_name: str) -> str:
-    """读取共享知识目录内容：单文件直接读，多实例拼接所有 main.txt。带 mtime 缓存。"""
+def _match_sub_entity(shared_dir: Path, question: str) -> str:
+    """在多实例共享知识目录中，根据 alias.txt 匹配用户问题中提到的子实体。
+    返回匹配的子目录名，无匹配时返回空字符串。"""
+    if not question:
+        return ""
+    q_lower = question.lower()
+    best_dir = ""
+    best_len = 0
+    for inst in sorted(shared_dir.iterdir()):
+        alias_file = inst / "alias.txt"
+        if not inst.is_dir() or not alias_file.exists():
+            continue
+        try:
+            aliases = alias_file.read_text(encoding="utf-8").strip().splitlines()
+        except OSError:
+            continue
+        for alias in aliases:
+            alias = alias.strip()
+            if not alias:
+                continue
+            if alias.lower() in q_lower and len(alias) > best_len:
+                best_len = len(alias)
+                best_dir = inst.name
+    return best_dir
+
+
+def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
+    """读取共享知识目录内容：单文件直接读，多实例拼接所有 main.txt。带 mtime 缓存。
+    当 question 非空时，优先匹配用户提到的子实体（通过 alias.txt），只返回该实体内容。"""
     shared_dir = KNOWLEDGE_DIR / dir_name
     if not shared_dir.exists():
         return ""
@@ -934,7 +961,23 @@ def _read_shared_knowledge(dir_name: str) -> str:
             _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
             _shared_knowledge_cache[dir_name] = (mtime, content)
             return content
-        # 多实例目录：拼接所有子目录的 main.txt
+
+        # 多实例目录：先尝试匹配用户提到的具体子实体
+        matched_sub = _match_sub_entity(shared_dir, question)
+        if matched_sub:
+            target = shared_dir / matched_sub / "main.txt"
+            if target.exists():
+                cache_key_sub = f"{dir_name}/{matched_sub}"
+                mtime = target.stat().st_mtime
+                cached = _shared_knowledge_cache.get(cache_key_sub)
+                if cached and cached[0] == mtime:
+                    return cached[1]
+                content = target.read_text(encoding="utf-8")
+                _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
+                _shared_knowledge_cache[cache_key_sub] = (mtime, content)
+                return content
+
+        # 无匹配子实体或匹配失败：拼接所有子目录的 main.txt
         # 先收集 mtime 判断缓存是否有效，避免无谓的文件读取
         inst_files = []
         max_mtime = 0.0
@@ -994,7 +1037,7 @@ def parse_answer(route: str, product: str, mode: str,
     # 共享路由：从共享知识目录读取
     shared_dir_name = _SHARED_ROUTE_DIR.get(route)
     if shared_dir_name:
-        main_text = _read_shared_knowledge(shared_dir_name)
+        main_text = _read_shared_knowledge(shared_dir_name, question=question)
         faq_text = ""
     elif route == "ingredient" and question:
         # 材料专属路由：当用户问的是某个具体材料（如"玻尿酸"），
