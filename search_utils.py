@@ -589,10 +589,7 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
 
     sentence_pairs = [[query, (h.get("text") or "")[:512]] for h in hits]
     try:
-        scores = model.compute_score(
-            sentence_pairs,
-            weights={"colbert": 0.4, "sparse": 0.2, "dense": 0.4},
-        )
+        scores = model.compute_score(sentence_pairs)
     except Exception as e:
         print(f"[WARN] rerank 失败，回退原排序: {e}")
         return hits[:top_k]
