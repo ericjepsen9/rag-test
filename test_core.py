@@ -1,9 +1,10 @@
 """核心算法单元测试：BM25、路由检测、上下文补全、工具函数"""
 import pytest
 from search_utils import (
-    _count_term, _extract_terms, bm25_score, normalize_text,
+    _count_term, _extract_terms, _extract_terms_bigram, bm25_score, normalize_text,
     normalize_lines, uniq, section_block, split_multi_question,
     keyword_search, merge_hybrid, detect_terms,
+    rerank_hits, compute_dynamic_threshold,
 )
 from query_rewrite import (
     rewrite_query, _resolve_context, _extract_history_context,
@@ -45,7 +46,8 @@ class TestExtractTerms:
         assert "成分" in terms
 
     def test_bigram_split(self):
-        terms = _extract_terms("术后护理")
+        """bigram 模式下应生成子字符 bigram"""
+        terms = _extract_terms_bigram("术后护理")
         assert "术后" in terms
         assert "后护" in terms
         assert "护理" in terms
@@ -58,6 +60,13 @@ class TestExtractTerms:
         terms = _extract_terms("红肿，硬块？疼痛")
         assert "红肿" in terms
         assert "硬块" in terms
+        assert "疼痛" in terms
+
+    def test_jieba_medical_terms(self):
+        """jieba 模式下应正确切分医美术语"""
+        terms = _extract_terms("菲罗奥注射后疼痛怎么办")
+        # 无论哪种模式，核心术语都应被提取
+        assert "菲罗奥" in terms
         assert "疼痛" in terms
 
 
@@ -1299,3 +1308,120 @@ class TestEmbedTextsRowValidation:
         from build_faiss import embed_texts
         src = inspect.getsource(embed_texts)
         assert "shape[0]" in src and "len(texts)" in src
+
+
+# ============================================================
+# P0: Reranker 单元测试
+# ============================================================
+
+class TestRerankHits:
+    """rerank_hits 在无模型时应安全回退"""
+
+    def test_empty_hits(self):
+        result = rerank_hits("query", [], None, 5)
+        assert result == []
+
+    def test_none_model_fallback(self):
+        hits = [{"text": "doc1", "hybrid_score": 0.9}, {"text": "doc2", "hybrid_score": 0.5}]
+        result = rerank_hits("query", hits, None, 5)
+        assert len(result) == 2
+        assert result[0]["text"] == "doc1"
+
+    def test_top_k_limit(self):
+        hits = [{"text": f"doc{i}", "hybrid_score": 0.1 * i} for i in range(10)]
+        result = rerank_hits("query", hits, None, 3)
+        assert len(result) == 3
+
+
+# ============================================================
+# P2: 动态阈值单元测试
+# ============================================================
+
+class TestDynamicThreshold:
+    """compute_dynamic_threshold 应根据分数分布自适应调整"""
+
+    def test_empty_hits(self):
+        threshold = compute_dynamic_threshold([], 0.30)
+        assert threshold == 0.30
+
+    def test_high_top1_raises_threshold(self):
+        hits = [{"hybrid_score": 0.95}, {"hybrid_score": 0.3}]
+        # ratio=0.40 → 0.95*0.40=0.38 > floor(0.30*0.70=0.21)
+        threshold = compute_dynamic_threshold(hits, 0.30, ratio=0.40, floor_ratio=0.70)
+        assert threshold > 0.30 * 0.70
+        assert threshold <= 0.30
+
+    def test_low_top1_uses_floor(self):
+        hits = [{"hybrid_score": 0.20}]
+        # ratio=0.40 → 0.20*0.40=0.08, floor=0.30*0.70=0.21 → max(0.21, min(0.08, 0.30))=0.21
+        threshold = compute_dynamic_threshold(hits, 0.30, ratio=0.40, floor_ratio=0.70)
+        assert abs(threshold - 0.21) < 0.01
+
+    def test_never_exceeds_route_threshold(self):
+        hits = [{"hybrid_score": 1.0}]
+        threshold = compute_dynamic_threshold(hits, 0.25, ratio=0.60, floor_ratio=0.70)
+        assert threshold <= 0.25
+
+
+# ============================================================
+# P1: FAQ 独立嵌入测试
+# ============================================================
+
+class TestFaqPairSplitting:
+    """split_faq_pairs 应正确拆分 FAQ 问答对"""
+
+    def test_basic_split(self):
+        from build_faiss import split_faq_pairs
+        text = "【Q】菲罗奥是什么？\n【A】菲罗奥是一款医美产品。\n\n【Q】注射疼吗？\n【A】注射时会有轻微不适。"
+        pairs = split_faq_pairs(text)
+        assert len(pairs) == 2
+        assert "菲罗奥" in pairs[0]["q"]
+        assert "医美产品" in pairs[0]["a"]
+        assert pairs[0]["full"].startswith("【Q】")
+
+    def test_empty_text(self):
+        from build_faiss import split_faq_pairs
+        assert split_faq_pairs("") == []
+        assert split_faq_pairs("普通文本没有FAQ标记") == []
+
+
+# ============================================================
+# P2: HNSW 索引创建测试
+# ============================================================
+
+class TestCreateFaissIndex:
+    """_create_faiss_index 应根据配置选择索引类型"""
+
+    def test_function_exists(self):
+        import inspect
+        from build_faiss import _create_faiss_index
+        sig = inspect.signature(_create_faiss_index)
+        assert "dim" in sig.parameters
+        assert "n_vectors" in sig.parameters
+
+    def test_small_data_uses_flat(self):
+        """小规模数据应使用 flat 索引，不管配置如何"""
+        from build_faiss import _create_faiss_index
+        import faiss
+        # n_vectors < 100 → 始终 flat
+        index = _create_faiss_index(128, 50)
+        assert isinstance(index, faiss.IndexFlatIP)
+
+
+# ============================================================
+# P1: jieba 分词回退测试
+# ============================================================
+
+class TestJiebaFallback:
+    """jieba 不可用时应安全回退到 bigram"""
+
+    def test_bigram_fallback_works(self):
+        terms = _extract_terms_bigram("菲罗奥 术后护理")
+        assert "菲罗奥" in terms
+        assert "术后" in terms
+        assert "护理" in terms
+
+    def test_extract_terms_returns_nonempty(self):
+        terms = _extract_terms("菲罗奥术后护理注意事项")
+        assert len(terms) > 0
+        assert "菲罗奥" in terms

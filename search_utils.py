@@ -5,7 +5,40 @@ import unicodedata
 from functools import lru_cache
 from typing import Any, List, Dict, Tuple
 
-from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST
+from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCTS, ROUTE_BOOST, JIEBA_ENABLED
+
+# jieba 分词延迟加载
+_jieba = None
+_jieba_initialized = False
+
+
+def _get_jieba():
+    """延迟加载 jieba 并添加医美领域自定义词典"""
+    global _jieba, _jieba_initialized
+    if _jieba_initialized:
+        return _jieba
+    if not JIEBA_ENABLED:
+        _jieba_initialized = True
+        return None
+    try:
+        import jieba as _jieba_mod
+        # 添加医美领域术语，防止被错误切分
+        _CUSTOM_WORDS = [
+            "菲罗奥", "赛洛菲", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽",
+            "胶原蛋白", "法令纹", "苹果肌", "下颌线", "鱼尾纹", "泪沟",
+            "光子嫩肤", "热玛吉", "热拉提", "超声刀", "皮秒", "德玛莎",
+            "水光针", "微针", "中胚层", "淤青", "瘀青",
+            "术后护理", "不良反应", "禁忌人群", "防伪鉴别",
+            "HiddenTag", "PCL", "MTS", "IPL",
+        ]
+        for w in _CUSTOM_WORDS:
+            _jieba_mod.add_word(w)
+        _jieba = _jieba_mod
+    except ImportError:
+        print("[WARN] jieba 未安装，回退到 bigram 分词")
+        _jieba = None
+    _jieba_initialized = True
+    return _jieba
 
 # 预编译常用正则（避免每次函数调用时隐式编译）
 _RE_WHITESPACE = re.compile(r"\s+")
@@ -162,8 +195,8 @@ def section_block(text: str, titles: List[str], stops: List[str]) -> str:
     return sub.strip()
 
 
-def _extract_terms(query: str) -> List[str]:
-    """从查询中提取搜索词：先按空格/标点分割，再对中文长词做 bigram 切分"""
+def _extract_terms_bigram(query: str) -> List[str]:
+    """原始 bigram 分词：按空格/标点分割，再对中文长词做 bigram 切分（jieba 不可用时的回退方案）"""
     raw = [x for x in _RE_TERM_SPLIT.split(query.lower()) if x]
     terms = []
     seen = set()
@@ -179,6 +212,40 @@ def _extract_terms(query: str) -> List[str]:
                     terms.append(bg)
                     seen.add(bg)
     return terms
+
+
+def _extract_terms_jieba(query: str) -> List[str]:
+    """jieba 分词 + bigram 补充：先用 jieba 精确分词，再对长中文词补充 bigram 提高部分匹配能力"""
+    jieba = _get_jieba()
+    q_lower = query.lower()
+    # jieba 切词（搜索引擎模式：更细粒度，召回更高）
+    raw_words = list(jieba.cut_for_search(q_lower))
+    terms = []
+    seen = set()
+    for w in raw_words:
+        w = w.strip()
+        if not w or w in seen:
+            continue
+        # 过滤纯标点和空白
+        if _RE_TERM_SPLIT.match(w):
+            continue
+        terms.append(w)
+        seen.add(w)
+        # 对 jieba 切出的长中文词仍做 bigram 补充，增加部分匹配能力
+        if len(w) >= 4 and _RE_CJK_WORD.match(w):
+            for i in range(len(w) - 1):
+                bg = w[i:i+2]
+                if bg not in seen:
+                    terms.append(bg)
+                    seen.add(bg)
+    return terms
+
+
+def _extract_terms(query: str) -> List[str]:
+    """从查询中提取搜索词：优先 jieba 分词，不可用时回退 bigram"""
+    if _get_jieba() is not None:
+        return _extract_terms_jieba(query)
+    return _extract_terms_bigram(query)
 
 
 def _count_term(term: str, text: str) -> int:
@@ -505,3 +572,82 @@ def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
                 found.append(key)
                 break
     return found
+
+
+# ============================================================
+# Reranker：使用 BGE-M3 compute_score 对候选文档重排序
+# ============================================================
+
+def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
+    """使用 BGE-M3 的 compute_score 对混合检索结果重排序。
+
+    model: 已加载的 BGEM3FlagModel 实例（复用嵌入模型，无额外模型开销）。
+    返回按 rerank_score 降序排列的 top_k 结果。
+    """
+    if not hits or not model:
+        return hits[:top_k]
+
+    sentence_pairs = [[query, (h.get("text") or "")[:512]] for h in hits]
+    try:
+        scores = model.compute_score(
+            sentence_pairs,
+            weights={"colbert": 0.4, "sparse": 0.2, "dense": 0.4},
+        )
+    except Exception as e:
+        print(f"[WARN] rerank 失败，回退原排序: {e}")
+        return hits[:top_k]
+
+    # compute_score 返回 {"colbert": [...], "sparse": [...], "dense": [...], "score": [...]}
+    # 或 {"colbert+sparse+dense": [...]} 取决于 FlagEmbedding 版本
+    if isinstance(scores, dict):
+        # 优先取融合分数
+        final_scores = (
+            scores.get("colbert+sparse+dense")
+            or scores.get("score")
+            or scores.get("dense")
+        )
+        if final_scores is None:
+            # 手动加权
+            col = scores.get("colbert", [0.0] * len(hits))
+            spa = scores.get("sparse", [0.0] * len(hits))
+            den = scores.get("dense", [0.0] * len(hits))
+            final_scores = [0.4 * c + 0.2 * s + 0.4 * d
+                           for c, s, d in zip(col, spa, den)]
+    elif isinstance(scores, (list, tuple)):
+        final_scores = scores
+    else:
+        return hits[:top_k]
+
+    # 归一化 rerank 分数到 [0, 1]
+    if final_scores:
+        max_s = max(final_scores) if final_scores else 1.0
+        min_s = min(final_scores) if final_scores else 0.0
+        rng = max_s - min_s if max_s > min_s else 1.0
+        for i, h in enumerate(hits):
+            raw = final_scores[i] if i < len(final_scores) else 0.0
+            h["rerank_score"] = (raw - min_s) / rng
+            # 融合：rerank 分数覆盖 hybrid_score（保留原始 hybrid_score 供调试）
+            h["hybrid_score_before_rerank"] = h.get("hybrid_score", 0.0)
+            h["hybrid_score"] = h["rerank_score"]
+
+    hits.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
+    return hits[:top_k]
+
+
+# ============================================================
+# 动态阈值：根据检索分数分布自适应调整过滤阈值
+# ============================================================
+
+def compute_dynamic_threshold(hits: List[Dict], route_threshold: float,
+                               ratio: float = 0.40, floor_ratio: float = 0.70) -> float:
+    """根据 top-1 分数动态计算阈值：
+    - 如果 top-1 分数很高，阈值适当升高，过滤低质量结果
+    - 如果 top-1 分数偏低，阈值适当降低，保留更多候选
+    返回 max(route_threshold * floor_ratio, top1_score * ratio)
+    """
+    if not hits:
+        return route_threshold
+    top1 = max(h.get("hybrid_score", 0.0) for h in hits)
+    dynamic = top1 * ratio
+    floor = route_threshold * floor_ratio
+    return max(floor, min(dynamic, route_threshold))

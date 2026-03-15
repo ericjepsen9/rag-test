@@ -315,6 +315,31 @@ KEYWORD_TOP_K = _safe_int("RAG_KEYWORD_TOP_K", "12")
 HYBRID_VECTOR_WEIGHT = _safe_float("RAG_HYBRID_VW", "0.65")
 HYBRID_KEYWORD_WEIGHT = _safe_float("RAG_HYBRID_KW", "0.35")
 
+# ===== Reranker =====
+# 混合检索结果经 reranker 重排序后再截断到 route_top_k
+# rerank 使用 BGE-M3 的 compute_score (colbert+sparse+dense 融合)
+RERANK_ENABLED = _os.environ.get("RAG_RERANK_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+RERANK_TOP_N = _safe_int("RAG_RERANK_TOP_N", "20")  # 送入 reranker 的候选数（需 > route_top_k）
+
+# ===== 动态阈值 =====
+# 启用后根据检索结果分数分布自适应调整过滤阈值，降低漏答率
+DYNAMIC_THRESHOLD_ENABLED = _os.environ.get("RAG_DYN_THRESHOLD", "1").strip().lower() in ("1", "true", "yes")
+# 动态阈值 = max(route_threshold * DYN_FLOOR_RATIO, top1_score * DYN_RATIO)
+DYNAMIC_THRESHOLD_RATIO = _safe_float("RAG_DYN_RATIO", "0.40")
+DYNAMIC_THRESHOLD_FLOOR_RATIO = _safe_float("RAG_DYN_FLOOR_RATIO", "0.70")
+
+# ===== 中文分词 =====
+# 启用 jieba 分词替代纯 bigram 切分，提升 BM25 精度
+JIEBA_ENABLED = _os.environ.get("RAG_JIEBA_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+
+# ===== FAISS 索引类型 =====
+# flat: IndexFlatIP (暴力搜索，适合小规模)
+# hnsw: IndexHNSWFlat (近似最近邻，适合大规模)
+FAISS_INDEX_TYPE = _os.environ.get("RAG_FAISS_INDEX", "hnsw").strip().lower()
+FAISS_HNSW_M = _safe_int("RAG_HNSW_M", "32")         # HNSW 连接数
+FAISS_HNSW_EF_CONSTRUCTION = _safe_int("RAG_HNSW_EFC", "200")  # 构建时搜索范围
+FAISS_HNSW_EF_SEARCH = _safe_int("RAG_HNSW_EFS", "128")        # 查询时搜索范围
+
 # ===== 按问题类型调整检索参数 =====
 # vw/kw: 向量/关键词权重覆盖（可选）。精确参数类问题提高 kw，语义模糊问题提高 vw。
 QUESTION_TYPE_CONFIG = {

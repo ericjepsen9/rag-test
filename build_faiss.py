@@ -18,6 +18,7 @@ from rag_runtime_config import (
     EMBED_MODEL_NAME, EMBED_USE_FP16, EMBED_BATCH_SIZE_BUILD, EMBED_MAX_LENGTH_BUILD,
     CHUNK_SIZE as _DEFAULT_CHUNK_SIZE, CHUNK_OVERLAP as _DEFAULT_CHUNK_OVERLAP,
     SHARED_ENTITY_DIRS as _SHARED_ENTITY_DIRS,
+    FAISS_INDEX_TYPE, FAISS_HNSW_M, FAISS_HNSW_EF_CONSTRUCTION, FAISS_HNSW_EF_SEARCH,
 )
 
 # 预计算共享目录名，避免 _is_product_dir 每次调用重建 set
@@ -215,6 +216,31 @@ def _is_separator(para: str) -> bool:
 
 MIN_CHUNK_CHARS = 30  # 过短的 chunk 对检索无信息量，过滤噪音
 
+# FAQ 问答对拆分正则
+_RE_FAQ_QA = re.compile(r"【Q】(.*?)(?=【Q】|\Z)", re.DOTALL)
+_RE_FAQ_A = re.compile(r"【A】(.*)", re.DOTALL)
+
+
+def split_faq_pairs(text: str) -> List[dict]:
+    """将 FAQ 文本拆分为问答对，返回 [{"q": ..., "a": ..., "full": ...}]。
+    每个 FAQ 条目生成两条记录：
+    - 问题文本（用于向量检索时更好匹配用户问题）
+    - 完整问答对（用于答案生成）
+    """
+    pairs = []
+    for m in _RE_FAQ_QA.finditer(text):
+        block = m.group(1).strip()
+        # 提取问题（第一行到【A】之前）
+        lines = block.split("\n")
+        q_text = lines[0].strip() if lines else ""
+        # 提取答案
+        a_match = _RE_FAQ_A.search(block)
+        a_text = a_match.group(1).strip() if a_match else ""
+        full_text = f"【Q】{q_text}\n【A】{a_text}"
+        if q_text and a_text:
+            pairs.append({"q": q_text, "a": a_text, "full": full_text})
+    return pairs
+
 
 def chunk_text(text: str) -> List[str]:
     t = normalize_text(text)
@@ -287,19 +313,78 @@ def collect_product_records(product: str):
         text = read_text_auto(f)
         # 清除纯分隔线
         text = _RE_STRIP_SEPARATORS.sub("", text).strip()
-        # alias 不切块，整体入库
-        chunks = [text] if stype == "alias" else chunk_text(text)
-        print(f"[OK] {product}/{fname}: {len(chunks)} chunks")
-        for i, chunk in enumerate(chunks, 1):
-            records.append({
-                "text": chunk,
-                "meta": {
-                    "product_id": product,
-                    "source_file": f.name,
-                    "source_type": stype,
-                    "chunk_id": i,
-                }
-            })
+
+        if stype == "alias":
+            # alias 不切块，整体入库
+            chunks = [text]
+            print(f"[OK] {product}/{fname}: 1 chunk (alias)")
+            for i, chunk in enumerate(chunks, 1):
+                records.append({
+                    "text": chunk,
+                    "meta": {
+                        "product_id": product,
+                        "source_file": f.name,
+                        "source_type": stype,
+                        "chunk_id": i,
+                    }
+                })
+        elif stype == "faq":
+            # FAQ 独立嵌入：按问答对拆分，问题和完整问答分别入库
+            faq_pairs = split_faq_pairs(text)
+            if faq_pairs:
+                faq_q_count = 0
+                for i, pair in enumerate(faq_pairs, 1):
+                    # 完整问答对（用于答案生成和 FAQ 快速路径）
+                    records.append({
+                        "text": pair["full"],
+                        "meta": {
+                            "product_id": product,
+                            "source_file": f.name,
+                            "source_type": "faq",
+                            "chunk_id": i,
+                        }
+                    })
+                    # 问题文本独立嵌入（向量检索时更好匹配用户问题）
+                    if len(pair["q"]) >= MIN_CHUNK_CHARS:
+                        faq_q_count += 1
+                        records.append({
+                            "text": pair["q"],
+                            "meta": {
+                                "product_id": product,
+                                "source_file": f.name,
+                                "source_type": "faq_question",
+                                "chunk_id": i,
+                                "faq_answer": pair["a"],
+                            }
+                        })
+                print(f"[OK] {product}/{fname}: {len(faq_pairs)} QA pairs + {faq_q_count} question embeddings")
+            else:
+                # 回退：无法解析 FAQ 格式时按普通文本切块
+                chunks = chunk_text(text)
+                print(f"[OK] {product}/{fname}: {len(chunks)} chunks (fallback)")
+                for i, chunk in enumerate(chunks, 1):
+                    records.append({
+                        "text": chunk,
+                        "meta": {
+                            "product_id": product,
+                            "source_file": f.name,
+                            "source_type": stype,
+                            "chunk_id": i,
+                        }
+                    })
+        else:
+            chunks = chunk_text(text)
+            print(f"[OK] {product}/{fname}: {len(chunks)} chunks")
+            for i, chunk in enumerate(chunks, 1):
+                records.append({
+                    "text": chunk,
+                    "meta": {
+                        "product_id": product,
+                        "source_file": f.name,
+                        "source_type": stype,
+                        "chunk_id": i,
+                    }
+                })
     if not records:
         raise ValueError(f"{product} 没有可用文本")
     # 跨来源去重：main.txt + faq.txt 可能有重复段落
@@ -310,15 +395,27 @@ def collect_product_records(product: str):
     return records
 
 
+def _create_faiss_index(dim: int, n_vectors: int):
+    """根据配置创建 FAISS 索引：支持 flat 和 hnsw 两种类型。
+    小规模数据（< 100 条）始终使用 flat 避免 HNSW 开销。"""
+    faiss = _get_faiss()
+    if FAISS_INDEX_TYPE == "hnsw" and n_vectors >= 100:
+        index = faiss.IndexHNSWFlat(dim, FAISS_HNSW_M, faiss.METRIC_INNER_PRODUCT)
+        index.hnsw.efConstruction = FAISS_HNSW_EF_CONSTRUCTION
+        index.hnsw.efSearch = FAISS_HNSW_EF_SEARCH
+        print(f"[INFO] 使用 HNSW 索引 (M={FAISS_HNSW_M}, efC={FAISS_HNSW_EF_CONSTRUCTION}, efS={FAISS_HNSW_EF_SEARCH})")
+        return index
+    return faiss.IndexFlatIP(dim)
+
+
 def build_for_product(product: str):
     records = collect_product_records(product)
     texts = [r["text"] for r in records]
     print(f"[INFO] Total chunks: {len(texts)}")
     print(f"[INFO] Embedding {len(texts)} chunks ...")
     vecs = embed_texts(texts)
-    faiss = _get_faiss()
     dim = vecs.shape[1]
-    index = faiss.IndexFlatIP(dim)
+    index = _create_faiss_index(dim, len(texts))
     index.add(vecs)
 
     out_dir = STORE_ROOT / product
@@ -340,6 +437,7 @@ def build_for_product(product: str):
     print(f"       product: {product}")
     print(f"       chunks : {len(records)}")
     print(f"       dim    : {dim}")
+    print(f"       index  : {FAISS_INDEX_TYPE}")
 
 
 def collect_shared_records():
@@ -412,9 +510,8 @@ def build_shared():
     print(f"[INFO] Shared total chunks: {len(texts)}")
     print(f"[INFO] Embedding {len(texts)} chunks ...")
     vecs = embed_texts(texts)
-    faiss = _get_faiss()
     dim = vecs.shape[1]
-    index = faiss.IndexFlatIP(dim)
+    index = _create_faiss_index(dim, len(texts))
     index.add(vecs)
 
     out_dir = STORE_ROOT / "_shared"

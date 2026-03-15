@@ -27,10 +27,13 @@ from rag_runtime_config import (
     RELATIONS_FILE,
     PRICE_REPLY, COMPARISON_REPLY, LOCATION_REPLY,
     FAQ_FAST_PATH_THRESHOLDS, FAQ_FAST_PATH_DEFAULT,
+    RERANK_ENABLED, RERANK_TOP_N,
+    DYNAMIC_THRESHOLD_ENABLED, DYNAMIC_THRESHOLD_RATIO, DYNAMIC_THRESHOLD_FLOOR_RATIO,
 )
 from search_utils import (
     normalize_lines, uniq, is_faq_line, section_block,
     keyword_search, merge_hybrid, detect_terms,
+    rerank_hits, compute_dynamic_threshold,
     _SEPARATOR_CHARS,
 )
 from query_rewrite import rewrite_query
@@ -1332,9 +1335,22 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # 路由感知权重：精确参数类问题提高关键词权重
     vw = route_cfg.get("vw", HYBRID_VECTOR_WEIGHT)
     kw = route_cfg.get("kw", HYBRID_KEYWORD_WEIGHT)
-    hits = merge_hybrid(vector_hits, keyword_hits, vw, kw, route_top_k, route=route) if (vector_hits or keyword_hits) else []
-    # 过滤低于 threshold 的结果
-    hits = [h for h in hits if (h.get("hybrid_score") or h.get("score", 0.0)) >= route_threshold]
+    # merge_hybrid 时用更大的候选池（RERANK_TOP_N），供 reranker 重排序后再截断
+    merge_top = max(route_top_k, RERANK_TOP_N) if RERANK_ENABLED else route_top_k
+    hits = merge_hybrid(vector_hits, keyword_hits, vw, kw, merge_top, route=route) if (vector_hits or keyword_hits) else []
+
+    # P0: Reranker 重排序 —— 使用 BGE-M3 的 compute_score 对候选文档精排
+    if RERANK_ENABLED and len(hits) > 1:
+        hits = rerank_hits(search_q, hits, get_model(), route_top_k)
+
+    # P2: 动态阈值 —— 根据分数分布自适应调整过滤阈值
+    if DYNAMIC_THRESHOLD_ENABLED and hits:
+        effective_threshold = compute_dynamic_threshold(
+            hits, route_threshold,
+            ratio=DYNAMIC_THRESHOLD_RATIO, floor_ratio=DYNAMIC_THRESHOLD_FLOOR_RATIO)
+    else:
+        effective_threshold = route_threshold
+    hits = [h for h in hits if (h.get("hybrid_score") or h.get("score", 0.0)) >= effective_threshold]
 
     # 预计算问题 bigram（FAQ 快速路径和 FAQ 补充共用，避免重复归一化+切分）
     _q_norm = _normalize_for_bigram(question)

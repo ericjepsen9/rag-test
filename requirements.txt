@@ -8,5 +8,8 @@ numpy>=1.24.0
 faiss-cpu>=1.7.4
 FlagEmbedding>=1.2.0
 
+# Chinese tokenization (P1: BM25 precision improvement)
+jieba>=0.42.1
+
 # Optional: LLM RAG generation
 openai>=1.0.0
