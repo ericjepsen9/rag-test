@@ -1,8 +1,13 @@
+import os
 import re
+import threading
+from collections import OrderedDict
 from typing import Dict, Any, List, Optional
 from rag_runtime_config import (
     PRODUCT_ALIASES, PROJECT_ALIASES, TIME_TERMS, SYMPTOM_TERMS,
-    QUESTION_ROUTES,
+    QUESTION_ROUTES, USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE,
+    PROCEDURE_ALIASES, EQUIPMENT_ALIASES, INDICATION_KEYWORDS,
+    LLM_REWRITE_ENABLED,
 )
 from search_utils import detect_terms, uniq, split_multi_question
 
@@ -29,6 +34,157 @@ _ROUTE_EXPANSION = {
     "equipment_q":      ["仪器参数", "设备特性", "适配产品", "针头规格"],
     "script":           ["客户沟通", "话术", "顾虑解答", "合规"],
 }
+
+# ===== LLM 查询改写（方案3）=====
+# 当静态同义词/别名无法识别用户术语时，用 LLM 将其映射到知识库已有概念
+# 触发条件：查询未匹配任何已知产品/项目/路由关键词（即静态手段完全失效）
+# 有 LRU 缓存，避免相同查询重复调用
+
+_LLM_REWRITE_ENABLED = USE_OPENAI and LLM_REWRITE_ENABLED
+_LLM_REWRITE_CACHE_SIZE = 256
+
+# 构建知识库已知术语列表（告知 LLM 可以映射到哪些词）
+_KNOWN_VOCAB_PARTS = []
+for _aliases in PRODUCT_ALIASES.values():
+    _KNOWN_VOCAB_PARTS.extend(_aliases[:2])
+for _aliases in PROJECT_ALIASES.values():
+    _KNOWN_VOCAB_PARTS.extend(_aliases[:2])
+for _aliases in PROCEDURE_ALIASES.values():
+    _KNOWN_VOCAB_PARTS.extend(_aliases[:3])
+for _aliases in EQUIPMENT_ALIASES.values():
+    _KNOWN_VOCAB_PARTS.extend(_aliases[:2])
+for _kws in INDICATION_KEYWORDS.values():
+    _KNOWN_VOCAB_PARTS.extend(_kws[:2])
+_KNOWN_VOCAB = "、".join(sorted(set(_KNOWN_VOCAB_PARTS)))
+
+
+class _LRUCache:
+    """简易线程安全 LRU 缓存"""
+    def __init__(self, maxsize: int = 256):
+        self._cache: OrderedDict = OrderedDict()
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[str]:
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+        return None
+
+    def put(self, key: str, value: str) -> None:
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            else:
+                if len(self._cache) >= self._maxsize:
+                    self._cache.popitem(last=False)
+            self._cache[key] = value
+
+
+_llm_rewrite_cache = _LRUCache(_LLM_REWRITE_CACHE_SIZE)
+
+# 预编译：用于判断 LLM 改写结果是否有效
+_RE_NO_REWRITE = re.compile(r"(无法|不能|不确定|抱歉|sorry|NO_REWRITE)", re.IGNORECASE)
+
+
+def _should_trigger_llm_rewrite(question: str, products: list, projects: list,
+                                 detected_routes: list, is_chitchat: bool,
+                                 is_offtopic: bool) -> bool:
+    """判断是否需要触发 LLM 查询改写。
+    只在静态手段完全失效时触发，避免不必要的 LLM 调用。
+    """
+    if not _LLM_REWRITE_ENABLED:
+        return False
+    if is_chitchat or is_offtopic:
+        return False
+    # 问题太短（≤2字）或太长（>50字）不触发
+    q = question.strip()
+    if len(q) <= 2 or len(q) > 50:
+        return False
+    # 已识别到产品或项目 → 静态手段有效，不需要 LLM
+    if products or projects:
+        return False
+    # 已匹配到明确路由（非 basic）→ 关键词命中，不需要 LLM
+    if detected_routes and not (len(detected_routes) == 1 and detected_routes[0] == "basic"):
+        return False
+    # 检查是否包含已知路由关键词（即使 _detect_route_for_expansion 没返回）
+    q_lower = q.lower()
+    if any(kw in q_lower for kw in _ALL_ROUTE_KEYWORDS):
+        return False
+    return True
+
+
+def _llm_rewrite_query(question: str) -> str:
+    """调用 LLM 将用户查询中的未知术语映射到知识库已有概念。
+
+    返回改写后的查询字符串。如果 LLM 认为无需改写或改写失败，返回空字符串。
+
+    设计原则：
+    - Prompt 精简，控制 token 消耗（~200 input tokens）
+    - 只做术语映射，不改变用户意图
+    - 带缓存，相同查询不重复调用
+    """
+    # 缓存命中
+    cached = _llm_rewrite_cache.get(question)
+    if cached is not None:
+        return cached
+
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        _llm_rewrite_cache.put(question, "")
+        return ""
+
+    try:
+        from openai import OpenAI
+        client_kwargs = {"api_key": key}
+        if OPENAI_API_BASE:
+            client_kwargs["base_url"] = OPENAI_API_BASE
+        client = OpenAI(**client_kwargs)
+    except Exception:
+        _llm_rewrite_cache.put(question, "")
+        return ""
+
+    system_prompt = (
+        "你是医美知识库的查询改写助手。用户的问题可能包含俗称、缩写或口语化表达，"
+        "请将其改写为知识库能理解的规范术语。\n"
+        "规则：\n"
+        "1. 只改写术语，保留用户的原始意图和问题结构\n"
+        "2. 如果用户用语已经规范或你不确定对应关系，原样返回用户问题\n"
+        "3. 只输出改写后的问题，不要解释\n"
+        f"\n知识库已有的术语包括：{_KNOWN_VOCAB}\n"
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ],
+            temperature=0.1,
+            max_tokens=150,
+        )
+        if not resp.choices:
+            _llm_rewrite_cache.put(question, "")
+            return ""
+        result = (resp.choices[0].message.content or "").strip()
+        # 验证结果有效性
+        if not result or _RE_NO_REWRITE.search(result) or result == question:
+            _llm_rewrite_cache.put(question, "")
+            return ""
+        _llm_rewrite_cache.put(question, result)
+        return result
+    except Exception as e:
+        try:
+            from rag_logger import log_error
+            log_error("llm_rewrite_query", f"LLM 查询改写失败: {e}",
+                      meta={"question": question[:100]})
+        except Exception:
+            pass
+        _llm_rewrite_cache.put(question, "")
+        return ""
+
 
 # 指代词模式：命中时用产品名**替换**指代词
 # 支持句首和句中匹配（如 "怎么样，这个产品呢？"）
@@ -394,6 +550,27 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([search_q] + expanded_terms))
 
+    # ---- LLM 查询改写（方案3）----
+    # 当静态同义词/别名/路由关键词全部未命中时，调用 LLM 将未知术语映射到已知概念
+    # 例如 "瘦脸针安全吗" → "肉毒素注射安全吗"，"超皮秒" → "皮秒激光"
+    llm_rewritten = ""
+    if _should_trigger_llm_rewrite(q, products, projects, detected_routes,
+                                    is_chitchat, is_offtopic):
+        llm_rewritten = _llm_rewrite_query(q)
+        if llm_rewritten:
+            # LLM 改写成功：用改写结果替换检索查询，同时保留原始查询做混合检索
+            search_q = llm_rewritten
+            # 重新检测改写后的产品/项目/路由（可能映射到了已知实体）
+            products = detect_terms(llm_rewritten, PRODUCT_ALIASES) or products
+            projects = detect_terms(llm_rewritten, PROJECT_ALIASES) or projects
+            detected_routes = _detect_route_for_expansion(llm_rewritten) or detected_routes
+            # 补充改写后的扩展词
+            for rt in detected_routes:
+                expanded_terms.extend(_ROUTE_EXPANSION.get(rt, []))
+            # 重建 expanded_query：原始查询 + LLM 改写 + 扩展词
+            expanded_query = " ".join(uniq([q, llm_rewritten] + expanded_terms))
+            sub_questions = split_multi_question(llm_rewritten)
+
     # 构建多轮历史摘要供 LLM 使用（单次扫描同时提取 summary + pairs）
     history_summary = ""
     history_pairs: List[Dict] = []
@@ -416,6 +593,7 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         "symptoms": uniq(symptoms),
         "sub_questions": sub_questions,
         "detected_routes": detected_routes,   # rewrite 阶段检测到的路由（供 answer_one 参考）
+        "llm_rewritten": llm_rewritten,       # LLM 改写结果（空=未触发或无改写）
         "history_summary": history_summary,   # 多轮摘要，供 LLM prompt
         "history_pairs": history_pairs,       # 完整 Q&A 对，供 LLM 深度理解
         "last_user_q": last_user_q,           # 上一轮用户问题

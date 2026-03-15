@@ -251,6 +251,10 @@ CHUNK_SIZE = 420
 CHUNK_OVERLAP = 50
 
 # ===== LLM 参数 =====
+# LLM 查询改写开关：当静态同义词/别名无法识别用户术语时，调用 LLM 改写查询
+# 依赖 USE_OPENAI=1，可独立关闭以节省 token
+LLM_REWRITE_ENABLED = _os.environ.get("RAG_LLM_REWRITE", "1").strip().lower() in ("1", "true", "yes")
+
 LLM_TEMPERATURE = 0.3
 LLM_MAX_TOKENS_BRIEF = 1500
 LLM_MAX_TOKENS_FULL = 2500
