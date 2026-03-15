@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -515,3 +515,346 @@ def admin_logs_miss(limit: int = 20):
 @app.get("/admin/logs/error")
 def admin_logs_error(limit: int = 20):
     return {"items": get_recent_errors(limit=min(max(1, limit), 100))}
+
+
+# ===== 知识库文件管理接口 =====
+
+# 安全校验：产品名只允许字母数字下划线横线
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-\u4e00-\u9fff]+$")
+# 允许上传的文件名白名单
+_ALLOWED_FILES = {"main.txt", "faq.txt", "alias.txt", "media.json"}
+# 允许的文件扩展名
+_ALLOWED_EXTENSIONS = {".txt", ".json"}
+
+
+def _validate_product_name(name: str) -> str:
+    """校验并清理产品名"""
+    name = name.strip()
+    if not name or not _SAFE_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="非法产品名称：只允许字母、数字、下划线、横线、中文")
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(status_code=400, detail="非法产品名称")
+    # 路径遍历防护
+    product_dir = (KNOWLEDGE_DIR / name).resolve()
+    if not str(product_dir).startswith(str(KNOWLEDGE_DIR.resolve()) + "/"):
+        raise HTTPException(status_code=400, detail="非法产品名称")
+    return name
+
+
+@app.get("/admin/knowledge/{product}")
+def admin_knowledge_files(product: str):
+    """列出某产品的知识库文件"""
+    product = _validate_product_name(product)
+    pdir = KNOWLEDGE_DIR / product
+    if not pdir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+    files = []
+    for f in sorted(pdir.iterdir()):
+        if f.is_file():
+            stat = f.stat()
+            files.append({
+                "name": f.name,
+                "size": stat.st_size,
+                "modified": int(stat.st_mtime),
+                "editable": f.suffix in _ALLOWED_EXTENSIONS,
+            })
+    return {"product": product, "files": files}
+
+
+@app.get("/admin/knowledge/{product}/{filename}")
+def admin_knowledge_read(product: str, filename: str):
+    """读取知识库文件内容"""
+    product = _validate_product_name(product)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    fpath = KNOWLEDGE_DIR / product / filename
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+    # 路径遍历二次防护
+    if not str(fpath.resolve()).startswith(str(KNOWLEDGE_DIR.resolve()) + "/"):
+        raise HTTPException(status_code=400, detail="非法路径")
+    try:
+        content = fpath.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = fpath.read_text(encoding="utf-8-sig", errors="replace")
+    return {"product": product, "filename": filename, "content": content,
+            "size": len(content)}
+
+
+class KnowledgeWriteRequest(BaseModel):
+    content: str = Field(..., min_length=0)
+
+
+@app.put("/admin/knowledge/{product}/{filename}")
+def admin_knowledge_write(product: str, filename: str, req: KnowledgeWriteRequest):
+    """写入/更新知识库文件内容"""
+    product = _validate_product_name(product)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"不允许的文件类型: {suffix}")
+    pdir = KNOWLEDGE_DIR / product
+    pdir.mkdir(parents=True, exist_ok=True)
+    fpath = pdir / filename
+    # 路径遍历防护
+    if not str(fpath.resolve()).startswith(str((KNOWLEDGE_DIR / product).resolve())):
+        raise HTTPException(status_code=400, detail="非法路径")
+    # 原子写入
+    tmp = fpath.with_suffix(fpath.suffix + ".tmp")
+    try:
+        tmp.write_text(req.content, encoding="utf-8")
+        import os as _os
+        _os.replace(str(tmp), str(fpath))
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"写入失败: {e}")
+    return {"ok": True, "product": product, "filename": filename,
+            "size": len(req.content)}
+
+
+@app.delete("/admin/knowledge/{product}/{filename}")
+def admin_knowledge_delete(product: str, filename: str):
+    """删除知识库文件"""
+    product = _validate_product_name(product)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    fpath = KNOWLEDGE_DIR / product / filename
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+    if not str(fpath.resolve()).startswith(str(KNOWLEDGE_DIR.resolve()) + "/"):
+        raise HTTPException(status_code=400, detail="非法路径")
+    fpath.unlink()
+    return {"ok": True, "deleted": filename}
+
+
+class CreateProductRequest(BaseModel):
+    product: str = Field(..., min_length=1, max_length=50)
+
+
+@app.post("/admin/knowledge/create_product")
+def admin_create_product(req: CreateProductRequest):
+    """创建新产品目录"""
+    product = _validate_product_name(req.product)
+    pdir = KNOWLEDGE_DIR / product
+    if pdir.exists():
+        raise HTTPException(status_code=409, detail=f"产品 '{product}' 已存在")
+    pdir.mkdir(parents=True, exist_ok=True)
+    # 创建空的 main.txt
+    (pdir / "main.txt").write_text("", encoding="utf-8")
+    return {"ok": True, "product": product}
+
+
+@app.delete("/admin/knowledge/{product}")
+def admin_delete_product(product: str):
+    """删除产品目录（含所有文件）"""
+    product = _validate_product_name(product)
+    pdir = KNOWLEDGE_DIR / product
+    if not pdir.exists():
+        raise HTTPException(status_code=404, detail=f"产品 '{product}' 不存在")
+    import shutil
+    shutil.rmtree(pdir)
+    # 清理对应的索引
+    from rag_runtime_config import STORE_ROOT
+    store_dir = STORE_ROOT / product
+    if store_dir.exists():
+        shutil.rmtree(store_dir)
+    invalidate_store_cache(product)
+    invalidate_media_cache(product)
+    return {"ok": True, "deleted": product}
+
+
+# ===== 文件上传接口 =====
+
+@app.post("/admin/upload")
+async def admin_upload(request: "Request"):
+    """通用文件上传：支持上传 txt/json 文件到指定产品目录。
+    Form fields: product (str), files (UploadFile[])
+    """
+    from starlette.requests import Request as _Req
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=400, detail="需要 multipart/form-data 格式")
+    try:
+        form = await request.form()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"解析表单失败: {e}")
+    product = str(form.get("product", "")).strip()
+    if not product:
+        raise HTTPException(status_code=400, detail="缺少 product 字段")
+    product = _validate_product_name(product)
+    pdir = KNOWLEDGE_DIR / product
+    pdir.mkdir(parents=True, exist_ok=True)
+    uploaded = []
+    errors = []
+    for key in form:
+        if key == "product":
+            continue
+        item = form[key]
+        # UploadFile 对象
+        if hasattr(item, "filename") and hasattr(item, "read"):
+            fname = item.filename or ""
+            if ".." in fname or "/" in fname or "\\" in fname:
+                errors.append({"file": fname, "error": "非法文件名"})
+                continue
+            suffix = Path(fname).suffix.lower()
+            if suffix not in _ALLOWED_EXTENSIONS:
+                errors.append({"file": fname, "error": f"不允许的文件类型: {suffix}"})
+                continue
+            try:
+                content = await item.read()
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    text = content.decode("utf-8-sig")
+                except Exception:
+                    text = content.decode("gbk", errors="replace")
+            fpath = pdir / fname
+            # 原子写入
+            tmp = fpath.with_suffix(fpath.suffix + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            import os as _os2
+            _os2.replace(str(tmp), str(fpath))
+            uploaded.append({"file": fname, "size": len(text)})
+    return {"ok": True, "product": product, "uploaded": uploaded, "errors": errors}
+
+
+# ===== 批量上传：ZIP 包解压 =====
+
+@app.post("/admin/upload_zip")
+async def admin_upload_zip(request: "Request"):
+    """上传 ZIP 包，自动解压到知识库。
+    ZIP 内部结构：product_name/main.txt, product_name/faq.txt 等
+    """
+    import zipfile
+    import io
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=400, detail="需要 multipart/form-data 格式")
+    form = await request.form()
+    results = []
+    for key in form:
+        item = form[key]
+        if not hasattr(item, "read"):
+            continue
+        fname = getattr(item, "filename", "") or ""
+        if not fname.lower().endswith(".zip"):
+            results.append({"file": fname, "error": "只支持 .zip 文件"})
+            continue
+        data = await item.read()
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    # 安全校验路径
+                    parts = Path(info.filename).parts
+                    if len(parts) < 2:
+                        continue
+                    product_name = parts[0]
+                    file_name = parts[-1]
+                    if ".." in info.filename:
+                        continue
+                    suffix = Path(file_name).suffix.lower()
+                    if suffix not in _ALLOWED_EXTENSIONS:
+                        continue
+                    try:
+                        product_name = _validate_product_name(product_name)
+                    except Exception:
+                        continue
+                    pdir = KNOWLEDGE_DIR / product_name
+                    pdir.mkdir(parents=True, exist_ok=True)
+                    content = zf.read(info.filename)
+                    try:
+                        text = content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text = content.decode("utf-8-sig", errors="replace")
+                    (pdir / file_name).write_text(text, encoding="utf-8")
+                    results.append({"product": product_name, "file": file_name,
+                                    "size": len(text)})
+        except zipfile.BadZipFile:
+            results.append({"file": fname, "error": "无效的 ZIP 文件"})
+    return {"ok": True, "results": results}
+
+
+# ===== 运行时配置接口 =====
+
+@app.get("/admin/config")
+def admin_get_config():
+    """获取所有可调参数"""
+    from rag_runtime_config import get_tunable_config
+    return get_tunable_config()
+
+
+class ConfigUpdateRequest(BaseModel):
+    updates: Dict[str, Any]
+
+
+@app.post("/admin/config")
+def admin_update_config(req: ConfigUpdateRequest):
+    """热更新运行时参数"""
+    from rag_runtime_config import update_tunable_config
+    changed = update_tunable_config(req.updates)
+    return {"ok": True, "changed": changed}
+
+
+@app.get("/admin/config/model")
+def admin_get_model_config():
+    """获取当前模型配置"""
+    from rag_runtime_config import get_model_config
+    return get_model_config()
+
+
+class ModelSwitchRequest(BaseModel):
+    provider: str = Field(..., min_length=1)
+    model: str = ""
+    api_base: str = ""
+    api_key: str = ""
+
+
+@app.post("/admin/config/model")
+def admin_switch_model(req: ModelSwitchRequest):
+    """切换模型提供商"""
+    from rag_runtime_config import switch_model_provider
+    result = switch_model_provider(req.provider, req.model, req.api_base, req.api_key)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+# ===== 系统状态接口 =====
+
+@app.get("/admin/stats")
+def admin_stats():
+    """获取系统统计信息"""
+    from rag_runtime_config import STORE_ROOT
+    products_info = []
+    if KNOWLEDGE_DIR.exists():
+        shared_names = _SHARED_DIR_NAMES
+        for p in sorted(KNOWLEDGE_DIR.iterdir()):
+            if not p.is_dir() or p.name in shared_names:
+                continue
+            info = {"name": p.name, "files": [], "total_size": 0}
+            for f in p.iterdir():
+                if f.is_file():
+                    size = f.stat().st_size
+                    info["files"].append({"name": f.name, "size": size})
+                    info["total_size"] += size
+            # 索引状态
+            store = STORE_ROOT / p.name
+            info["index_exists"] = (store / "index.faiss").exists()
+            info["docs_count"] = 0
+            docs_path = store / "docs.jsonl"
+            if docs_path.exists():
+                info["docs_count"] = sum(1 for _ in docs_path.open("r", encoding="utf-8"))
+            products_info.append(info)
+    # 共享知识
+    shared_store = STORE_ROOT / "_shared"
+    shared_docs = 0
+    if (shared_store / "docs.jsonl").exists():
+        shared_docs = sum(1 for _ in (shared_store / "docs.jsonl").open("r", encoding="utf-8"))
+    return {
+        "products": products_info,
+        "shared_docs": shared_docs,
+        "shared_indexed": (shared_store / "index.faiss").exists(),
+    }

@@ -394,3 +394,221 @@ FAQ_FAST_PATH_DEFAULT = {"score": 0.40, "ratio": 0.50}
 
 # ===== 测试 =====
 REGRESSION_CASES_FILE = BASE_DIR / "regression_cases.json"
+
+# ===== 运行时热更新支持 =====
+# 允许通过 API 修改的参数白名单及其类型验证
+import json as _json
+import threading as _threading
+
+_CONFIG_FILE = BASE_DIR / "data" / "runtime_overrides.json"
+_config_lock = _threading.Lock()
+
+# 模型提供商预设
+MODEL_PRESETS = {
+    "openai": {
+        "label": "OpenAI",
+        "models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
+        "default_model": "gpt-4o-mini",
+        "api_base": "",
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "default_model": "deepseek-chat",
+        "api_base": "https://api.deepseek.com/v1",
+    },
+    "minimax": {
+        "label": "MiniMax",
+        "models": ["MiniMax-Text-01", "abab6.5s-chat", "abab5.5-chat"],
+        "default_model": "MiniMax-Text-01",
+        "api_base": "https://api.minimax.chat/v1",
+    },
+    "custom": {
+        "label": "Custom / 自定义",
+        "models": [],
+        "default_model": "",
+        "api_base": "",
+    },
+}
+
+# 可热更新参数定义：key -> (module_var_name, type, min, max, description)
+TUNABLE_PARAMS = {
+    # 搜索参数
+    "bm25_k1":          ("BM25_K1",          float, 0.5, 5.0,   "BM25 词频饱和参数"),
+    "bm25_b":           ("BM25_B",           float, 0.0, 1.0,   "BM25 文档长度归一化"),
+    "sigmoid_scale":    ("SIGMOID_SCALE",    float, 1.0, 20.0,  "BM25 分数 sigmoid 缩放"),
+    "route_boost":      ("ROUTE_BOOST",      float, 0.0, 0.5,   "路由匹配加分"),
+    "vector_top_k":     ("VECTOR_TOP_K",     int,   1,   50,    "向量检索返回数"),
+    "keyword_top_k":    ("KEYWORD_TOP_K",    int,   1,   50,    "关键词检索返回数"),
+    "hybrid_vw":        ("HYBRID_VECTOR_WEIGHT",  float, 0.0, 1.0, "混合检索向量权重"),
+    "hybrid_kw":        ("HYBRID_KEYWORD_WEIGHT", float, 0.0, 1.0, "混合检索关键词权重"),
+    # Reranker
+    "rerank_enabled":   ("RERANK_ENABLED",   bool, None, None,  "启用 Reranker 重排序"),
+    "rerank_top_n":     ("RERANK_TOP_N",     int,   5,   50,    "Reranker 候选数"),
+    # 动态阈值
+    "dyn_threshold_enabled": ("DYNAMIC_THRESHOLD_ENABLED", bool, None, None, "启用动态阈值"),
+    "dyn_ratio":        ("DYNAMIC_THRESHOLD_RATIO",       float, 0.1, 0.9, "动态阈值比率"),
+    "dyn_floor_ratio":  ("DYNAMIC_THRESHOLD_FLOOR_RATIO", float, 0.3, 1.0, "动态阈值下限比率"),
+    # LLM 参数
+    "llm_temperature":  ("LLM_TEMPERATURE",       float, 0.0, 1.0,  "LLM 默认温度"),
+    "llm_max_brief":    ("LLM_MAX_TOKENS_BRIEF",  int,   100, 4000, "LLM brief 最大 token"),
+    "llm_max_full":     ("LLM_MAX_TOKENS_FULL",   int,   200, 8000, "LLM full 最大 token"),
+    "llm_rewrite":      ("LLM_REWRITE_ENABLED",   bool,  None, None, "启用 LLM 查询改写"),
+    # 分块参数
+    "chunk_size":       ("CHUNK_SIZE",       int,   100, 2000, "文本分块大小（字符）"),
+    "chunk_overlap":    ("CHUNK_OVERLAP",    int,   0,   500,  "分块重叠长度"),
+    # FAISS
+    "faiss_index_type": ("FAISS_INDEX_TYPE", str,   None, None, "FAISS 索引类型 (flat/hnsw)"),
+    "hnsw_m":           ("FAISS_HNSW_M",    int,   4,   128,  "HNSW 连接数"),
+    "hnsw_ef_construction": ("FAISS_HNSW_EF_CONSTRUCTION", int, 40, 800, "HNSW 构建搜索范围"),
+    "hnsw_ef_search":   ("FAISS_HNSW_EF_SEARCH", int, 16, 512, "HNSW 查询搜索范围"),
+    # 模型切换
+    "use_openai":       ("USE_OPENAI",       bool, None, None, "启用 LLM（OpenAI 兼容）"),
+    "openai_model":     ("OPENAI_MODEL",     str,  None, None, "LLM 模型名称"),
+    "openai_api_base":  ("OPENAI_API_BASE",  str,  None, None, "LLM API 地址"),
+}
+
+
+def get_tunable_config() -> dict:
+    """获取所有可调参数的当前值"""
+    import rag_runtime_config as _mod
+    result = {}
+    for key, (var_name, vtype, vmin, vmax, desc) in TUNABLE_PARAMS.items():
+        val = getattr(_mod, var_name, None)
+        result[key] = {
+            "value": val,
+            "type": vtype.__name__,
+            "min": vmin,
+            "max": vmax,
+            "description": desc,
+            "var_name": var_name,
+        }
+    return result
+
+
+def update_tunable_config(updates: dict) -> dict:
+    """热更新可调参数，返回实际更新的字段"""
+    import rag_runtime_config as _mod
+    changed = {}
+    for key, new_val in updates.items():
+        if key not in TUNABLE_PARAMS:
+            continue
+        var_name, vtype, vmin, vmax, desc = TUNABLE_PARAMS[key]
+        # 类型转换
+        try:
+            if vtype == bool:
+                if isinstance(new_val, str):
+                    new_val = new_val.strip().lower() in ("1", "true", "yes", "on")
+                else:
+                    new_val = bool(new_val)
+            elif vtype == int:
+                new_val = int(new_val)
+            elif vtype == float:
+                new_val = float(new_val)
+            else:
+                new_val = str(new_val).strip()
+        except (ValueError, TypeError):
+            continue
+        # 范围校验
+        if vtype in (int, float) and vmin is not None and vmax is not None:
+            new_val = max(vmin, min(vmax, new_val))
+        # 特殊校验
+        if key == "faiss_index_type" and new_val not in ("flat", "hnsw"):
+            continue
+        old_val = getattr(_mod, var_name, None)
+        if old_val != new_val:
+            setattr(_mod, var_name, new_val)
+            changed[key] = {"old": old_val, "new": new_val}
+    # 持久化覆盖值
+    if changed:
+        _persist_overrides(updates)
+    return changed
+
+
+def _persist_overrides(updates: dict) -> None:
+    """将运行时覆盖保存到文件，下次启动时自动加载"""
+    with _config_lock:
+        data_dir = _CONFIG_FILE.parent
+        data_dir.mkdir(parents=True, exist_ok=True)
+        existing = {}
+        if _CONFIG_FILE.exists():
+            try:
+                existing = _json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        for key, val in updates.items():
+            if key in TUNABLE_PARAMS:
+                existing[key] = val
+        tmp = _CONFIG_FILE.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_CONFIG_FILE)
+
+
+def load_persisted_overrides() -> dict:
+    """启动时加载持久化的覆盖值"""
+    if not _CONFIG_FILE.exists():
+        return {}
+    try:
+        data = _json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+        if data:
+            changed = update_tunable_config(data)
+            if changed:
+                print(f"[INFO] 加载了 {len(changed)} 个运行时配置覆盖: {list(changed.keys())}")
+            return changed
+    except Exception as e:
+        print(f"[WARN] 加载运行时配置覆盖失败: {e}")
+    return {}
+
+
+def get_model_config() -> dict:
+    """获取当前模型配置"""
+    return {
+        "use_openai": USE_OPENAI,
+        "model": OPENAI_MODEL,
+        "api_base": OPENAI_API_BASE or "",
+        "api_key_set": bool(_os.environ.get("OPENAI_API_KEY", "").strip()),
+        "llm_rewrite": LLM_REWRITE_ENABLED,
+        "presets": MODEL_PRESETS,
+    }
+
+
+def switch_model_provider(provider: str, model: str = "", api_base: str = "",
+                          api_key: str = "") -> dict:
+    """切换模型提供商"""
+    import rag_runtime_config as _mod
+    preset = MODEL_PRESETS.get(provider)
+    if not preset and provider != "custom":
+        return {"error": f"未知提供商: {provider}"}
+    if preset and not model:
+        model = preset["default_model"]
+    if preset and not api_base:
+        api_base = preset["api_base"]
+    _mod.USE_OPENAI = True
+    _mod.OPENAI_MODEL = model
+    _mod.OPENAI_API_BASE = api_base or None
+    if api_key:
+        _os.environ["OPENAI_API_KEY"] = api_key
+    # 重置 OpenAI client 缓存（强制下次调用重新创建）
+    try:
+        from rag_answer import _get_openai_client
+        import rag_answer
+        rag_answer._openai_client = None
+        rag_answer._openai_client_checked = False
+    except Exception:
+        pass
+    # 持久化
+    _persist_overrides({
+        "use_openai": True,
+        "openai_model": model,
+        "openai_api_base": api_base or "",
+    })
+    return {
+        "ok": True,
+        "provider": provider,
+        "model": model,
+        "api_base": api_base or "",
+    }
+
+
+# 启动时自动加载持久化覆盖
+load_persisted_overrides()

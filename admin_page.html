@@ -3,228 +3,1192 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RAG 后台管理页</title>
+  <title>RAG 后台管理中心</title>
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
-           margin: 0; padding: 16px 24px; background:#f5f6fa; color:#222; }
-    h1 { font-size: 22px; margin-bottom: 20px; }
-    h2 { font-size: 16px; margin: 0 0 12px; }
-    .card { background:#fff; border-radius:12px; padding:16px 20px; margin-bottom:16px;
-            box-shadow:0 1px 4px rgba(0,0,0,.08); }
-    button { padding:7px 14px; border:none; border-radius:6px; cursor:pointer;
-             background:#4f6ef7; color:#fff; font-size:13px; transition: background .15s; }
-    button:hover { background:#3b5de7; }
-    button.secondary { background:#e8e8ec; color:#333; }
-    button.secondary:hover { background:#d4d4da; }
-    button.danger { background:#e54d42; }
-    button.danger:hover { background:#c93a30; }
-    button.success { background:#2db84d; }
-    button.success:hover { background:#24a043; }
-    input { padding:7px 10px; border:1px solid #d0d0d6; border-radius:6px; width:220px; font-size:13px; }
-    pre { white-space:pre-wrap; word-break:break-word; background:#fafafa;
-          padding:12px; border-radius:8px; max-height:400px; overflow-y:auto;
-          font-size:12px; line-height:1.5; }
-    .tabs { display:flex; gap:8px; margin-bottom:12px; }
-    .tabs button { font-size:13px; }
-    .tabs button.active { background:#4f6ef7; color:#fff; }
-    .tabs button:not(.active) { background:#e8e8ec; color:#333; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th { text-align:left; padding:8px 10px; background:#f0f1f5; border-bottom:2px solid #ddd;
-         font-weight:600; position:sticky; top:0; }
-    td { padding:7px 10px; border-bottom:1px solid #eee; }
-    tr:hover td { background:#f8f9ff; }
-    .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-    .badge-approved { background:#e6f9ed; color:#1a8c3f; }
-    .badge-pending { background:#fff3e0; color:#b36b00; }
-    .badge-static { background:#e8ecff; color:#3b5de7; }
-    .stats { display:flex; gap:16px; margin-bottom:12px; }
-    .stat-box { background:#f0f1f5; border-radius:8px; padding:10px 16px; text-align:center; }
-    .stat-num { font-size:24px; font-weight:700; color:#4f6ef7; }
-    .stat-label { font-size:11px; color:#888; margin-top:2px; }
-    .table-wrap { max-height:500px; overflow-y:auto; border:1px solid #eee; border-radius:8px; }
-    .search-bar { margin-bottom:10px; }
-    .search-bar input { width:300px; }
+    :root {
+      --primary: #4f6ef7; --primary-dark: #3b5de7; --primary-light: #e8ecff;
+      --success: #2db84d; --danger: #e54d42; --warning: #f5a623;
+      --bg: #f0f2f5; --card: #fff; --border: #e0e0e6; --text: #1a1a2e;
+      --text-secondary: #666; --radius: 10px; --shadow: 0 2px 8px rgba(0,0,0,.06);
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+           background: var(--bg); color: var(--text); font-size: 14px; }
+
+    /* Layout */
+    .app { display: flex; min-height: 100vh; }
+    .sidebar { width: 220px; background: #1a1a2e; color: #ccc; padding: 0; flex-shrink: 0;
+               position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto; z-index: 100; }
+    .sidebar .logo { padding: 20px 16px; font-size: 17px; font-weight: 700; color: #fff;
+                     border-bottom: 1px solid rgba(255,255,255,.08); }
+    .sidebar .logo small { display: block; font-size: 11px; color: #888; font-weight: 400; margin-top: 3px; }
+    .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+                     color: #aab; text-decoration: none; font-size: 13px; transition: all .15s;
+                     border-left: 3px solid transparent; }
+    .sidebar nav a:hover { background: rgba(255,255,255,.06); color: #fff; }
+    .sidebar nav a.active { background: rgba(79,110,247,.15); color: var(--primary);
+                            border-left-color: var(--primary); font-weight: 600; }
+    .sidebar nav .group-label { padding: 16px 18px 6px; font-size: 11px; color: #555;
+                                text-transform: uppercase; letter-spacing: 1px; }
+    .main { margin-left: 220px; padding: 24px 28px; flex: 1; min-width: 0; }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* Common */
+    h1 { font-size: 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+    h2 { font-size: 15px; margin: 0 0 14px; color: var(--text); }
+    .card { background: var(--card); border-radius: var(--radius); padding: 18px 22px;
+            margin-bottom: 16px; box-shadow: var(--shadow); }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .col { flex: 1; min-width: 280px; }
+
+    /* Buttons */
+    button, .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;
+             font-size: 13px; font-weight: 500; transition: all .15s; display: inline-flex;
+             align-items: center; gap: 6px; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #24a043; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #c93a30; }
+    .btn-warning { background: var(--warning); color: #fff; }
+    .btn-warning:hover { background: #db9520; }
+    .btn-secondary { background: #e8e8ec; color: #333; }
+    .btn-secondary:hover { background: #d4d4da; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-ghost { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+    .btn-ghost:hover { background: var(--primary-light); }
+
+    /* Form */
+    input, select, textarea { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
+                              font-size: 13px; font-family: inherit; transition: border .15s; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary);
+                                                box-shadow: 0 0 0 3px rgba(79,110,247,.12); }
+    textarea { resize: vertical; min-height: 120px; width: 100%; }
+    label { font-size: 13px; font-weight: 500; display: block; margin-bottom: 5px; color: var(--text); }
+    .form-group { margin-bottom: 14px; }
+    .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .form-hint { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+    .inline-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider { position: absolute; inset: 0; background: #ccc; border-radius: 22px;
+                      transition: .2s; cursor: pointer; }
+    .switch .slider:before { content: ''; position: absolute; height: 16px; width: 16px;
+                             left: 3px; bottom: 3px; background: #fff; border-radius: 50%;
+                             transition: .2s; }
+    .switch input:checked + .slider { background: var(--primary); }
+    .switch input:checked + .slider:before { transform: translateX(18px); }
+
+    /* Stats */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px;
+                  margin-bottom: 16px; }
+    .stat-card { background: #f8f9fb; border-radius: 8px; padding: 14px; text-align: center; }
+    .stat-card .num { font-size: 28px; font-weight: 700; color: var(--primary); }
+    .stat-card .lbl { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* Table */
+    .table-wrap { max-height: 500px; overflow: auto; border: 1px solid var(--border);
+                  border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; background: #f5f6fa; border-bottom: 2px solid #ddd;
+         font-weight: 600; position: sticky; top: 0; z-index: 1; }
+    td { padding: 8px 12px; border-bottom: 1px solid #eee; }
+    tr:hover td { background: #f8f9ff; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-ok { background: #e6f9ed; color: #1a8c3f; }
+    .badge-warn { background: #fff3e0; color: #b36b00; }
+    .badge-info { background: var(--primary-light); color: var(--primary); }
+    .badge-danger { background: #fde8e8; color: var(--danger); }
+
+    /* Toast */
+    .toast-container { position: fixed; top: 16px; right: 16px; z-index: 9999; display: flex;
+                       flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 20px; border-radius: 8px; color: #fff; font-size: 13px;
+             box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: slideIn .3s ease; min-width: 200px; }
+    .toast-success { background: var(--success); }
+    .toast-error { background: var(--danger); }
+    .toast-info { background: var(--primary); }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    /* Upload zone */
+    .upload-zone { border: 2px dashed var(--border); border-radius: 10px; padding: 36px;
+                   text-align: center; cursor: pointer; transition: all .2s; background: #fafbfc; }
+    .upload-zone:hover, .upload-zone.dragover { border-color: var(--primary); background: var(--primary-light); }
+    .upload-zone .icon { font-size: 36px; margin-bottom: 8px; }
+    .upload-zone p { color: var(--text-secondary); margin: 6px 0; }
+    .upload-list { margin-top: 12px; }
+    .upload-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+                   background: #f5f6fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px; }
+    .upload-item .name { flex: 1; }
+    .upload-item .size { color: var(--text-secondary); }
+
+    /* File editor */
+    .editor-wrap { position: relative; }
+    .editor-wrap textarea { font-family: 'Menlo', 'Consolas', monospace; font-size: 13px;
+                            line-height: 1.5; min-height: 400px; }
+    .editor-bar { display: flex; justify-content: space-between; align-items: center;
+                  padding: 8px 0; }
+
+    /* Config grid */
+    .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .config-item { background: #f8f9fb; border-radius: 8px; padding: 14px;
+                   display: flex; flex-direction: column; gap: 6px; }
+    .config-item label { font-weight: 600; font-size: 13px; margin: 0; }
+    .config-item .desc { font-size: 11px; color: var(--text-secondary); }
+    .config-item input[type="number"], .config-item input[type="text"], .config-item select {
+      width: 100%; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid var(--border);
+            padding-bottom: 0; }
+    .tabs button { padding: 10px 18px; border: none; background: none; cursor: pointer;
+                   font-size: 13px; font-weight: 500; color: var(--text-secondary);
+                   border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s; }
+    .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tabs button:hover { color: var(--text); }
+
+    /* Logs */
+    .log-entry { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 12px;
+                 line-height: 1.5; }
+    .log-entry:hover { background: #f8f9ff; }
+    .log-entry .meta { color: var(--text-secondary); margin-bottom: 4px; }
+    .log-entry .question { font-weight: 600; }
+    .log-entry .answer { color: #444; white-space: pre-wrap; word-break: break-word;
+                         max-height: 100px; overflow: hidden; }
+    .log-entry .answer.expanded { max-height: none; }
+
+    /* Model cards */
+    .model-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .model-card { border: 2px solid var(--border); border-radius: var(--radius); padding: 16px;
+                  cursor: pointer; transition: all .15s; text-align: center; }
+    .model-card:hover { border-color: var(--primary); background: var(--primary-light); }
+    .model-card.selected { border-color: var(--primary); background: var(--primary-light);
+                           box-shadow: 0 0 0 3px rgba(79,110,247,.15); }
+    .model-card .name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .model-card .models { font-size: 11px; color: var(--text-secondary); }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .sidebar { width: 60px; }
+      .sidebar .logo { font-size: 0; padding: 12px; }
+      .sidebar .logo small { display: none; }
+      .sidebar nav a { padding: 12px; justify-content: center; font-size: 0; }
+      .sidebar nav a .icon { font-size: 18px; }
+      .sidebar nav .group-label { display: none; }
+      .main { margin-left: 60px; padding: 16px; }
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #999; }
+
+    /* Progress */
+    .progress { height: 4px; background: #e0e0e6; border-radius: 2px; overflow: hidden; }
+    .progress .bar { height: 100%; background: var(--primary); transition: width .3s; }
   </style>
 </head>
 <body>
-  <h1>RAG 后台管理</h1>
-
-  <!-- 词库管理 -->
-  <div class="card">
-    <h2>词库管理</h2>
-    <div class="stats" id="synonym_stats">
-      <div class="stat-box"><div class="stat-num" id="stat_static">-</div><div class="stat-label">静态词条</div></div>
-      <div class="stat-box"><div class="stat-num" id="stat_learned">-</div><div class="stat-label">学习词条</div></div>
-      <div class="stat-box"><div class="stat-num" id="stat_total">-</div><div class="stat-label">总计</div></div>
-    </div>
-    <div class="tabs">
-      <button class="active" onclick="switchSynTab('learned')">LLM 学习词库</button>
-      <button onclick="switchSynTab('static')">静态同义词表</button>
-    </div>
-    <div class="search-bar">
-      <input id="syn_search" placeholder="搜索词条..." oninput="filterSynTable()">
-      <button onclick="loadSynonyms()">刷新</button>
-    </div>
-    <div id="syn_learned" class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>原始词</th><th>映射到</th><th>命中次数</th><th>首次出现</th><th>最近使用</th><th>状态</th><th>操作</th>
-        </tr></thead>
-        <tbody id="learned_tbody"></tbody>
-      </table>
-    </div>
-    <div id="syn_static" class="table-wrap" style="display:none">
-      <table>
-        <thead><tr><th>变体</th><th>规范形式</th></tr></thead>
-        <tbody id="static_tbody"></tbody>
-      </table>
-    </div>
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo">RAG 管理中心<small>Medical Aesthetics</small></div>
+    <nav>
+      <div class="group-label">知识库</div>
+      <a href="#" onclick="showPage('dashboard')" class="active" data-page="dashboard">
+        <span class="icon">&#x1f4ca;</span> 系统总览</a>
+      <a href="#" onclick="showPage('knowledge')" data-page="knowledge">
+        <span class="icon">&#x1f4da;</span> 知识库管理</a>
+      <a href="#" onclick="showPage('upload')" data-page="upload">
+        <span class="icon">&#x2b06;</span> 上传资料</a>
+      <a href="#" onclick="showPage('index')" data-page="index">
+        <span class="icon">&#x26a1;</span> 索引构建</a>
+      <div class="group-label">配置</div>
+      <a href="#" onclick="showPage('model')" data-page="model">
+        <span class="icon">&#x1f916;</span> 模型切换</a>
+      <a href="#" onclick="showPage('search')" data-page="search">
+        <span class="icon">&#x1f50d;</span> 搜索参数</a>
+      <a href="#" onclick="showPage('synonyms')" data-page="synonyms">
+        <span class="icon">&#x1f4d6;</span> 词库管理</a>
+      <div class="group-label">监控</div>
+      <a href="#" onclick="showPage('logs')" data-page="logs">
+        <span class="icon">&#x1f4cb;</span> 日志查看</a>
+    </nav>
   </div>
 
-  <!-- 知识库产品列表 -->
-  <div class="card">
-    <h2>知识库产品列表</h2>
-    <button onclick="loadProducts()">刷新</button>
-    <pre id="products">点击刷新查看</pre>
+  <div class="main">
+    <!-- ==================== 系统总览 ==================== -->
+    <div class="page active" id="page-dashboard">
+      <h1>&#x1f4ca; 系统总览</h1>
+      <div class="stats-grid" id="dash-stats"></div>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h2>产品知识库</h2>
+            <div id="dash-products"></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h2>最近问答</h2>
+            <div id="dash-qa" style="max-height:400px;overflow:auto"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 知识库管理 ==================== -->
+    <div class="page" id="page-knowledge">
+      <h1>&#x1f4da; 知识库管理</h1>
+      <div class="card">
+        <div class="form-row" style="margin-bottom:14px">
+          <select id="kb-product-select" onchange="loadKBFiles()" style="width:200px">
+            <option value="">-- 选择产品 --</option>
+          </select>
+          <button class="btn-primary btn-sm" onclick="promptCreateProduct()">+ 新建产品</button>
+          <button class="btn-secondary btn-sm" onclick="loadKBProductList()">刷新列表</button>
+          <button class="btn-danger btn-sm" onclick="deleteCurrentProduct()" id="btn-delete-product"
+                  style="display:none">删除产品</button>
+        </div>
+      </div>
+
+      <div id="kb-file-list" style="display:none">
+        <div class="card">
+          <h2>文件列表</h2>
+          <div style="margin-bottom:10px">
+            <button class="btn-success btn-sm" onclick="createNewFile()">+ 新建文件</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>文件名</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead>
+              <tbody id="kb-files-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="kb-editor" class="card" style="display:none">
+          <div class="editor-bar">
+            <h2 id="kb-editor-title">编辑文件</h2>
+            <div>
+              <button class="btn-primary btn-sm" onclick="saveKBFile()">保存</button>
+              <button class="btn-secondary btn-sm" onclick="closeEditor()">关闭</button>
+            </div>
+          </div>
+          <textarea id="kb-editor-content"></textarea>
+          <div class="form-hint" id="kb-editor-hint"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 上传资料 ==================== -->
+    <div class="page" id="page-upload">
+      <h1>&#x2b06; 上传资料</h1>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h2>单文件 / 多文件上传</h2>
+            <div class="form-group">
+              <label>目标产品</label>
+              <div class="form-row">
+                <select id="upload-product" style="width:200px"></select>
+                <input id="upload-new-product" placeholder="或输入新产品名" style="width:180px">
+              </div>
+            </div>
+            <div class="upload-zone" id="upload-zone"
+                 onclick="document.getElementById('upload-input').click()">
+              <div class="icon">&#x1f4c1;</div>
+              <p><strong>点击或拖拽文件到此处</strong></p>
+              <p>支持 .txt .json 文件，可同时上传多个</p>
+              <input type="file" id="upload-input" multiple accept=".txt,.json"
+                     style="display:none" onchange="handleFileSelect(event)">
+            </div>
+            <div class="upload-list" id="upload-file-list"></div>
+            <div style="margin-top:12px;display:flex;gap:8px">
+              <button class="btn-primary" onclick="doUpload()">上传文件</button>
+              <label class="inline-label">
+                <input type="checkbox" id="upload-auto-rebuild" checked>
+                上传后自动重建索引
+              </label>
+            </div>
+            <div id="upload-result" style="margin-top:10px"></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h2>ZIP 批量上传</h2>
+            <p style="color:var(--text-secondary);margin-bottom:12px">
+              上传 ZIP 包，按目录结构自动创建/更新产品知识库。<br>
+              ZIP 内部结构示例：<code>产品名/main.txt</code>、<code>产品名/faq.txt</code>
+            </p>
+            <div class="upload-zone" id="zip-upload-zone"
+                 onclick="document.getElementById('zip-input').click()">
+              <div class="icon">&#x1f4e6;</div>
+              <p><strong>点击上传 ZIP 包</strong></p>
+              <input type="file" id="zip-input" accept=".zip"
+                     style="display:none" onchange="handleZipUpload(event)">
+            </div>
+            <div id="zip-result" style="margin-top:10px"></div>
+          </div>
+          <div class="card">
+            <h2>快速创建模板</h2>
+            <p style="color:var(--text-secondary);margin-bottom:12px">
+              一键创建标准产品知识库模板，包含 main.txt / faq.txt / alias.txt
+            </p>
+            <div class="form-row">
+              <input id="template-product" placeholder="产品名（英文ID）" style="width:180px">
+              <input id="template-cn-name" placeholder="中文名" style="width:120px">
+              <button class="btn-success" onclick="createTemplate()">创建模板</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 索引构建 ==================== -->
+    <div class="page" id="page-index">
+      <h1>&#x26a1; 索引构建</h1>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h2>产品索引重建</h2>
+            <div class="form-row">
+              <select id="index-product" style="width:200px"></select>
+              <button class="btn-primary" onclick="rebuildIndex()">重建索引</button>
+              <button class="btn-warning" onclick="rebuildAllIndexes()">重建全部</button>
+            </div>
+            <div id="index-status" style="margin-top:12px"></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h2>共享知识索引</h2>
+            <p style="color:var(--text-secondary);margin-bottom:10px">
+              重建 procedures / equipment / anatomy 等共享知识库的索引
+            </p>
+            <button class="btn-primary" onclick="rebuildShared()">重建共享索引</button>
+            <div id="shared-index-status" style="margin-top:12px"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>索引状态一览</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>产品</th><th>文档数</th><th>索引状态</th><th>文件总大小</th><th>操作</th></tr></thead>
+            <tbody id="index-table-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 模型切换 ==================== -->
+    <div class="page" id="page-model">
+      <h1>&#x1f916; 模型切换</h1>
+      <div class="card">
+        <h2>选择 LLM 提供商</h2>
+        <div class="model-cards" id="model-cards"></div>
+      </div>
+      <div class="card" id="model-config-panel" style="display:none">
+        <h2>模型配置</h2>
+        <div class="form-group">
+          <label>模型名称</label>
+          <select id="model-name" style="width:300px" onchange="onModelNameChange()"></select>
+          <input id="model-name-custom" placeholder="自定义模型名" style="width:300px;display:none;margin-top:6px">
+        </div>
+        <div class="form-group">
+          <label>API Base URL</label>
+          <input id="model-api-base" style="width:400px" placeholder="留空使用默认地址">
+        </div>
+        <div class="form-group">
+          <label>API Key</label>
+          <input id="model-api-key" type="password" style="width:400px" placeholder="输入 API Key（留空保持不变）">
+          <div class="form-hint">API Key 不会回显，留空表示不更改当前 Key</div>
+        </div>
+        <div class="form-group">
+          <label class="inline-label">
+            <span class="switch"><input type="checkbox" id="model-enabled"><span class="slider"></span></span>
+            启用 LLM（关闭后使用纯规则提取）
+          </label>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn-primary" onclick="saveModelConfig()">保存并应用</button>
+          <button class="btn-ghost" onclick="testModelConnection()" style="margin-left:8px">测试连接</button>
+        </div>
+        <div id="model-test-result" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <h2>当前状态</h2>
+        <pre id="model-current-status" style="background:#f5f6fa;padding:12px;border-radius:8px;font-size:12px"></pre>
+      </div>
+    </div>
+
+    <!-- ==================== 搜索参数 ==================== -->
+    <div class="page" id="page-search">
+      <h1>&#x1f50d; 搜索参数调优</h1>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h2 style="margin:0">运行时参数（热更新，即时生效）</h2>
+          <div>
+            <button class="btn-primary" onclick="saveAllConfig()">保存全部</button>
+            <button class="btn-secondary" onclick="loadConfig()" style="margin-left:6px">刷新</button>
+          </div>
+        </div>
+        <div class="tabs" id="config-tabs">
+          <button class="active" onclick="switchConfigTab('search')">搜索参数</button>
+          <button onclick="switchConfigTab('llm')">LLM 参数</button>
+          <button onclick="switchConfigTab('index_cfg')">索引参数</button>
+          <button onclick="switchConfigTab('advanced')">高级参数</button>
+        </div>
+        <div id="config-content"></div>
+      </div>
+    </div>
+
+    <!-- ==================== 词库管理 ==================== -->
+    <div class="page" id="page-synonyms">
+      <h1>&#x1f4d6; 词库管理</h1>
+      <div class="card">
+        <div class="stats-grid" id="syn-stats"></div>
+        <div class="tabs">
+          <button class="active" onclick="switchSynTab('learned')">LLM 学习词库</button>
+          <button onclick="switchSynTab('static')">静态同义词</button>
+        </div>
+        <div style="margin-bottom:10px;display:flex;gap:8px">
+          <input id="syn_search" placeholder="搜索词条..." oninput="filterSynTable()" style="width:260px">
+          <button class="btn-secondary btn-sm" onclick="loadSynonyms()">刷新</button>
+        </div>
+        <div id="syn_learned" class="table-wrap">
+          <table><thead><tr><th>原始词</th><th>映射到</th><th>命中</th><th>首次</th><th>最近</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="learned_tbody"></tbody></table>
+        </div>
+        <div id="syn_static" class="table-wrap" style="display:none">
+          <table><thead><tr><th>变体</th><th>规范形式</th></tr></thead>
+          <tbody id="static_tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 日志查看 ==================== -->
+    <div class="page" id="page-logs">
+      <h1>&#x1f4cb; 日志查看</h1>
+      <div class="card">
+        <div class="tabs">
+          <button class="active" onclick="switchLogTab('qa')">问答日志</button>
+          <button onclick="switchLogTab('miss')">未命中</button>
+          <button onclick="switchLogTab('error')">错误日志</button>
+        </div>
+        <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+          <label style="margin:0">显示条数</label>
+          <select id="log-limit" style="width:80px" onchange="loadCurrentLog()">
+            <option value="20">20</option><option value="50">50</option><option value="100">100</option>
+          </select>
+          <button class="btn-secondary btn-sm" onclick="loadCurrentLog()">刷新</button>
+        </div>
+        <div id="log-content" style="max-height:600px;overflow:auto"></div>
+      </div>
+    </div>
   </div>
+</div>
 
-  <!-- 一键重建索引 -->
-  <div class="card">
-    <h2>一键重建索引</h2>
-    <input id="product" placeholder="例如 feiluoao" value="feiluoao">
-    <button onclick="rebuild()">开始重建</button>
-    <pre id="rebuild_out">等待执行</pre>
-  </div>
+<div class="toast-container" id="toast-container"></div>
 
-  <!-- 日志 -->
-  <div class="card">
-    <h2>最近问答日志</h2>
-    <button onclick="loadLogs('qa')">刷新问答</button>
-    <pre id="qa_logs">点击刷新查看</pre>
-  </div>
+<script>
+// ===== Global State =====
+let currentPage = 'dashboard';
+let currentLogTab = 'qa';
+let currentConfigTab = 'search';
+let configData = {};
+let currentSynTab = 'learned';
+let selectedProvider = '';
+let kbEditingFile = '';
+let kbEditingProduct = '';
+let uploadFiles = [];
 
-  <div class="card">
-    <h2>最近未命中</h2>
-    <button onclick="loadLogs('miss')">刷新未命中</button>
-    <pre id="miss_logs">点击刷新查看</pre>
-  </div>
+// ===== Navigation =====
+function showPage(page) {
+  currentPage = page;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelectorAll('.sidebar nav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.page === page);
+  });
+  // Auto-load data
+  const loaders = {
+    dashboard: loadDashboard,
+    knowledge: loadKBProductList,
+    upload: loadUploadProducts,
+    index: loadIndexStatus,
+    model: loadModelConfig,
+    search: loadConfig,
+    synonyms: loadSynonyms,
+    logs: loadCurrentLog,
+  };
+  if (loaders[page]) loaders[page]();
+}
 
-  <script>
-    // ===== 词库管理 =====
-    let synData = { static: [], learned: [] };
-    let currentSynTab = 'learned';
+// ===== Toast =====
+function toast(msg, type = 'info') {
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
+}
 
-    async function loadSynonyms() {
+// ===== Utilities =====
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function fmtTime(ts) { return ts ? ts.replace('T', ' ') : '-'; }
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024/1024).toFixed(1) + ' MB';
+}
+async function api(url, opts = {}) {
+  try {
+    const r = await fetch(url, opts);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+    return j;
+  } catch (e) {
+    toast(e.message, 'error');
+    throw e;
+  }
+}
+
+// ===== Dashboard =====
+async function loadDashboard() {
+  try {
+    const [stats, qa] = await Promise.all([
+      api('/admin/stats'),
+      api('/admin/logs/qa?limit=10'),
+    ]);
+    // Stats
+    const totalDocs = stats.products.reduce((s,p) => s + p.docs_count, 0);
+    const totalSize = stats.products.reduce((s,p) => s + p.total_size, 0);
+    document.getElementById('dash-stats').innerHTML = `
+      <div class="stat-card"><div class="num">${stats.products.length}</div><div class="lbl">产品数</div></div>
+      <div class="stat-card"><div class="num">${totalDocs}</div><div class="lbl">产品文档块</div></div>
+      <div class="stat-card"><div class="num">${stats.shared_docs}</div><div class="lbl">共享文档块</div></div>
+      <div class="stat-card"><div class="num">${fmtSize(totalSize)}</div><div class="lbl">知识库总大小</div></div>
+    `;
+    // Products table
+    document.getElementById('dash-products').innerHTML = stats.products.length
+      ? '<table><thead><tr><th>产品</th><th>文档块</th><th>索引</th><th>大小</th></tr></thead><tbody>'
+        + stats.products.map(p => `<tr>
+          <td><strong>${esc(p.name)}</strong></td>
+          <td>${p.docs_count}</td>
+          <td>${p.index_exists ? '<span class="badge badge-ok">OK</span>' : '<span class="badge badge-danger">缺失</span>'}</td>
+          <td>${fmtSize(p.total_size)}</td>
+        </tr>`).join('') + '</tbody></table>'
+      : '<p style="color:var(--text-secondary)">暂无产品</p>';
+    // QA logs
+    document.getElementById('dash-qa').innerHTML = (qa.items||[]).map(it => `
+      <div class="log-entry">
+        <div class="meta">${fmtTime(it.ts)} | ${it.meta?.method||'-'} | ${it.meta?.route||'-'}</div>
+        <div class="question">Q: ${esc(it.question)}</div>
+        <div class="answer">${esc((it.answer||'').substring(0,150))}</div>
+      </div>
+    `).join('') || '<p style="color:var(--text-secondary)">暂无日志</p>';
+  } catch(e) { console.error(e); }
+}
+
+// ===== Knowledge Base =====
+async function loadKBProductList() {
+  try {
+    const j = await api('/admin/products');
+    const sel = document.getElementById('kb-product-select');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">-- 选择产品 --</option>'
+      + (j.products||[]).map(p => `<option value="${esc(p.product)}">${esc(p.product)} (${p.files.length} files)</option>`).join('');
+    if (cur) { sel.value = cur; loadKBFiles(); }
+  } catch(e) {}
+}
+
+async function loadKBFiles() {
+  const product = document.getElementById('kb-product-select').value;
+  const panel = document.getElementById('kb-file-list');
+  const delBtn = document.getElementById('btn-delete-product');
+  if (!product) { panel.style.display = 'none'; delBtn.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  delBtn.style.display = '';
+  try {
+    const j = await api('/admin/knowledge/' + encodeURIComponent(product));
+    document.getElementById('kb-files-tbody').innerHTML = (j.files||[]).map(f => `<tr>
+      <td><strong>${esc(f.name)}</strong></td>
+      <td>${fmtSize(f.size)}</td>
+      <td>${new Date(f.modified*1000).toLocaleString()}</td>
+      <td>
+        ${f.editable ? `<button class="btn-primary btn-sm" onclick="editKBFile('${esc(product)}','${esc(f.name)}')">编辑</button> ` : ''}
+        <button class="btn-danger btn-sm" onclick="deleteKBFile('${esc(product)}','${esc(f.name)}')">删除</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">暂无文件</td></tr>';
+  } catch(e) {}
+}
+
+async function editKBFile(product, filename) {
+  try {
+    const j = await api(`/admin/knowledge/${encodeURIComponent(product)}/${encodeURIComponent(filename)}`);
+    kbEditingProduct = product;
+    kbEditingFile = filename;
+    document.getElementById('kb-editor').style.display = 'block';
+    document.getElementById('kb-editor-title').textContent = `编辑: ${product}/${filename}`;
+    document.getElementById('kb-editor-content').value = j.content;
+    document.getElementById('kb-editor-hint').textContent = `大小: ${fmtSize(j.size)}`;
+  } catch(e) {}
+}
+
+async function saveKBFile() {
+  if (!kbEditingProduct || !kbEditingFile) return;
+  const content = document.getElementById('kb-editor-content').value;
+  try {
+    await api(`/admin/knowledge/${encodeURIComponent(kbEditingProduct)}/${encodeURIComponent(kbEditingFile)}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({content}),
+    });
+    toast('文件保存成功', 'success');
+    loadKBFiles();
+  } catch(e) {}
+}
+
+function closeEditor() {
+  document.getElementById('kb-editor').style.display = 'none';
+  kbEditingFile = ''; kbEditingProduct = '';
+}
+
+async function deleteKBFile(product, filename) {
+  if (!confirm(`确定删除 ${product}/${filename}？`)) return;
+  try {
+    await api(`/admin/knowledge/${encodeURIComponent(product)}/${encodeURIComponent(filename)}`, {method:'DELETE'});
+    toast('文件已删除', 'success');
+    loadKBFiles();
+  } catch(e) {}
+}
+
+async function promptCreateProduct() {
+  const name = prompt('请输入产品名称（英文ID，如 new_product）：');
+  if (!name) return;
+  try {
+    await api('/admin/knowledge/create_product', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({product: name.trim()}),
+    });
+    toast('产品创建成功', 'success');
+    loadKBProductList();
+  } catch(e) {}
+}
+
+async function deleteCurrentProduct() {
+  const product = document.getElementById('kb-product-select').value;
+  if (!product) return;
+  if (!confirm(`确定删除产品「${product}」及其所有文件和索引？此操作不可恢复！`)) return;
+  if (!confirm(`再次确认：删除「${product}」？`)) return;
+  try {
+    await api(`/admin/knowledge/${encodeURIComponent(product)}`, {method:'DELETE'});
+    toast('产品已删除', 'success');
+    document.getElementById('kb-product-select').value = '';
+    document.getElementById('kb-file-list').style.display = 'none';
+    document.getElementById('btn-delete-product').style.display = 'none';
+    loadKBProductList();
+  } catch(e) {}
+}
+
+function createNewFile() {
+  const product = document.getElementById('kb-product-select').value;
+  if (!product) return;
+  const fname = prompt('输入文件名（如 main.txt、faq.txt、alias.txt）：', 'main.txt');
+  if (!fname) return;
+  kbEditingProduct = product;
+  kbEditingFile = fname;
+  document.getElementById('kb-editor').style.display = 'block';
+  document.getElementById('kb-editor-title').textContent = `新建: ${product}/${fname}`;
+  document.getElementById('kb-editor-content').value = '';
+  document.getElementById('kb-editor-hint').textContent = '新文件';
+}
+
+// ===== Upload =====
+async function loadUploadProducts() {
+  try {
+    const j = await api('/admin/products');
+    const sel = document.getElementById('upload-product');
+    sel.innerHTML = '<option value="">-- 选择已有产品 --</option>'
+      + (j.products||[]).map(p => `<option value="${esc(p.product)}">${esc(p.product)}</option>`).join('');
+  } catch(e) {}
+}
+
+function handleFileSelect(e) {
+  uploadFiles = Array.from(e.target.files);
+  renderUploadList();
+}
+
+function renderUploadList() {
+  document.getElementById('upload-file-list').innerHTML = uploadFiles.map((f,i) =>
+    `<div class="upload-item">
+      <span class="name">${esc(f.name)}</span>
+      <span class="size">${fmtSize(f.size)}</span>
+      <button class="btn-danger btn-sm" onclick="uploadFiles.splice(${i},1);renderUploadList()">移除</button>
+    </div>`
+  ).join('');
+}
+
+// Drag & drop
+document.addEventListener('DOMContentLoaded', () => {
+  const zone = document.getElementById('upload-zone');
+  if (!zone) return;
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    uploadFiles = [...uploadFiles, ...Array.from(e.dataTransfer.files).filter(f =>
+      f.name.endsWith('.txt') || f.name.endsWith('.json'))];
+    renderUploadList();
+  });
+});
+
+async function doUpload() {
+  if (!uploadFiles.length) { toast('请选择文件', 'error'); return; }
+  let product = document.getElementById('upload-product').value
+              || document.getElementById('upload-new-product').value.trim();
+  if (!product) { toast('请选择或输入产品名', 'error'); return; }
+  const fd = new FormData();
+  fd.append('product', product);
+  uploadFiles.forEach(f => fd.append('file_' + f.name, f));
+  const out = document.getElementById('upload-result');
+  out.innerHTML = '<span style="color:var(--primary)">上传中...</span>';
+  try {
+    const r = await fetch('/admin/upload', {method:'POST', body: fd});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'upload failed');
+    const ok = (j.uploaded||[]).length;
+    const err = (j.errors||[]).length;
+    out.innerHTML = `<span class="badge badge-ok">${ok} 个文件上传成功</span>`
+      + (err ? ` <span class="badge badge-danger">${err} 个失败</span>` : '');
+    toast(`${ok} 个文件上传成功`, 'success');
+    uploadFiles = [];
+    renderUploadList();
+    document.getElementById('upload-input').value = '';
+    // 自动重建
+    if (document.getElementById('upload-auto-rebuild').checked && ok > 0) {
+      out.innerHTML += '<br><span style="color:var(--primary)">正在重建索引...</span>';
       try {
-        const r = await fetch('/admin/synonyms/all');
-        const j = await r.json();
-        synData = j;
-        document.getElementById('stat_static').textContent = j.static_count || 0;
-        document.getElementById('stat_learned').textContent = j.learned_count || 0;
-        document.getElementById('stat_total').textContent = j.total_count || 0;
-        renderLearnedTable(j.learned || []);
-        renderStaticTable(j.static || []);
-      } catch (e) {
-        console.error('loadSynonyms error:', e);
-      }
+        await api('/admin/rebuild', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({product, timeout_sec:300})});
+        out.innerHTML += '<br><span class="badge badge-ok">索引重建完成</span>';
+        toast('索引重建完成', 'success');
+      } catch(e2) { out.innerHTML += '<br><span class="badge badge-danger">索引重建失败</span>'; }
     }
+  } catch(e) { out.innerHTML = `<span class="badge badge-danger">上传失败: ${esc(e.message)}</span>`; }
+}
 
-    function renderLearnedTable(items) {
-      const tbody = document.getElementById('learned_tbody');
-      if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:24px">暂无学习到的词条，当用户提问触发 LLM 改写后会自动积累</td></tr>';
-        return;
-      }
-      tbody.innerHTML = items.map(it => `<tr data-original="${esc(it.original)}">
-        <td><strong>${esc(it.original)}</strong></td>
-        <td>${esc(it.mapped_to)}</td>
-        <td style="text-align:center">${it.count}</td>
-        <td>${formatTime(it.first_seen)}</td>
-        <td>${formatTime(it.last_seen)}</td>
-        <td>${it.approved
-          ? '<span class="badge badge-approved">已审核</span>'
-          : '<span class="badge badge-pending">待审核</span>'}</td>
-        <td>
-          ${!it.approved ? `<button class="success" onclick="approveSyn('${esc(it.original)}')" style="margin-right:4px;padding:4px 10px;font-size:12px">通过</button>` : ''}
-          <button class="danger" onclick="deleteSyn('${esc(it.original)}')" style="padding:4px 10px;font-size:12px">删除</button>
-        </td>
-      </tr>`).join('');
+async function handleZipUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('zipfile', file);
+  const out = document.getElementById('zip-result');
+  out.innerHTML = '<span style="color:var(--primary)">解压上传中...</span>';
+  try {
+    const r = await fetch('/admin/upload_zip', {method:'POST', body: fd});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || 'upload failed');
+    const results = j.results || [];
+    const ok = results.filter(r => !r.error).length;
+    out.innerHTML = `<span class="badge badge-ok">${ok} 个文件解压成功</span>`;
+    if (results.length) {
+      out.innerHTML += '<div style="margin-top:8px;font-size:12px">'
+        + results.map(r => r.error
+          ? `<div style="color:var(--danger)">${esc(r.file)}: ${esc(r.error)}</div>`
+          : `<div>${esc(r.product)}/${esc(r.file)} (${fmtSize(r.size)})</div>`
+        ).join('') + '</div>';
     }
+    toast(`ZIP 解压完成：${ok} 个文件`, 'success');
+  } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
+  e.target.value = '';
+}
 
-    function renderStaticTable(items) {
-      const tbody = document.getElementById('static_tbody');
-      tbody.innerHTML = items.map(it => `<tr>
-        <td>${esc(it.original)}</td>
-        <td>${esc(it.mapped_to)}</td>
-      </tr>`).join('');
+async function createTemplate() {
+  const pid = document.getElementById('template-product').value.trim();
+  const cnName = document.getElementById('template-cn-name').value.trim();
+  if (!pid) { toast('请输入产品名', 'error'); return; }
+  try {
+    await api('/admin/knowledge/create_product', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({product: pid})});
+  } catch(e) { /* may already exist */ }
+  // Write template files
+  const mainTpl = `一、产品基础信息\n- 产品名称：${cnName||pid}\n- 规格：\n- 适用人群：\n\n二、核心成分与作用\n\n三、适用范围\n\n四、操作方法与注射指南\n\n五、防伪鉴别方法\n\n六、术后护理与注意事项\n\n七、禁忌人群\n\n八、风险与不良反应\n\n九、联合方案与项目搭配\n\n十、效果与维持时间\n\n十一、术前准备\n\n十二、方案设计与面部评估\n\n十三、修复与补救方案`;
+  const faqTpl = `【Q】${cnName||pid}是什么？\n【A】\n\n【Q】${cnName||pid}的主要成分是什么？\n【A】\n\n【Q】${cnName||pid}术后注意什么？\n【A】`;
+  const aliasTpl = `${cnName||pid}\n${pid}`;
+  try {
+    await Promise.all([
+      api(`/admin/knowledge/${encodeURIComponent(pid)}/main.txt`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({content: mainTpl})}),
+      api(`/admin/knowledge/${encodeURIComponent(pid)}/faq.txt`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({content: faqTpl})}),
+      api(`/admin/knowledge/${encodeURIComponent(pid)}/alias.txt`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({content: aliasTpl})}),
+    ]);
+    toast(`模板创建成功：${pid}`, 'success');
+    document.getElementById('template-product').value = '';
+    document.getElementById('template-cn-name').value = '';
+  } catch(e) {}
+}
+
+// ===== Index =====
+async function loadIndexStatus() {
+  try {
+    const [stats, products] = await Promise.all([api('/admin/stats'), api('/admin/products')]);
+    // Product select
+    const sel = document.getElementById('index-product');
+    sel.innerHTML = (stats.products||[]).map(p =>
+      `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    // Table
+    document.getElementById('index-table-tbody').innerHTML = (stats.products||[]).map(p => `<tr>
+      <td><strong>${esc(p.name)}</strong></td>
+      <td>${p.docs_count}</td>
+      <td>${p.index_exists ? '<span class="badge badge-ok">已索引</span>' : '<span class="badge badge-danger">未索引</span>'}</td>
+      <td>${fmtSize(p.total_size)}</td>
+      <td><button class="btn-primary btn-sm" onclick="rebuildOne('${esc(p.name)}')">重建</button></td>
+    </tr>`).join('') + `<tr>
+      <td><strong>_shared (共享知识)</strong></td>
+      <td>${stats.shared_docs}</td>
+      <td>${stats.shared_indexed ? '<span class="badge badge-ok">已索引</span>' : '<span class="badge badge-danger">未索引</span>'}</td>
+      <td>-</td>
+      <td><button class="btn-primary btn-sm" onclick="rebuildShared()">重建</button></td>
+    </tr>`;
+  } catch(e) {}
+}
+
+async function rebuildOne(product) {
+  const out = document.getElementById('index-status');
+  out.innerHTML = `<span style="color:var(--primary)">正在重建 ${esc(product)} 索引...</span>`;
+  try {
+    await api('/admin/rebuild', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({product, timeout_sec:300})});
+    out.innerHTML = `<span class="badge badge-ok">${esc(product)} 索引重建完成</span>`;
+    toast(`${product} 索引重建完成`, 'success');
+    loadIndexStatus();
+  } catch(e) { out.innerHTML = `<span class="badge badge-danger">重建失败: ${esc(e.message)}</span>`; }
+}
+
+function rebuildIndex() {
+  const product = document.getElementById('index-product').value;
+  if (!product) { toast('请选择产品', 'error'); return; }
+  rebuildOne(product);
+}
+
+async function rebuildAllIndexes() {
+  if (!confirm('确定重建所有产品索引？这可能需要较长时间。')) return;
+  const out = document.getElementById('index-status');
+  try {
+    const stats = await api('/admin/stats');
+    for (const p of stats.products) {
+      out.innerHTML = `<span style="color:var(--primary)">正在重建 ${esc(p.name)}...</span>`;
+      await api('/admin/rebuild', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({product: p.name, timeout_sec:300})});
     }
+    out.innerHTML += '<br><span style="color:var(--primary)">正在重建共享索引...</span>';
+    await api('/admin/rebuild_shared', {method:'POST'});
+    out.innerHTML = '<span class="badge badge-ok">全部索引重建完成</span>';
+    toast('全部索引重建完成', 'success');
+    loadIndexStatus();
+  } catch(e) { out.innerHTML += `<br><span class="badge badge-danger">失败: ${esc(e.message)}</span>`; }
+}
 
-    function switchSynTab(tab) {
-      currentSynTab = tab;
-      document.getElementById('syn_learned').style.display = tab === 'learned' ? '' : 'none';
-      document.getElementById('syn_static').style.display = tab === 'static' ? '' : 'none';
-      document.querySelectorAll('.tabs button').forEach((btn, i) => {
-        btn.classList.toggle('active', (i === 0 && tab === 'learned') || (i === 1 && tab === 'static'));
-      });
+async function rebuildShared() {
+  const out = document.getElementById('shared-index-status') || document.getElementById('index-status');
+  out.innerHTML = '<span style="color:var(--primary)">正在重建共享索引...</span>';
+  try {
+    await api('/admin/rebuild_shared', {method:'POST'});
+    out.innerHTML = '<span class="badge badge-ok">共享索引重建完成</span>';
+    toast('共享索引重建完成', 'success');
+    loadIndexStatus();
+  } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
+}
+
+// ===== Model Switch =====
+async function loadModelConfig() {
+  try {
+    const j = await api('/admin/config/model');
+    document.getElementById('model-current-status').textContent = JSON.stringify({
+      enabled: j.use_openai, model: j.model, api_base: j.api_base || '(default)',
+      api_key_set: j.api_key_set, llm_rewrite: j.llm_rewrite,
+    }, null, 2);
+    // Render provider cards
+    const presets = j.presets || {};
+    document.getElementById('model-cards').innerHTML = Object.entries(presets).map(([k,v]) =>
+      `<div class="model-card ${k===selectedProvider?'selected':''}" onclick="selectProvider('${k}')">
+        <div class="name">${esc(v.label)}</div>
+        <div class="models">${v.models.length ? v.models.slice(0,3).join(', ') : '自定义模型'}</div>
+      </div>`
+    ).join('');
+    // If provider already selected, show config
+    if (selectedProvider) selectProvider(selectedProvider, j);
+  } catch(e) {}
+}
+
+function selectProvider(provider, cachedConfig) {
+  selectedProvider = provider;
+  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.model-card').forEach(c => {
+    if (c.onclick.toString().includes(`'${provider}'`)) c.classList.add('selected');
+  });
+  document.getElementById('model-config-panel').style.display = 'block';
+  // Populate model select
+  const presets = cachedConfig?.presets;
+  const preset = presets?.[provider];
+  const sel = document.getElementById('model-name');
+  const customInput = document.getElementById('model-name-custom');
+  if (preset && preset.models.length) {
+    sel.innerHTML = preset.models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('')
+      + '<option value="__custom__">自定义...</option>';
+    sel.style.display = '';
+    customInput.style.display = 'none';
+  } else {
+    sel.innerHTML = '<option value="__custom__">自定义...</option>';
+    sel.style.display = 'none';
+    customInput.style.display = '';
+  }
+  if (preset?.api_base) document.getElementById('model-api-base').value = preset.api_base;
+  else document.getElementById('model-api-base').value = '';
+  document.getElementById('model-enabled').checked = cachedConfig?.use_openai ?? true;
+}
+
+function onModelNameChange() {
+  const sel = document.getElementById('model-name');
+  const customInput = document.getElementById('model-name-custom');
+  if (sel.value === '__custom__') customInput.style.display = '';
+  else customInput.style.display = 'none';
+}
+
+async function saveModelConfig() {
+  const modelSel = document.getElementById('model-name').value;
+  const model = modelSel === '__custom__'
+    ? document.getElementById('model-name-custom').value.trim()
+    : modelSel;
+  if (!model) { toast('请输入模型名称', 'error'); return; }
+  const payload = {
+    provider: selectedProvider,
+    model,
+    api_base: document.getElementById('model-api-base').value.trim(),
+    api_key: document.getElementById('model-api-key').value.trim(),
+  };
+  try {
+    await api('/admin/config/model', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)});
+    // Update enabled state
+    const enabled = document.getElementById('model-enabled').checked;
+    await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({updates: {use_openai: enabled}})});
+    toast('模型配置已更新', 'success');
+    document.getElementById('model-api-key').value = '';
+    loadModelConfig();
+  } catch(e) {}
+}
+
+async function testModelConnection() {
+  const out = document.getElementById('model-test-result');
+  out.innerHTML = '<span style="color:var(--primary)">测试连接中...</span>';
+  try {
+    const r = await fetch('/ask', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:'你好', mode:'brief', debug:true})});
+    const j = await r.json();
+    if (j.ok) {
+      out.innerHTML = `<span class="badge badge-ok">连接成功</span> <span style="font-size:12px;color:var(--text-secondary)">${j.latency_ms}ms</span>`;
+    } else {
+      out.innerHTML = `<span class="badge badge-danger">连接异常</span> <span style="font-size:12px">${esc(j.answer)}</span>`;
     }
+  } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
+}
 
-    function filterSynTable() {
-      const q = document.getElementById('syn_search').value.trim().toLowerCase();
-      const tableId = currentSynTab === 'learned' ? 'learned_tbody' : 'static_tbody';
-      document.querySelectorAll(`#${tableId} tr`).forEach(tr => {
-        tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-      });
+// ===== Search Config =====
+const CONFIG_GROUPS = {
+  search: ['bm25_k1','bm25_b','sigmoid_scale','route_boost','vector_top_k','keyword_top_k','hybrid_vw','hybrid_kw',
+           'rerank_enabled','rerank_top_n','dyn_threshold_enabled','dyn_ratio','dyn_floor_ratio'],
+  llm: ['llm_temperature','llm_max_brief','llm_max_full','llm_rewrite','use_openai','openai_model','openai_api_base'],
+  index_cfg: ['chunk_size','chunk_overlap','faiss_index_type','hnsw_m','hnsw_ef_construction','hnsw_ef_search'],
+  advanced: [],  // Will contain any remaining keys
+};
+
+async function loadConfig() {
+  try {
+    configData = await api('/admin/config');
+    // Put unassigned keys into advanced
+    const assigned = new Set(Object.values(CONFIG_GROUPS).flat());
+    CONFIG_GROUPS.advanced = Object.keys(configData).filter(k => !assigned.has(k));
+    renderConfigTab();
+  } catch(e) {}
+}
+
+function switchConfigTab(tab) {
+  currentConfigTab = tab;
+  document.querySelectorAll('#config-tabs button').forEach((b,i) => {
+    const tabs = ['search','llm','index_cfg','advanced'];
+    b.classList.toggle('active', tabs[i] === tab);
+  });
+  renderConfigTab();
+}
+
+function renderConfigTab() {
+  const keys = CONFIG_GROUPS[currentConfigTab] || [];
+  const html = '<div class="config-grid">' + keys.map(k => {
+    const c = configData[k];
+    if (!c) return '';
+    let input = '';
+    if (c.type === 'bool') {
+      input = `<label class="inline-label"><span class="switch">
+        <input type="checkbox" id="cfg-${k}" ${c.value?'checked':''} onchange="markConfigDirty('${k}')">
+        <span class="slider"></span></span>${c.value?'启用':'禁用'}</label>`;
+    } else if (c.type === 'str' && k === 'faiss_index_type') {
+      input = `<select id="cfg-${k}" onchange="markConfigDirty('${k}')">
+        <option value="flat" ${c.value==='flat'?'selected':''}>flat (暴力搜索)</option>
+        <option value="hnsw" ${c.value==='hnsw'?'selected':''}>hnsw (近似最近邻)</option></select>`;
+    } else if (c.type === 'str') {
+      input = `<input type="text" id="cfg-${k}" value="${esc(c.value||'')}" onchange="markConfigDirty('${k}')">`;
+    } else {
+      const step = c.type === 'float' ? '0.01' : '1';
+      input = `<input type="number" id="cfg-${k}" value="${c.value}" step="${step}"
+               ${c.min!=null?`min="${c.min}"`:''} ${c.max!=null?`max="${c.max}"`:''} onchange="markConfigDirty('${k}')">`;
     }
+    return `<div class="config-item" id="cfg-wrap-${k}">
+      <label>${esc(k)}</label>
+      <div class="desc">${esc(c.description)} ${c.min!=null?`[${c.min}~${c.max}]`:''}</div>
+      ${input}
+    </div>`;
+  }).join('') + '</div>';
+  document.getElementById('config-content').innerHTML = html;
+}
 
-    async function approveSyn(original) {
-      try {
-        const r = await fetch('/admin/synonyms/learned/approve?original=' + encodeURIComponent(original), { method: 'POST' });
-        if (r.ok) loadSynonyms();
-        else alert('操作失败: ' + (await r.json()).detail);
-      } catch (e) { alert('请求失败: ' + e); }
+function markConfigDirty(key) {
+  const wrap = document.getElementById('cfg-wrap-' + key);
+  if (wrap) wrap.style.borderLeft = '3px solid var(--warning)';
+}
+
+async function saveAllConfig() {
+  const updates = {};
+  for (const keys of Object.values(CONFIG_GROUPS)) {
+    for (const k of keys) {
+      const c = configData[k];
+      if (!c) continue;
+      const el = document.getElementById('cfg-' + k);
+      if (!el) continue;
+      if (c.type === 'bool') updates[k] = el.checked;
+      else if (c.type === 'int') updates[k] = parseInt(el.value);
+      else if (c.type === 'float') updates[k] = parseFloat(el.value);
+      else updates[k] = el.value;
     }
+  }
+  try {
+    const r = await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({updates})});
+    const n = Object.keys(r.changed||{}).length;
+    toast(n ? `${n} 个参数已更新` : '无变化', n ? 'success' : 'info');
+    loadConfig();
+  } catch(e) {}
+}
 
-    async function deleteSyn(original) {
-      if (!confirm(`确定删除「${original}」的映射吗？`)) return;
-      try {
-        const r = await fetch('/admin/synonyms/learned?original=' + encodeURIComponent(original), { method: 'DELETE' });
-        if (r.ok) loadSynonyms();
-        else alert('操作失败: ' + (await r.json()).detail);
-      } catch (e) { alert('请求失败: ' + e); }
+// ===== Synonyms =====
+async function loadSynonyms() {
+  try {
+    const j = await api('/admin/synonyms/all');
+    document.getElementById('syn-stats').innerHTML = `
+      <div class="stat-card"><div class="num">${j.static_count||0}</div><div class="lbl">静态词条</div></div>
+      <div class="stat-card"><div class="num">${j.learned_count||0}</div><div class="lbl">学习词条</div></div>
+      <div class="stat-card"><div class="num">${j.total_count||0}</div><div class="lbl">总计</div></div>`;
+    renderLearnedTable(j.learned || []);
+    renderStaticTable(j.static || []);
+  } catch(e) {}
+}
+
+function renderLearnedTable(items) {
+  const tbody = document.getElementById('learned_tbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);padding:24px">暂无学习到的词条</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(it => `<tr>
+    <td><strong>${esc(it.original)}</strong></td><td>${esc(it.mapped_to)}</td>
+    <td style="text-align:center">${it.count}</td><td>${fmtTime(it.first_seen)}</td><td>${fmtTime(it.last_seen)}</td>
+    <td>${it.approved ? '<span class="badge badge-ok">已审核</span>' : '<span class="badge badge-warn">待审核</span>'}</td>
+    <td>${!it.approved?`<button class="btn-success btn-sm" onclick="approveSyn('${esc(it.original)}')">通过</button> `:''}
+      <button class="btn-danger btn-sm" onclick="deleteSyn('${esc(it.original)}')">删除</button></td>
+  </tr>`).join('');
+}
+
+function renderStaticTable(items) {
+  document.getElementById('static_tbody').innerHTML = items.map(it =>
+    `<tr><td>${esc(it.original)}</td><td>${esc(it.mapped_to)}</td></tr>`).join('');
+}
+
+function switchSynTab(tab) {
+  currentSynTab = tab;
+  document.getElementById('syn_learned').style.display = tab==='learned' ? '' : 'none';
+  document.getElementById('syn_static').style.display = tab==='static' ? '' : 'none';
+  document.querySelectorAll('#page-synonyms .tabs button').forEach((b,i) =>
+    b.classList.toggle('active', (i===0&&tab==='learned')||(i===1&&tab==='static')));
+}
+
+function filterSynTable() {
+  const q = document.getElementById('syn_search').value.trim().toLowerCase();
+  const tbodyId = currentSynTab === 'learned' ? 'learned_tbody' : 'static_tbody';
+  document.querySelectorAll(`#${tbodyId} tr`).forEach(tr =>
+    tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none');
+}
+
+async function approveSyn(orig) {
+  try { await api('/admin/synonyms/learned/approve?original='+encodeURIComponent(orig),{method:'POST'}); loadSynonyms(); }
+  catch(e) {}
+}
+async function deleteSyn(orig) {
+  if (!confirm(`确定删除「${orig}」？`)) return;
+  try { await api('/admin/synonyms/learned?original='+encodeURIComponent(orig),{method:'DELETE'}); loadSynonyms(); }
+  catch(e) {}
+}
+
+// ===== Logs =====
+function switchLogTab(tab) {
+  currentLogTab = tab;
+  document.querySelectorAll('#page-logs .tabs button').forEach((b,i) => {
+    const tabs = ['qa','miss','error'];
+    b.classList.toggle('active', tabs[i] === tab);
+  });
+  loadCurrentLog();
+}
+
+async function loadCurrentLog() {
+  const limit = document.getElementById('log-limit')?.value || 20;
+  try {
+    const j = await api(`/admin/logs/${currentLogTab}?limit=${limit}`);
+    const items = j.items || [];
+    const out = document.getElementById('log-content');
+    if (!items.length) { out.innerHTML = '<p style="color:var(--text-secondary);padding:20px;text-align:center">暂无日志</p>'; return; }
+    if (currentLogTab === 'qa') {
+      out.innerHTML = items.map(it => `<div class="log-entry">
+        <div class="meta">${fmtTime(it.ts)} | ${it.hit?'<span class="badge badge-ok">命中</span>':'<span class="badge badge-danger">未命中</span>'}
+          | ${it.meta?.method||'-'} | ${it.meta?.route||'-'} | ${it.meta?.product||'-'}
+          ${it.latency_ms ? `| ${it.latency_ms}ms` : ''}</div>
+        <div class="question">Q: ${esc(it.question)}</div>
+        ${it.rewritten_query?`<div style="font-size:11px;color:var(--text-secondary)">扩展: ${esc(it.rewritten_query.substring(0,100))}</div>`:''}
+        <div class="answer" onclick="this.classList.toggle('expanded')">${esc((it.answer||'').substring(0,300))}</div>
+      </div>`).join('');
+    } else if (currentLogTab === 'miss') {
+      out.innerHTML = items.map(it => `<div class="log-entry">
+        <div class="meta">${fmtTime(it.ts)}</div>
+        <div class="question">Q: ${esc(it.question)}</div>
+        ${it.rewritten_query?`<div style="font-size:11px;color:var(--text-secondary)">扩展: ${esc(it.rewritten_query)}</div>`:''}
+      </div>`).join('');
+    } else {
+      out.innerHTML = items.map(it => `<div class="log-entry">
+        <div class="meta">${fmtTime(it.ts)} | <span class="badge badge-danger">${esc(it.stage)}</span></div>
+        <div style="color:var(--danger)">${esc(it.error)}</div>
+        ${it.meta ? `<div style="font-size:11px;color:var(--text-secondary)">${esc(JSON.stringify(it.meta).substring(0,200))}</div>` : ''}
+      </div>`).join('');
     }
+  } catch(e) {}
+}
 
-    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-    function formatTime(ts) { return ts ? ts.replace('T', ' ') : '-'; }
-
-    // ===== 原有功能 =====
-    async function loadProducts() {
-      const r = await fetch('/admin/products');
-      const j = await r.json();
-      document.getElementById('products').textContent = JSON.stringify(j, null, 2);
-    }
-
-    async function rebuild() {
-      const product = document.getElementById('product').value.trim();
-      const out = document.getElementById('rebuild_out');
-      out.textContent = '执行中...';
-      const r = await fetch('/admin/rebuild', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({product, timeout_sec: 180})
-      });
-      const j = await r.json();
-      out.textContent = JSON.stringify(j, null, 2);
-    }
-
-    async function loadLogs(kind) {
-      const r = await fetch('/admin/logs/' + kind + '?limit=20');
-      const j = await r.json();
-      document.getElementById(kind + '_logs').textContent = JSON.stringify(j, null, 2);
-    }
-
-    // 页面加载时自动加载词库
-    loadSynonyms();
-  </script>
+// ===== Init =====
+loadDashboard();
+</script>
 </body>
 </html>
