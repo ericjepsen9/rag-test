@@ -192,8 +192,8 @@
   {
     "q": "水光和微针分别是什么",
     "expect_any": ["水光", "微针"],
-    "route": "operation",
-    "_note": "'水光''微针'是operation关键词，路由检测基于全文而非拆分后子问题"
+    "route": "procedure_q",
+    "_note": "'水光''微针'是项目实体名，应路由到procedure_q检索共享知识库"
   },
 
   {"_comment": "--- 效果与维持时间 ---"},
