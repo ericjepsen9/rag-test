@@ -209,6 +209,10 @@
       <a href="#" onclick="showPage('index')" data-page="index">
         <span class="icon">&#x26a1;</span> 索引构建</a>
       <div class="group-label">配置</div>
+      <a href="#" onclick="showPage('domain')" data-page="domain">
+        <span class="icon">&#x1f310;</span> 域名配置</a>
+      <a href="#" onclick="showPage('services')" data-page="services">
+        <span class="icon">&#x2699;</span> 服务控制</a>
       <a href="#" onclick="showPage('model')" data-page="model">
         <span class="icon">&#x1f916;</span> 模型切换</a>
       <a href="#" onclick="showPage('search')" data-page="search">
@@ -472,6 +476,134 @@
       </div>
     </div>
 
+    <!-- ==================== 域名配置 ==================== -->
+    <div class="page" id="page-domain">
+      <h1>&#x1f310; 域名与访问配置</h1>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h2>服务器设置</h2>
+            <div class="form-group">
+              <label>监听地址 (Host)</label>
+              <input type="text" id="srv-host" style="width:100%" placeholder="0.0.0.0">
+              <div class="form-hint">服务监听的 IP 地址。0.0.0.0 表示监听所有网卡，修改后重启生效</div>
+            </div>
+            <div class="form-group">
+              <label>端口 (Port)</label>
+              <input type="number" id="srv-port" style="width:100%" placeholder="8000" min="1" max="65535">
+              <div class="form-hint">服务监听端口，修改后重启生效</div>
+            </div>
+            <div class="form-group">
+              <label>CORS 允许来源</label>
+              <input type="text" id="srv-cors" style="width:100%" placeholder="*">
+              <div class="form-hint">多个域名用逗号分隔，* 表示允许所有来源。立即生效（下次请求）</div>
+            </div>
+            <button class="btn-primary" onclick="saveServerConfig()">保存服务器设置</button>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h2>域名绑定</h2>
+            <div class="form-group">
+              <label>域名</label>
+              <input type="text" id="srv-domain" style="width:100%" placeholder="rag.example.com">
+              <div class="form-hint">通过域名访问对话页面和管理后台</div>
+            </div>
+            <div class="form-group">
+              <label class="inline-label">
+                <label class="switch"><input type="checkbox" id="srv-ssl"><span class="slider"></span></label>
+                启用 SSL (HTTPS)
+              </label>
+            </div>
+            <div class="form-group" id="ssl-cert-group" style="display:none">
+              <label>SSL 证书路径</label>
+              <input type="text" id="srv-cert" style="width:100%" placeholder="/etc/ssl/certs/cert.pem">
+            </div>
+            <div class="form-group" id="ssl-key-group" style="display:none">
+              <label>SSL 密钥路径</label>
+              <input type="text" id="srv-key" style="width:100%" placeholder="/etc/ssl/private/key.pem">
+            </div>
+            <button class="btn-primary" onclick="saveDomainConfig()">保存域名配置</button>
+            <button class="btn-ghost" onclick="genNginxConfig()" style="margin-left:8px">生成 Nginx 配置</button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h2>访问地址一览</h2>
+            <div id="access-urls" style="line-height:2"></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h2>Nginx 反向代理配置</h2>
+            <div class="form-hint" style="margin-bottom:8px">
+              点击"生成 Nginx 配置"按钮后，将以下内容保存到 <code>/etc/nginx/conf.d/rag.conf</code>，然后执行 <code>nginx -t && nginx -s reload</code>
+            </div>
+            <textarea id="nginx-config" rows="16" readonly style="font-family:monospace;font-size:12px;background:#f5f6fa"></textarea>
+            <button class="btn-secondary btn-sm" onclick="copyNginxConfig()" style="margin-top:6px">复制配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 服务控制 ==================== -->
+    <div class="page" id="page-services">
+      <h1>&#x2699; 服务控制</h1>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h2>BGE-M3 嵌入模型</h2>
+            <div class="form-hint" style="margin-bottom:12px">
+              BGE-M3 是向量检索和 Reranker 重排序的核心模型。加载后占用约 2-4GB 显存/内存。
+            </div>
+            <div id="emb-status" style="margin-bottom:14px"></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-success" id="btn-emb-start" onclick="embeddingStart()">加载模型</button>
+              <button class="btn-danger" id="btn-emb-stop" onclick="embeddingStop()">卸载模型</button>
+              <button class="btn-secondary" onclick="loadServiceStatus()">刷新状态</button>
+            </div>
+            <div class="card" style="margin-top:14px;background:#f8f9fb">
+              <h2 style="font-size:13px">模型参数</h2>
+              <table style="font-size:12px">
+                <tbody id="emb-params"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h2>LLM 大语言模型</h2>
+            <div class="form-hint" style="margin-bottom:12px">
+              LLM 用于 RAG 答案生成和查询改写。通过 OpenAI 兼容 API 调用，支持多种模型提供商。
+            </div>
+            <div id="llm-status" style="margin-bottom:14px"></div>
+            <div class="form-group">
+              <label>API Key（启动时可选更新）</label>
+              <input type="password" id="llm-api-key" style="width:100%" placeholder="留空则使用当前 Key">
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-success" id="btn-llm-start" onclick="llmStart()">启动 LLM</button>
+              <button class="btn-danger" id="btn-llm-stop" onclick="llmStop()">停止 LLM</button>
+              <button class="btn-secondary" onclick="loadServiceStatus()">刷新状态</button>
+            </div>
+            <div class="card" style="margin-top:14px;background:#f8f9fb">
+              <h2 style="font-size:13px">当前 LLM 配置</h2>
+              <table style="font-size:12px">
+                <tbody id="llm-params"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>服务健康检查</h2>
+        <div id="health-detail" style="line-height:2"></div>
+        <button class="btn-secondary btn-sm" onclick="loadHealthDetail()" style="margin-top:8px">刷新健康状态</button>
+      </div>
+    </div>
+
     <!-- ==================== 日志查看 ==================== -->
     <div class="page" id="page-logs">
       <h1>&#x1f4cb; 日志查看</h1>
@@ -522,6 +654,8 @@ function showPage(page) {
     knowledge: loadKBProductList,
     upload: loadUploadProducts,
     index: loadIndexStatus,
+    domain: loadDomainPage,
+    services: loadServiceStatus,
     model: loadModelConfig,
     search: loadConfig,
     synonyms: loadSynonyms,
@@ -1184,6 +1318,240 @@ async function loadCurrentLog() {
         ${it.meta ? `<div style="font-size:11px;color:var(--text-secondary)">${esc(JSON.stringify(it.meta).substring(0,200))}</div>` : ''}
       </div>`).join('');
     }
+  } catch(e) {}
+}
+
+// ===== Domain / Server Config =====
+async function loadDomainPage() {
+  try {
+    const cfg = await api('/admin/config/server');
+    document.getElementById('srv-host').value = cfg.host || '0.0.0.0';
+    document.getElementById('srv-port').value = cfg.port || 8000;
+    document.getElementById('srv-cors').value = cfg.cors_origins || '*';
+    document.getElementById('srv-domain').value = cfg.domain || '';
+    document.getElementById('srv-ssl').checked = cfg.ssl_enabled || false;
+    document.getElementById('srv-cert').value = cfg.ssl_cert_path || '';
+    document.getElementById('srv-key').value = cfg.ssl_key_path || '';
+    toggleSSLFields();
+    if (cfg.nginx_config) {
+      document.getElementById('nginx-config').value = cfg.nginx_config;
+    }
+    // Build access URLs
+    const host = location.hostname;
+    const port = cfg.port || 8000;
+    const domain = cfg.domain || '';
+    const proto = cfg.ssl_enabled ? 'https' : 'http';
+    let urls = `<b>本地访问：</b><br>`;
+    urls += `&nbsp;&nbsp;对话页面: <a href="http://${host}:${port}/chat" target="_blank">http://${host}:${port}/chat</a><br>`;
+    urls += `&nbsp;&nbsp;管理后台: <a href="http://${host}:${port}/admin" target="_blank">http://${host}:${port}/admin</a><br>`;
+    urls += `&nbsp;&nbsp;API 接口: <code>POST http://${host}:${port}/ask</code><br>`;
+    urls += `&nbsp;&nbsp;OpenAI 兼容: <code>POST http://${host}:${port}/v1/chat/completions</code><br>`;
+    if (domain) {
+      urls += `<br><b>域名访问：</b><br>`;
+      urls += `&nbsp;&nbsp;对话页面: <a href="${proto}://${domain}/chat" target="_blank">${proto}://${domain}/chat</a><br>`;
+      urls += `&nbsp;&nbsp;管理后台: <a href="${proto}://${domain}/admin" target="_blank">${proto}://${domain}/admin</a><br>`;
+      urls += `&nbsp;&nbsp;API 接口: <code>POST ${proto}://${domain}/ask</code><br>`;
+      urls += `&nbsp;&nbsp;OpenAI 兼容: <code>POST ${proto}://${domain}/v1/chat/completions</code><br>`;
+    }
+    document.getElementById('access-urls').innerHTML = urls;
+  } catch(e) {}
+}
+
+function toggleSSLFields() {
+  const ssl = document.getElementById('srv-ssl').checked;
+  document.getElementById('ssl-cert-group').style.display = ssl ? '' : 'none';
+  document.getElementById('ssl-key-group').style.display = ssl ? '' : 'none';
+}
+// Bind SSL toggle
+document.addEventListener('DOMContentLoaded', () => {
+  const sslCb = document.getElementById('srv-ssl');
+  if (sslCb) sslCb.addEventListener('change', toggleSSLFields);
+});
+
+async function saveServerConfig() {
+  try {
+    const updates = {
+      host: document.getElementById('srv-host').value.trim(),
+      port: parseInt(document.getElementById('srv-port').value) || 8000,
+      cors_origins: document.getElementById('srv-cors').value.trim(),
+    };
+    await api('/admin/config/server', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({updates})
+    });
+    toast('服务器设置已保存（Host/Port 修改需重启生效）', 'success');
+    loadDomainPage();
+  } catch(e) {}
+}
+
+async function saveDomainConfig() {
+  try {
+    const updates = {
+      domain: document.getElementById('srv-domain').value.trim(),
+      ssl_enabled: document.getElementById('srv-ssl').checked,
+      ssl_cert_path: document.getElementById('srv-cert').value.trim(),
+      ssl_key_path: document.getElementById('srv-key').value.trim(),
+    };
+    await api('/admin/config/server', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({updates})
+    });
+    toast('域名配置已保存', 'success');
+    loadDomainPage();
+  } catch(e) {}
+}
+
+async function genNginxConfig() {
+  const domain = document.getElementById('srv-domain').value.trim();
+  if (!domain) { toast('请先填写域名', 'error'); return; }
+  try {
+    const body = {
+      domain,
+      port: parseInt(document.getElementById('srv-port').value) || 8000,
+      ssl: document.getElementById('srv-ssl').checked,
+      cert_path: document.getElementById('srv-cert').value.trim(),
+      key_path: document.getElementById('srv-key').value.trim(),
+    };
+    const j = await api('/admin/config/nginx', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    document.getElementById('nginx-config').value = j.config || '';
+    // Also save nginx_config
+    await api('/admin/config/server', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({updates: {nginx_config: j.config}})
+    });
+    toast('Nginx 配置已生成', 'success');
+  } catch(e) {}
+}
+
+function copyNginxConfig() {
+  const ta = document.getElementById('nginx-config');
+  ta.select();
+  document.execCommand('copy');
+  toast('已复制到剪贴板', 'success');
+}
+
+// ===== Service Control =====
+async function loadServiceStatus() {
+  try {
+    const [emb, llm] = await Promise.all([
+      api('/admin/service/embedding'),
+      api('/admin/service/llm'),
+    ]);
+    // Embedding status
+    const embEl = document.getElementById('emb-status');
+    if (emb.loaded) {
+      embEl.innerHTML = '<span class="badge badge-ok" style="font-size:13px;padding:4px 12px">已加载</span>';
+      document.getElementById('btn-emb-start').disabled = true;
+      document.getElementById('btn-emb-stop').disabled = false;
+    } else {
+      embEl.innerHTML = '<span class="badge badge-danger" style="font-size:13px;padding:4px 12px">未加载</span>';
+      document.getElementById('btn-emb-start').disabled = false;
+      document.getElementById('btn-emb-stop').disabled = true;
+    }
+    document.getElementById('emb-params').innerHTML = `
+      <tr><td style="width:140px">模型名称</td><td><code>${esc(emb.model_name||'')}</code></td></tr>
+      <tr><td>FP16 加速</td><td>${emb.use_fp16 ? 'ON' : 'OFF'}</td></tr>
+      <tr><td>构建批大小</td><td>${emb.batch_size_build||'-'}</td></tr>
+      <tr><td>查询批大小</td><td>${emb.batch_size_query||'-'}</td></tr>
+      <tr><td>构建最大长度</td><td>${emb.max_length_build||'-'}</td></tr>
+      <tr><td>查询最大长度</td><td>${emb.max_length_query||'-'}</td></tr>
+    `;
+    // LLM status
+    const llmEl = document.getElementById('llm-status');
+    if (llm.enabled && llm.client_ready) {
+      llmEl.innerHTML = '<span class="badge badge-ok" style="font-size:13px;padding:4px 12px">运行中</span>';
+      document.getElementById('btn-llm-start').disabled = true;
+      document.getElementById('btn-llm-stop').disabled = false;
+    } else if (llm.enabled && !llm.client_ready) {
+      llmEl.innerHTML = '<span class="badge badge-warn" style="font-size:13px;padding:4px 12px">已启用但未连接</span>';
+      document.getElementById('btn-llm-start').disabled = false;
+      document.getElementById('btn-llm-stop').disabled = false;
+    } else {
+      llmEl.innerHTML = '<span class="badge badge-danger" style="font-size:13px;padding:4px 12px">已停止</span>';
+      document.getElementById('btn-llm-start').disabled = false;
+      document.getElementById('btn-llm-stop').disabled = true;
+    }
+    document.getElementById('llm-params').innerHTML = `
+      <tr><td style="width:140px">模型</td><td><code>${esc(llm.model||'')}</code></td></tr>
+      <tr><td>API Base</td><td><code>${esc(llm.api_base||'默认')}</code></td></tr>
+      <tr><td>API Key</td><td>${llm.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'}</td></tr>
+      <tr><td>查询改写</td><td>${llm.rewrite_enabled ? 'ON' : 'OFF'}</td></tr>
+      <tr><td>温度</td><td>${llm.temperature ?? '-'}</td></tr>
+    `;
+    loadHealthDetail();
+  } catch(e) {}
+}
+
+async function embeddingStart() {
+  document.getElementById('btn-emb-start').disabled = true;
+  document.getElementById('btn-emb-start').textContent = '加载中...';
+  try {
+    await api('/admin/service/embedding/start', {method:'POST'});
+    toast('BGE-M3 模型已加载', 'success');
+  } catch(e) {}
+  document.getElementById('btn-emb-start').textContent = '加载模型';
+  loadServiceStatus();
+}
+
+async function embeddingStop() {
+  if (!confirm('卸载嵌入模型后将无法进行向量检索和 Reranker 重排序，确定要卸载吗？')) return;
+  try {
+    await api('/admin/service/embedding/stop', {method:'POST'});
+    toast('BGE-M3 模型已卸载', 'success');
+  } catch(e) {}
+  loadServiceStatus();
+}
+
+async function llmStart() {
+  document.getElementById('btn-llm-start').disabled = true;
+  document.getElementById('btn-llm-start').textContent = '启动中...';
+  try {
+    const key = document.getElementById('llm-api-key').value.trim();
+    await api('/admin/service/llm/start', {
+      method:'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({api_key: key})
+    });
+    document.getElementById('llm-api-key').value = '';
+    toast('LLM 服务已启动', 'success');
+  } catch(e) {}
+  document.getElementById('btn-llm-start').textContent = '启动 LLM';
+  loadServiceStatus();
+}
+
+async function llmStop() {
+  if (!confirm('停止 LLM 后将无法使用 RAG 答案生成和查询改写，确定要停止吗？')) return;
+  try {
+    await api('/admin/service/llm/stop', {method:'POST'});
+    toast('LLM 服务已停止', 'success');
+  } catch(e) {}
+  loadServiceStatus();
+}
+
+async function loadHealthDetail() {
+  try {
+    const h = await api('/health');
+    let html = `<b>系统状态：</b> <span class="badge badge-${h.status==='ok'?'ok':'warn'}">${h.status}</span><br>`;
+    html += `<b>共享知识索引：</b> ${h.shared_knowledge_indexed ? '<span class="badge badge-ok">已就绪</span>' : '<span class="badge badge-danger">未构建</span>'}<br>`;
+    html += `<b>产品数：</b> ${h.products?.length || 0}<br>`;
+    if (h.products && h.products.length) {
+      html += '<table style="margin-top:8px;font-size:12px;width:100%"><tr><th>产品</th><th>索引</th><th>文档</th></tr>';
+      h.products.forEach(p => {
+        const ok = p.index_exists && p.docs_exists;
+        html += `<tr><td>${esc(p.name)}</td>
+          <td>${ok ? '<span class="badge badge-ok">OK</span>' : '<span class="badge badge-danger">缺失</span>'}</td>
+          <td>${p.docs_exists ? 'Yes' : 'No'}</td></tr>`;
+      });
+      html += '</table>';
+    }
+    document.getElementById('health-detail').innerHTML = html;
   } catch(e) {}
 }
 

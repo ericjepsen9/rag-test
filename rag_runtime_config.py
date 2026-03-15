@@ -395,12 +395,17 @@ FAQ_FAST_PATH_DEFAULT = {"score": 0.40, "ratio": 0.50}
 # ===== 测试 =====
 REGRESSION_CASES_FILE = BASE_DIR / "regression_cases.json"
 
+# ===== 服务器 / 域名访问配置 =====
+SERVER_HOST = _os.environ.get("RAG_SERVER_HOST", "0.0.0.0")
+SERVER_PORT = _safe_int("RAG_SERVER_PORT", "8000")
+
 # ===== 运行时热更新支持 =====
 # 允许通过 API 修改的参数白名单及其类型验证
 import json as _json
 import threading as _threading
 
 _CONFIG_FILE = BASE_DIR / "data" / "runtime_overrides.json"
+_SERVER_CONFIG_FILE = BASE_DIR / "data" / "server_config.json"
 _config_lock = _threading.Lock()
 
 # 模型提供商预设
@@ -610,5 +615,281 @@ def switch_model_provider(provider: str, model: str = "", api_base: str = "",
     }
 
 
+# ===== 服务器 / 域名配置管理 =====
+
+def get_server_config() -> dict:
+    """获取服务器和域名访问配置"""
+    data = _load_server_config_file()
+    return {
+        "host": SERVER_HOST,
+        "port": SERVER_PORT,
+        "domain": data.get("domain", ""),
+        "ssl_enabled": data.get("ssl_enabled", False),
+        "ssl_cert_path": data.get("ssl_cert_path", ""),
+        "ssl_key_path": data.get("ssl_key_path", ""),
+        "cors_origins": _os.environ.get("CORS_ORIGINS", "*"),
+        "chat_path": "/chat",
+        "admin_path": "/admin",
+        "api_path": "/ask",
+        "oai_path": "/v1/chat/completions",
+        "nginx_config": data.get("nginx_config", ""),
+        "auto_start": data.get("auto_start", True),
+    }
+
+
+def update_server_config(updates: dict) -> dict:
+    """更新服务器和域名配置"""
+    import rag_runtime_config as _mod
+    data = _load_server_config_file()
+    changed = {}
+    allowed_keys = {"domain", "ssl_enabled", "ssl_cert_path", "ssl_key_path",
+                    "cors_origins", "nginx_config", "auto_start"}
+    for key, val in updates.items():
+        if key not in allowed_keys:
+            continue
+        if key == "ssl_enabled":
+            val = bool(val)
+        elif key == "cors_origins":
+            val = str(val).strip()
+            _os.environ["CORS_ORIGINS"] = val
+        else:
+            val = str(val).strip()
+        old = data.get(key, "")
+        if old != val:
+            data[key] = val
+            changed[key] = {"old": old, "new": val}
+    # host/port 可修改（下次重启生效）
+    if "host" in updates:
+        new_host = str(updates["host"]).strip()
+        if new_host != SERVER_HOST:
+            _mod.SERVER_HOST = new_host
+            data["host"] = new_host
+            changed["host"] = {"old": SERVER_HOST, "new": new_host}
+    if "port" in updates:
+        try:
+            new_port = int(updates["port"])
+            if 1 <= new_port <= 65535 and new_port != SERVER_PORT:
+                _mod.SERVER_PORT = new_port
+                data["port"] = new_port
+                changed["port"] = {"old": SERVER_PORT, "new": new_port}
+        except (ValueError, TypeError):
+            pass
+    if changed:
+        _save_server_config_file(data)
+    return changed
+
+
+def generate_nginx_config(domain: str, port: int = 0, ssl: bool = False,
+                          cert_path: str = "", key_path: str = "") -> str:
+    """生成 nginx 反向代理配置"""
+    port = port or SERVER_PORT
+    if ssl and cert_path and key_path:
+        return f"""server {{
+    listen 80;
+    server_name {domain};
+    return 301 https://$host$request_uri;
+}}
+
+server {{
+    listen 443 ssl http2;
+    server_name {domain};
+
+    ssl_certificate     {cert_path};
+    ssl_certificate_key {key_path};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    client_max_body_size 100m;
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }}
+
+    location /v1/chat/completions {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }}
+}}"""
+    else:
+        return f"""server {{
+    listen 80;
+    server_name {domain};
+
+    client_max_body_size 100m;
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }}
+
+    location /v1/chat/completions {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }}
+}}"""
+
+
+def _load_server_config_file() -> dict:
+    if not _SERVER_CONFIG_FILE.exists():
+        return {}
+    try:
+        return _json.loads(_SERVER_CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_server_config_file(data: dict) -> None:
+    with _config_lock:
+        d = _SERVER_CONFIG_FILE.parent
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = _SERVER_CONFIG_FILE.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_SERVER_CONFIG_FILE)
+
+
+# ===== BGE-M3 嵌入模型控制 =====
+
+def get_embedding_status() -> dict:
+    """获取 BGE-M3 嵌入模型当前状态"""
+    try:
+        import rag_answer
+        model = getattr(rag_answer, "_model", None)
+        return {
+            "loaded": model is not None,
+            "model_name": EMBED_MODEL_NAME,
+            "use_fp16": EMBED_USE_FP16,
+            "batch_size_build": EMBED_BATCH_SIZE_BUILD,
+            "batch_size_query": EMBED_BATCH_SIZE_QUERY,
+            "max_length_build": EMBED_MAX_LENGTH_BUILD,
+            "max_length_query": EMBED_MAX_LENGTH_QUERY,
+        }
+    except Exception:
+        return {"loaded": False, "model_name": EMBED_MODEL_NAME}
+
+
+def start_embedding_model() -> dict:
+    """手动加载 BGE-M3 嵌入模型"""
+    try:
+        from rag_answer import get_model, embed_query
+        model = get_model()
+        # 做一次预热编码确保完全就绪
+        embed_query("预热")
+        return {"ok": True, "message": "BGE-M3 模型已加载"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def stop_embedding_model() -> dict:
+    """卸载 BGE-M3 嵌入模型释放显存/内存"""
+    try:
+        import rag_answer
+        import gc
+        rag_answer._model = None
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        return {"ok": True, "message": "BGE-M3 模型已卸载"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ===== LLM 服务控制 =====
+
+def get_llm_status() -> dict:
+    """获取 LLM 服务状态"""
+    try:
+        import rag_answer
+        client = getattr(rag_answer, "_openai_client", None)
+        checked = getattr(rag_answer, "_openai_client_checked", False)
+        return {
+            "enabled": USE_OPENAI,
+            "client_ready": client is not None,
+            "client_checked": checked,
+            "model": OPENAI_MODEL,
+            "api_base": OPENAI_API_BASE or "",
+            "api_key_set": bool(_os.environ.get("OPENAI_API_KEY", "").strip()),
+            "rewrite_enabled": LLM_REWRITE_ENABLED,
+            "temperature": LLM_TEMPERATURE,
+        }
+    except Exception:
+        return {
+            "enabled": USE_OPENAI,
+            "client_ready": False,
+            "client_checked": False,
+            "model": OPENAI_MODEL,
+            "api_base": OPENAI_API_BASE or "",
+            "api_key_set": bool(_os.environ.get("OPENAI_API_KEY", "").strip()),
+        }
+
+
+def start_llm_service(api_key: str = "") -> dict:
+    """启动/重连 LLM 服务"""
+    import rag_runtime_config as _mod
+    if api_key:
+        _os.environ["OPENAI_API_KEY"] = api_key
+    _mod.USE_OPENAI = True
+    # 重置 client 缓存，强制重新创建
+    try:
+        import rag_answer
+        rag_answer._openai_client = None
+        rag_answer._openai_client_checked = False
+        # 立即尝试创建 client
+        client = rag_answer._get_openai_client()
+        if client is None:
+            return {"ok": False, "error": "LLM client 创建失败，请检查 API Key 和 API Base"}
+        return {"ok": True, "message": f"LLM 服务已启动 (model={OPENAI_MODEL})"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def stop_llm_service() -> dict:
+    """停止 LLM 服务"""
+    import rag_runtime_config as _mod
+    _mod.USE_OPENAI = False
+    try:
+        import rag_answer
+        rag_answer._openai_client = None
+        rag_answer._openai_client_checked = False
+    except Exception:
+        pass
+    _persist_overrides({"use_openai": False})
+    return {"ok": True, "message": "LLM 服务已停止"}
+
+
 # 启动时自动加载持久化覆盖
 load_persisted_overrides()
+
+# 启动时加载服务器配置
+_server_data = _load_server_config_file()
+if _server_data.get("host"):
+    SERVER_HOST = _server_data["host"]
+if _server_data.get("port"):
+    try:
+        SERVER_PORT = int(_server_data["port"])
+    except (ValueError, TypeError):
+        pass

@@ -822,6 +822,102 @@ def admin_switch_model(req: ModelSwitchRequest):
     return result
 
 
+# ===== 服务器 / 域名配置接口 =====
+
+@app.get("/admin/config/server")
+def admin_get_server_config():
+    """获取服务器和域名访问配置"""
+    from rag_runtime_config import get_server_config
+    return get_server_config()
+
+
+class ServerConfigRequest(BaseModel):
+    updates: Dict[str, Any]
+
+
+@app.post("/admin/config/server")
+def admin_update_server_config(req: ServerConfigRequest):
+    """更新服务器和域名配置"""
+    from rag_runtime_config import update_server_config
+    changed = update_server_config(req.updates)
+    return {"ok": True, "changed": changed}
+
+
+class NginxGenRequest(BaseModel):
+    domain: str = Field(..., min_length=1)
+    port: int = 0
+    ssl: bool = False
+    cert_path: str = ""
+    key_path: str = ""
+
+
+@app.post("/admin/config/nginx")
+def admin_generate_nginx(req: NginxGenRequest):
+    """生成 nginx 反向代理配置"""
+    from rag_runtime_config import generate_nginx_config
+    config = generate_nginx_config(req.domain, req.port, req.ssl, req.cert_path, req.key_path)
+    return {"ok": True, "config": config}
+
+
+# ===== BGE-M3 嵌入模型控制接口 =====
+
+@app.get("/admin/service/embedding")
+def admin_embedding_status():
+    """获取 BGE-M3 嵌入模型状态"""
+    from rag_runtime_config import get_embedding_status
+    return get_embedding_status()
+
+
+@app.post("/admin/service/embedding/start")
+def admin_embedding_start():
+    """加载 BGE-M3 嵌入模型"""
+    from rag_runtime_config import start_embedding_model
+    result = start_embedding_model()
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error", "启动失败"))
+    return result
+
+
+@app.post("/admin/service/embedding/stop")
+def admin_embedding_stop():
+    """卸载 BGE-M3 嵌入模型"""
+    from rag_runtime_config import stop_embedding_model
+    result = stop_embedding_model()
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error", "停止失败"))
+    return result
+
+
+# ===== LLM 服务控制接口 =====
+
+@app.get("/admin/service/llm")
+def admin_llm_status():
+    """获取 LLM 服务状态"""
+    from rag_runtime_config import get_llm_status
+    return get_llm_status()
+
+
+class LLMStartRequest(BaseModel):
+    api_key: str = ""
+
+
+@app.post("/admin/service/llm/start")
+def admin_llm_start(req: LLMStartRequest):
+    """启动 LLM 服务"""
+    from rag_runtime_config import start_llm_service
+    result = start_llm_service(req.api_key)
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error", "启动失败"))
+    return result
+
+
+@app.post("/admin/service/llm/stop")
+def admin_llm_stop():
+    """停止 LLM 服务"""
+    from rag_runtime_config import stop_llm_service
+    return stop_llm_service()
+
+
 # ===== 系统状态接口 =====
 
 @app.get("/admin/stats")
