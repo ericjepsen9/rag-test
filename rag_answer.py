@@ -1322,6 +1322,112 @@ def get_last_route_product():
             getattr(_thread_local, "product", ""))
 
 
+# ===== 知识缺口日志 =====
+_GAP_LOG = Path(__file__).resolve().parent / "logs" / "knowledge_gap.jsonl"
+
+
+def _log_knowledge_gap(question: str, route: str, rewrite: dict,
+                       hits: list, log_meta: dict) -> None:
+    """记录知识库未覆盖的查询，便于定期分析和补充知识。
+    与 miss_log 不同，这里额外记录路由、扩展查询、最高分等诊断信息。"""
+    from rag_logger import _append_jsonl, _ensure_dir
+    top_score = max((h.get("hybrid_score") or h.get("score", 0.0) for h in hits), default=0.0)
+    top_text = (hits[0].get("text", "")[:100] if hits else "")
+    payload = {
+        "question": question,
+        "expanded_query": rewrite.get("expanded", ""),
+        "route": route,
+        "hit_count": len(hits),
+        "top_score": round(top_score, 3),
+        "top_snippet": top_text,
+        "product": log_meta.get("product", ""),
+    }
+    _ensure_dir()
+    _append_jsonl(_GAP_LOG, payload)
+
+
+# ===== LLM 智能兜底 =====
+
+# 知识库覆盖的主题列表（用于 LLM 兜底时告知用户可以问什么）
+_KNOWLEDGE_TOPICS = (
+    "菲罗奥（PCL胶原再生产品）的成分、功效、操作方法、术后护理、禁忌人群、防伪鉴别、"
+    "效果与维持时间、术前准备、方案设计、修复补救、联合方案；"
+    "注射填充（玻尿酸/透明质酸）的分类、应用、对比、风险；"
+    "水光针、微针、光电（射频/皮秒/IPL）等项目的原理和流程；"
+    "面部分区治疗方案、皮肤问题（松弛/干燥/毛孔/色斑/痘坑/皱纹）的改善建议；"
+    "术后并发症处理、疗程规划、设备知识、客户沟通话术"
+)
+
+
+def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
+    """检索失败时，用 LLM 基于知识库覆盖范围做智能引导回答。
+    不编造事实，而是：
+    1. 坦诚说明该问题知识库尚未覆盖
+    2. 如果有部分相关内容，简要提及
+    3. 推荐用户可以问的相关话题
+    """
+    client = _get_openai_client()
+    if client is None:
+        return ""
+
+    # 如果有低分检索结果，提取摘要供 LLM 参考
+    partial_context = ""
+    if hits:
+        snippets = [h.get("text", "")[:200] for h in hits[:3] if h.get("text")]
+        if snippets:
+            partial_context = (
+                "\n以下是检索到的部分相关片段（相关度较低，仅供参考）：\n"
+                + "\n---\n".join(snippets)
+            )
+
+    system_prompt = (
+        "你是一位专业、亲切的医美顾问助手。用户问了一个知识库中尚未完全覆盖的问题。\n"
+        "你的任务是：\n"
+        "1. 坦诚但友好地告知该话题目前知识库覆盖不足，不要编造任何事实\n"
+        "2. 如果提供了部分相关片段，可以简要提及相关信息（注明仅供参考）\n"
+        "3. 根据用户问题，推荐1-2个知识库能详细回答的相关话题\n"
+        "4. 语气自然亲切，不要生硬\n"
+        f"\n当前知识库覆盖的主题包括：\n{_KNOWLEDGE_TOPICS}\n"
+    )
+
+    user_prompt = f"用户问题：{question}{partial_context}"
+
+    try:
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=800,
+        )
+        if not resp.choices:
+            return ""
+        text = (resp.choices[0].message.content or "").strip()
+        return text
+    except Exception as e:
+        from rag_logger import log_error
+        log_error("llm_fallback_answer", f"LLM 兜底调用失败: {e}",
+                  meta={"route": route, "question": question[:100]})
+        return ""
+
+
+def _static_fallback(hits: list) -> list:
+    """无 LLM 时的静态兜底文案"""
+    if hits:
+        return [
+            "知识库中可能存在相关信息，但置信度不足以生成准确结论。",
+            "建议换一种表述重新提问，或咨询专业医师。",
+        ]
+    return [
+        "该问题目前知识库尚未覆盖。",
+        "您可以尝试问我以下方面的问题：产品成分与功效、术后护理、"
+        "禁忌人群、操作方法、效果维持时间、联合方案等。",
+        "如需专业建议，建议咨询医师。",
+    ]
+
+
 def answer_one(question: str, mode: str, rewrite: dict = None,
                route_override: str = "") -> str:
     product = detect_product(question)
@@ -1457,24 +1563,26 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         if fallback_lines:
             body_lines = fallback_lines
         else:
-            # 区分无检索结果 vs 低分检索结果，便于分析和优化
+            # ---- LLM 智能兜底：检索失败时用 LLM 做引导性回答 ----
+            if USE_OPENAI:
+                llm_fallback = _llm_fallback_answer(question, route, hits)
+                if llm_fallback:
+                    method = "llm_fallback"
+                    _log_knowledge_gap(question, route, rewrite, hits, _log_meta)
+                    log_qa(question, llm_fallback, rewritten_query=rewrite["expanded"],
+                           matched_sources=build_evidence(hits), hit=False,
+                           meta={**_log_meta, "method": method})
+                    return llm_fallback
+
+            # 无 LLM 或 LLM 兜底失败 → 静态兜底
             if hits:
-                # 有检索结果但规则提取和 fallback 均失败 → 低置信度回答
-                fallback = [
-                    "知识库中可能存在相关信息，但置信度不足以生成准确结论。",
-                    "建议换一种表述重新提问，或咨询专业医师。",
-                ]
                 method = "low_confidence"
             else:
-                # 完全无检索结果 → 知识库未覆盖
-                fallback = [
-                    "当前知识库未覆盖该问题的直接结论。",
-                    "可确认方向：请核对产品主文档、FAQ 或补充对应知识库章节。",
-                    "该问题可能涉及医生判断范围，建议由专业医师评估。",
-                ]
                 method = "no_hit"
+            _log_knowledge_gap(question, route, rewrite, hits, _log_meta)
             evidence = build_evidence(hits)
-            text = format_structured_answer(route, fallback, evidence, add_risk_note=(route == "risk"))
+            text = format_structured_answer(route, _static_fallback(hits), evidence,
+                                            add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=evidence, hit=False,
                    meta={**_log_meta, "method": method})
