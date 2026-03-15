@@ -29,6 +29,7 @@ from rag_runtime_config import (
     FAQ_FAST_PATH_THRESHOLDS, FAQ_FAST_PATH_DEFAULT,
     RERANK_ENABLED, RERANK_TOP_N,
     DYNAMIC_THRESHOLD_ENABLED, DYNAMIC_THRESHOLD_RATIO, DYNAMIC_THRESHOLD_FLOOR_RATIO,
+    MATERIAL_ALIASES,
 )
 from search_utils import (
     normalize_lines, uniq, is_faq_line, section_block,
@@ -965,12 +966,59 @@ def _read_shared_knowledge(dir_name: str) -> str:
         return cached[1] if cached else ""
 
 
-def parse_answer(route: str, product: str, mode: str) -> List[str]:
+def _detect_material(question: str) -> str:
+    """检测用户问题中是否提到了特定材料，返回材料 ID 或空字符串。"""
+    found = detect_terms(question, MATERIAL_ALIASES)
+    return found[0] if found else ""
+
+
+def _read_material_knowledge(material_id: str) -> str:
+    """读取特定材料的知识库内容。"""
+    mat_dir = KNOWLEDGE_DIR / "materials" / material_id
+    main_file = mat_dir / "main.txt"
+    if not main_file.exists():
+        return ""
+    key = str(main_file)
+    mtime = main_file.stat().st_mtime
+    cached = _knowledge_file_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    content = main_file.read_text(encoding="utf-8")
+    _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
+    _knowledge_file_cache[key] = (mtime, content)
+    return content
+
+
+def parse_answer(route: str, product: str, mode: str,
+                 question: str = "") -> List[str]:
     # 共享路由：从共享知识目录读取
     shared_dir_name = _SHARED_ROUTE_DIR.get(route)
     if shared_dir_name:
         main_text = _read_shared_knowledge(shared_dir_name)
         faq_text = ""
+    elif route == "ingredient" and question:
+        # 材料专属路由：当用户问的是某个具体材料（如"玻尿酸"），
+        # 优先从材料专属知识库读取，而非产品的成分章节
+        material_id = _detect_material(question)
+        if material_id:
+            mat_text = _read_material_knowledge(material_id)
+            if mat_text:
+                # 材料知识文件的结构与产品成分章节不同，
+                # 直接提取全文内容作为答案（整个文件都是关于这个材料的）
+                lines = [ln for ln in normalize_lines(mat_text) if not is_faq_line(ln)]
+                items = []
+                for ln in lines:
+                    clean = ln.lstrip("-").strip()
+                    if clean and _accept_line(clean, route):
+                        items.append(clean)
+                items = uniq(items)
+                limit = 12 if mode == "brief" else 32
+                return items[:limit]
+            main_text = read_knowledge_file(product, "main.txt")
+            faq_text = read_knowledge_file(product, "faq.txt")
+        else:
+            main_text = read_knowledge_file(product, "main.txt")
+            faq_text = read_knowledge_file(product, "faq.txt")
     else:
         main_text = read_knowledge_file(product, "main.txt")
         faq_text = read_knowledge_file(product, "faq.txt")
@@ -1182,7 +1230,7 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         "indication_q": "针对该皮肤问题，推荐合适的治疗方案和产品，说明原理和预期效果。",
         "complication": "说明并发症的表现、处理方法和就医时机，强调安全第一。",
         "course": "说明疗程规划的原则、建议次数和间隔时间。",
-        "ingredient": "详细介绍核心成分、作用原理和协同效果。",
+        "ingredient": "详细介绍该材料/成分的特性、作用原理、分类、常见应用、风险注意事项等。如果用户问的是某个具体材料（如玻尿酸/透明质酸），请围绕该材料本身展开介绍，而不是列举某个产品的所有成分。",
         "script": "提供专业、合规的客户沟通话术和表达建议。",
     }
 
@@ -1547,7 +1595,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 return llm_answer
 
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
-    body_lines = parse_answer(route, product, mode)
+    body_lines = parse_answer(route, product, mode, question=question)
 
     # 补充 FAQ 命中：规则提取结果不够丰富时，用 FAQ 补充
     # 规则提取已充分（>= 6 条）时跳过 FAQ 补充，避免冗余
@@ -1596,7 +1644,17 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             return text
 
     evidence = build_evidence(hits)
-    text = format_structured_answer(route, body_lines, evidence, add_risk_note=(route == "risk"))
+    # 材料专属查询时使用更准确的标题
+    custom_title = ""
+    if route == "ingredient":
+        material_id = _detect_material(question)
+        if material_id:
+            # 从 MATERIAL_ALIASES 取中文名作为标题
+            aliases = MATERIAL_ALIASES.get(material_id, [])
+            custom_title = aliases[0] if aliases else ""
+    text = format_structured_answer(route, body_lines, evidence,
+                                    add_risk_note=(route == "risk"),
+                                    custom_title=custom_title)
     if USE_OPENAI:
         text = openai_rewrite_answer(text, route)
     log_qa(question, text, rewritten_query=rewrite["expanded"],

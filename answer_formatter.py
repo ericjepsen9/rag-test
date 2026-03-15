@@ -31,8 +31,9 @@ def format_structured_answer(
     body_lines: List[str],
     evidence: List[Dict] = None,
     add_risk_note: bool = False,
+    custom_title: str = "",
 ) -> str:
-    title = _TITLE_MAP.get(route, "回答")
+    title = custom_title or _TITLE_MAP.get(route, "回答")
     out = [f"【{title}】", ""]
     for ln in body_lines:
         # 保留已有的格式化（如 - 开头的行），否则加上 bullet

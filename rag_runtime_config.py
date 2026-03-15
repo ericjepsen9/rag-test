@@ -215,6 +215,10 @@ INDICATION_KEYWORDS = {
     "皱纹":   ["皱纹", "细纹", "抬头纹", "川字纹", "鱼尾纹", "颈纹"],
 }
 
+MATERIAL_ALIASES = {
+    "hyaluronic_acid": ["玻尿酸", "透明质酸", "HA", "hyaluronic acid"],
+}
+
 ANATOMY_KEYWORDS = {
     "额部":   ["额头", "额部", "抬头纹"],
     "眼周":   ["眼周", "眼袋", "泪沟", "黑眼圈", "鱼尾纹"],
