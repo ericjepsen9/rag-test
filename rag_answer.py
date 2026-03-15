@@ -1072,7 +1072,7 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
     return answer
 
 
-def _build_context(hits: List[Dict], max_chars: int = 3000) -> str:
+def _build_context(hits: List[Dict], max_chars: int = 5000) -> str:
     """将检索结果拼接为 LLM context 字符串，按完整 chunk 粒度截断。
     前3个片段含完整元数据头，后续片段仅标序号以节省 token。
     用 budget 追踪总长度（含片段间分隔符 \\n\\n），确保不超限。"""
@@ -1143,7 +1143,7 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         log_error("llm_generate_answer", "OpenAI client 不可用（未配置 API key 或初始化失败）")
         return ""
 
-    length_hint = "简洁扼要，控制在300字以内" if mode == "brief" else "详细全面，可适当展开"
+    length_hint = "控制在300-500字，重点突出、层次清晰" if mode == "brief" else "详细全面，可适当展开，800字以内"
     route_hints = {
         "risk": "重点说明可能的不良反应、处理建议，并提醒需医生评估。",
         "aftercare": "按时间线整理术后护理要点。",
@@ -1151,11 +1151,19 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         "anti_fake": "按步骤说明防伪验证方法。",
         "contraindication": "列出禁忌人群和情况，提醒需医生评估。",
         "combo": "说明联合方案和间隔时间。",
-        "basic": "介绍产品基本信息。",
+        "basic": "介绍产品基本信息，包括核心成分、主要功效、适用人群等。",
         "effect": "说明效果起效时间、维持时间和影响因素。",
         "pre_care": "列出术前需要做的准备和注意事项。",
         "design": "说明方案设计的要点和评估维度，提醒需医生面诊制定。",
         "repair": "说明修复和补救的思路，强调需医生评估，不要自行处理。",
+        "procedure_q": "全面介绍该项目的原理、适用人群、常见材料/方式、效果维持时间、风险注意事项等。",
+        "equipment_q": "介绍设备的功能、适用项目、技术参数和使用注意事项。",
+        "anatomy_q": "说明该部位的治疗方案、常用方法和注意事项。",
+        "indication_q": "针对该皮肤问题，推荐合适的治疗方案和产品，说明原理和预期效果。",
+        "complication": "说明并发症的表现、处理方法和就医时机，强调安全第一。",
+        "course": "说明疗程规划的原则、建议次数和间隔时间。",
+        "ingredient": "详细介绍核心成分、作用原理和协同效果。",
+        "script": "提供专业、合规的客户沟通话术和表达建议。",
     }
 
     history_block = ""
@@ -1179,18 +1187,20 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
         )
 
     system_prompt = (
-        "你是一位医美产品知识库问答助手。请严格基于以下检索到的知识库片段回答用户问题。\n"
-        "规则：\n"
-        "1. 只使用知识库中的信息，不要编造或补充任何事实\n"
-        '2. 如果知识库中没有相关信息，明确说明"当前知识库未覆盖该问题"\n'
-        "3. 回答使用结构化格式（分点列出）\n"
-        '4. 末尾加上"以上信息仅供参考，具体请咨询专业医师。"\n'
-        f"5. 回答要求：{length_hint}\n"
-        f"6. {route_hints.get(route, '')}\n"
+        "你是一位专业、亲切的医美顾问助手。请基于以下知识库内容回答用户问题。\n"
+        "回答风格要求：\n"
+        "1. 用自然流畅的口语化表达，像专业顾问在和客户对话一样\n"
+        "2. 内容要丰富具体，包含关键细节（如成分、原理、维持时间、适用人群等），避免笼统空泛\n"
+        "3. 合理使用分段和要点，但不要生硬的模板格式，让回答有层次感和可读性\n"
+        "4. 只使用知识库中的信息，不要编造事实\n"
+        '5. 如果知识库中没有相关信息，坦诚说明"这个问题目前知识库还没有覆盖"\n'
+        "6. 结尾自然地提醒一句建议咨询专业医师，不要用生硬的固定格式\n"
+        f"7. 回答长度：{length_hint}\n"
+        f"8. 重点方向：{route_hints.get(route, '根据问题自然组织回答内容。')}\n"
         f"{history_block}"
     )
 
-    user_prompt = f"知识库检索结果：\n{context}\n\n用户问题：{question}"
+    user_prompt = f"以下是从知识库中检索到的相关资料：\n{context}\n\n用户的问题是：{question}\n\n请基于以上资料，给出专业且易懂的回答。"
 
     try:
         resp = client.chat.completions.create(
@@ -1227,8 +1237,9 @@ def openai_rewrite_answer(text: str, route: str) -> str:
         return text
     try:
         prompt = (
-            "请在不改变事实的前提下，将以下基于知识库的回答整理得更专业、更自然。"
-            "不要新增事实。保留结构化格式。\n\n" + text
+            "请在不改变事实的前提下，将以下知识库回答润色为自然流畅的顾问式回答。"
+            "要求：语气亲切专业，像在和客户面对面交流；内容保持完整不遗漏；"
+            "合理分段，有层次感；不要新增事实。\n\n" + text
         )
         resp = client.chat.completions.create(
             model=OPENAI_MODEL,

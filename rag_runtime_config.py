@@ -250,8 +250,8 @@ CHUNK_OVERLAP = 50
 
 # ===== LLM 参数 =====
 LLM_TEMPERATURE = 0.3
-LLM_MAX_TOKENS_BRIEF = 1024
-LLM_MAX_TOKENS_FULL = 2048
+LLM_MAX_TOKENS_BRIEF = 1500
+LLM_MAX_TOKENS_FULL = 2500
 
 # 路由专属温度：风险/禁忌类需要确定性低温，效果/方案设计可稍高
 ROUTE_LLM_TEMPERATURE = {
@@ -344,7 +344,7 @@ FAISS_HNSW_EF_SEARCH = _safe_int("RAG_HNSW_EFS", "128")        # 查询时搜索
 # vw/kw: 向量/关键词权重覆盖（可选）。精确参数类问题提高 kw，语义模糊问题提高 vw。
 QUESTION_TYPE_CONFIG = {
     "ingredient":        {"k": 8,  "threshold": 0.25},
-    "basic":             {"k": 6,  "threshold": 0.30},
+    "basic":             {"k": 8,  "threshold": 0.28},
     "operation":         {"k": 10, "threshold": 0.25, "vw": 0.55, "kw": 0.45},
     "aftercare":         {"k": 8,  "threshold": 0.25},
     "risk":              {"k": 8,  "threshold": 0.25},

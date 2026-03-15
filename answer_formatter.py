@@ -33,31 +33,20 @@ def format_structured_answer(
     add_risk_note: bool = False,
 ) -> str:
     title = _TITLE_MAP.get(route, "回答")
-    out = [f"{title}（资料提取）：", "结论："]
+    out = [f"【{title}】", ""]
     for ln in body_lines:
-        out.append(f"- {ln}")
+        # 保留已有的格式化（如 - 开头的行），否则加上 bullet
+        stripped = ln.strip()
+        if not stripped:
+            out.append("")
+        elif stripped.startswith(("-", "•", "·", "【")):
+            out.append(stripped)
+        else:
+            out.append(f"- {stripped}")
 
-    if evidence:
-        out.append("依据：")
-        seen_sources = set()
-        for ev in evidence[:MAX_EVIDENCE_CHUNKS]:
-            raw_meta = ev.get("meta")
-            meta = raw_meta if isinstance(raw_meta, dict) else {}
-            source_file = meta.get("source_file", "unknown")
-            chunk = meta.get("chunk_id", "?")
-            stype = meta.get("source_type", "unknown")
-            key = (source_file, chunk)
-            if key in seen_sources:
-                continue
-            seen_sources.add(key)
-            out.append(f"- 来源文件：{source_file}｜段落：{chunk}｜类型：{stype}")
-
-    out.append("注意事项：")
-    out.append(f"- {REFERENCE_NOTE}")
-    if add_risk_note:
-        out.append("需医生评估项：")
-        out.append(f"- {RISK_NOTE}")
-    # 安全相关路由自动追加医生评估提醒
-    elif route in _SAFETY_ROUTES:
-        out.append(f"- {RISK_NOTE}")
+    # 安全提醒（自然语气）
+    out.append("")
+    if add_risk_note or route in _SAFETY_ROUTES:
+        out.append(f"⚠️ {RISK_NOTE}如有不适请及时就医。")
+    out.append(f"💡 {REFERENCE_NOTE}")
     return "\n".join(out).strip()
