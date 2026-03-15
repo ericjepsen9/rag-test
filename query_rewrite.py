@@ -517,7 +517,8 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
 
     # 上下文补全：解析指代词和省略（用清理后的文本做补全，更干净）
     q = _resolve_context(cleaned, history_ctx) if (history_ctx and not is_chitchat) else cleaned
-    context_resolved = (q != raw)
+    # 区分"纠正前缀去除"和"上下文补全"：只有实际做了指代/省略补全才标记 context_resolved
+    context_resolved = (q != cleaned)
 
     # search_query：用于检索的查询（已去除纠正前缀）
     # original：保留完整补全结果（含产品名），供路由检测和 LLM 使用

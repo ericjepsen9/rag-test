@@ -226,6 +226,7 @@ def _auto_rebuild_index(product: str, docs: List[Dict], store_dir: Path):
 
 
 _shared_build_attempted = False
+_shared_build_lock = threading.Lock()
 
 
 def _ensure_shared_store():
@@ -233,19 +234,23 @@ def _ensure_shared_store():
     global _shared_build_attempted
     if _shared_build_attempted:
         return
-    _shared_build_attempted = True
-    shared_dir = STORE_ROOT / "_shared"
-    if (shared_dir / "docs.jsonl").exists():
-        return
-    # _shared store 不存在，尝试自动构建
-    print("[WARN] _shared 索引不存在，正在自动构建共享知识库...")
-    try:
-        from build_faiss import build_shared
-        build_shared()
-        print("[INFO] _shared 索引自动构建完成")
-    except Exception as e:
-        print(f"[ERROR] _shared 索引自动构建失败: {e}")
-        print("[HINT] 请手动运行: python build_faiss.py --shared")
+    with _shared_build_lock:
+        # 获得锁后再次检查（另一个线程可能刚完成构建）
+        if _shared_build_attempted:
+            return
+        _shared_build_attempted = True
+        shared_dir = STORE_ROOT / "_shared"
+        if (shared_dir / "docs.jsonl").exists():
+            return
+        # _shared store 不存在，尝试自动构建
+        print("[WARN] _shared 索引不存在，正在自动构建共享知识库...")
+        try:
+            from build_faiss import build_shared
+            build_shared()
+            print("[INFO] _shared 索引自动构建完成")
+        except Exception as e:
+            print(f"[ERROR] _shared 索引自动构建失败: {e}")
+            print("[HINT] 请手动运行: python build_faiss.py --shared")
 
 
 def load_store(product: str):
@@ -939,15 +944,17 @@ def _read_shared_knowledge(dir_name: str) -> str:
                 if mt > max_mtime:
                     max_mtime = mt
                 inst_files.append(f)
+        # 用 (max_mtime, file_count) 作为缓存键：文件删除时 count 变化可感知
+        cache_key = (max_mtime, len(inst_files))
         cached = _shared_knowledge_cache.get(dir_name)
-        if cached and cached[0] == max_mtime and inst_files:
+        if cached and cached[0] == cache_key and inst_files:
             return cached[1]
         # 缓存未命中，读取文件内容
         parts = [fp.read_text(encoding="utf-8") for fp in inst_files]
         content = "\n\n".join(parts)
         if max_mtime > 0:
             _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
-            _shared_knowledge_cache[dir_name] = (max_mtime, content)
+            _shared_knowledge_cache[dir_name] = (cache_key, content)
         return content
     except OSError as e:
         from rag_logger import log_error

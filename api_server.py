@@ -256,11 +256,26 @@ def _oai_messages_to_question_and_history(messages: List[OAIMessage]):
     conv = [m for m in messages if m.role in ("user", "assistant")]
     if not conv:
         return "", []
-    question = _sanitize_input(conv[-1].content[:MAX_QUESTION_LEN])
-    history = [
-        {"role": m.role, "content": _sanitize_input(m.content[:1000])}
-        for m in conv[:-1]
-    ][-6:]
+    # 最后一条消息必须是 user 角色；如果是 assistant 则向前找最后一条 user 消息
+    last = conv[-1]
+    if last.role != "user":
+        # 找最后一条 user 消息作为问题
+        user_msgs = [m for m in conv if m.role == "user"]
+        if not user_msgs:
+            return "", []
+        question = _sanitize_input(user_msgs[-1].content[:MAX_QUESTION_LEN])
+        # 历史保留最后 user 消息之前的内容
+        last_user_idx = len(conv) - 1 - conv[::-1].index(user_msgs[-1])
+        history = [
+            {"role": m.role, "content": _sanitize_input(m.content[:1000])}
+            for m in conv[:last_user_idx]
+        ][-6:]
+    else:
+        question = _sanitize_input(last.content[:MAX_QUESTION_LEN])
+        history = [
+            {"role": m.role, "content": _sanitize_input(m.content[:1000])}
+            for m in conv[:-1]
+        ][-6:]
     return question, history
 
 

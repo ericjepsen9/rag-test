@@ -458,13 +458,22 @@ def merge_hybrid(vector_hits: List[Dict], keyword_hits: List[Dict], vw: float, k
         key = _hit_key(h)
         if key not in merged:
             merged[key] = {**h, "score": 0.0, "hybrid_score": 0.0}
-        merged[key]["hybrid_score"] += float(h.get("keyword_score", 0.0)) * kw
+        kw_contribution = float(h.get("keyword_score", 0.0)) * kw
+        # 同一文档多次出现在 keyword_hits 中（如来自不同 store）时取最高分，
+        # 而非累加，防止分数膨胀
+        current_kw = merged[key].get("_kw_contribution", 0.0)
+        if kw_contribution > current_kw:
+            merged[key]["hybrid_score"] += kw_contribution - current_kw
+            merged[key]["_kw_contribution"] = kw_contribution
 
     # 路由感知加分：匹配目标章节标题的 chunk 得到小幅提升
     if route:
         _apply_route_boost(merged, route)
 
     out = list(merged.values())
+    # 清理内部追踪字段
+    for h in out:
+        h.pop("_kw_contribution", None)
     out.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
     return out[:top_k]
 
@@ -515,8 +524,9 @@ _RE_COMMA_SPLIT = re.compile(r"[，,]")
 
 
 def split_multi_question(question: str, separators: List[str] = None) -> List[str]:
-    # 选择式问题（"A还是B"）不应拆分，提前返回
-    if "还是" in question:
+    # 选择式问题（"A还是B"）：如果没有问号分隔的多个子问题，不拆分
+    # 但如果有多个子问题（如"水光还是微针？术后怎么护理？"），仍需按问号拆分
+    if "还是" in question and "？" not in question and "?" not in question:
         return [question.strip().rstrip("。？?")]
 
     separators = separators or [
