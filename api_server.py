@@ -962,3 +962,241 @@ def admin_stats():
         "shared_docs": shared_docs,
         "shared_indexed": (shared_store / "index.faiss").exists(),
     }
+
+
+# ===== 知识库导入接口（LLM 自动整理） =====
+
+# 导入锁，防止并发导入
+_import_locks: Dict[str, threading.Lock] = {}
+_import_locks_guard = threading.Lock()
+
+
+class ImportKnowledgeRequest(BaseModel):
+    """通过文本内容导入知识库"""
+    type: str = Field(..., description="知识类型: product/procedure/equipment/material/anatomy/indication/complication/course/script")
+    id: str = Field(default="", description="实体ID（目录名），product/procedure/equipment/material 必填")
+    content: str = Field(..., min_length=10, description="原始文档文本内容")
+    build: bool = Field(default=True, description="导入后自动构建索引")
+    dry_run: bool = Field(default=False, description="仅预览，不写入文件")
+
+
+@app.post("/admin/import_knowledge")
+def admin_import_knowledge(req: ImportKnowledgeRequest):
+    """通过 LLM 自动将原始文档整理为结构化知识库文件。
+
+    用法：POST JSON 请求体，content 字段放原始文档文本。
+    LLM 会自动整理为 main.txt / faq.txt / alias.txt 等结构化文件。
+    """
+    from import_knowledge import (
+        _ENTITY_TYPES, _get_openai_client, _generate_knowledge,
+        _write_knowledge_files, _ENTITY_LABELS,
+    )
+
+    entity_type = req.type.strip()
+    entity_id = req.id.strip()
+
+    # 校验类型
+    if entity_type not in _ENTITY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的类型: {entity_type}，可选: {', '.join(_ENTITY_TYPES.keys())}")
+
+    # 校验 ID
+    _, is_single = _ENTITY_TYPES[entity_type]
+    if not is_single and not entity_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"类型 '{entity_type}' 需要提供 id 参数")
+
+    # 安全校验 ID
+    if entity_id:
+        if ".." in entity_id or "/" in entity_id or "\\" in entity_id:
+            raise HTTPException(status_code=400, detail="非法 ID")
+        if not _SAFE_NAME_RE.match(entity_id):
+            raise HTTPException(status_code=400, detail="ID 只允许字母、数字、下划线、横线、中文")
+
+    raw_text = req.content.strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="文档内容不能为空")
+
+    # 获取导入锁
+    lock_key = f"{entity_type}:{entity_id or '_single'}"
+    with _import_locks_guard:
+        if lock_key not in _import_locks:
+            _import_locks[lock_key] = threading.Lock()
+        lock = _import_locks[lock_key]
+
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="该知识正在导入中，请稍后重试")
+
+    try:
+        # 检查 LLM 是否可用
+        from rag_runtime_config import USE_OPENAI, OPENAI_MODEL
+        if not USE_OPENAI:
+            raise HTTPException(
+                status_code=400,
+                detail="LLM 未启用，请先在管理后台启用 LLM 服务（设置 RAG_USE_OPENAI=1）")
+
+        # 调用 LLM 整理
+        client = _get_openai_client()
+        result = _generate_knowledge(client, raw_text, entity_type, entity_id)
+
+        # 写入文件
+        out_dir = _write_knowledge_files(result, entity_type, entity_id,
+                                          dry_run=req.dry_run)
+
+        # 构建索引
+        built_index = False
+        if req.build and not req.dry_run:
+            try:
+                if entity_type == "product":
+                    from build_faiss import build_for_product
+                    build_for_product(entity_id)
+                    invalidate_store_cache(entity_id)
+                else:
+                    from build_faiss import build_shared
+                    build_shared()
+                    invalidate_store_cache("_shared")
+                # 清除健康检查缓存
+                with _health_lock:
+                    global _health_cache
+                    _health_cache = {}
+                built_index = True
+            except Exception as e:
+                log_error("import_build_index", repr(e),
+                          meta={"type": entity_type, "id": entity_id})
+
+        # 构建响应
+        response = {
+            "ok": True,
+            "type": entity_type,
+            "id": entity_id,
+            "dry_run": req.dry_run,
+            "output_dir": str(out_dir),
+            "built_index": built_index,
+            "model": OPENAI_MODEL,
+            "files_generated": {},
+        }
+        if result.get("main_txt"):
+            response["files_generated"]["main.txt"] = len(result["main_txt"])
+        if result.get("faq_txt"):
+            response["files_generated"]["faq.txt"] = len(result["faq_txt"])
+        if result.get("alias_txt"):
+            response["files_generated"]["alias.txt"] = len(result["alias_txt"])
+
+        # 别名注册提示
+        aliases = result.get("product_aliases") or result.get("entity_aliases") or []
+        name = result.get("product_name") or result.get("entity_name") or entity_id
+        if aliases:
+            alias_config_key = {
+                "product": "PRODUCT_ALIASES",
+                "procedure": "PROCEDURE_ALIASES",
+                "equipment": "EQUIPMENT_ALIASES",
+                "material": "MATERIAL_ALIASES",
+            }.get(entity_type)
+            if alias_config_key:
+                response["alias_hint"] = {
+                    "config_key": alias_config_key,
+                    "entity_id": entity_id,
+                    "name": name,
+                    "aliases": aliases,
+                }
+
+        # dry_run 时返回预览内容
+        if req.dry_run:
+            response["preview"] = {}
+            if result.get("main_txt"):
+                txt = result["main_txt"]
+                response["preview"]["main_txt"] = txt[:3000] + (f"\n...(省略 {len(txt)-3000} 字)" if len(txt) > 3000 else "")
+            if result.get("faq_txt"):
+                txt = result["faq_txt"]
+                response["preview"]["faq_txt"] = txt[:2000] + (f"\n...(省略 {len(txt)-2000} 字)" if len(txt) > 2000 else "")
+            if result.get("alias_txt"):
+                response["preview"]["alias_txt"] = result["alias_txt"]
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error("admin_import_knowledge", repr(e),
+                  meta={"type": entity_type, "id": entity_id})
+        raise HTTPException(status_code=500, detail=f"导入失败: {e}")
+    finally:
+        lock.release()
+
+
+@app.post("/admin/import_knowledge_file")
+async def admin_import_knowledge_file(request: "Request"):
+    """通过文件上传导入知识库（LLM 自动整理）。
+
+    Form fields:
+        - type: 知识类型 (product/procedure/equipment/material/...)
+        - id: 实体ID（product/procedure/equipment/material 必填）
+        - build: "1" 导入后自动建索引（默认 "1"）
+        - dry_run: "1" 仅预览（默认 "0"）
+        - file: 上传的文件（支持 .txt .md .pdf）
+    """
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=400, detail="需要 multipart/form-data 格式")
+
+    try:
+        form = await request.form()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"解析表单失败: {e}")
+
+    entity_type = str(form.get("type", "")).strip()
+    entity_id = str(form.get("id", "")).strip()
+    build = str(form.get("build", "1")).strip().lower() in ("1", "true", "yes")
+    dry_run = str(form.get("dry_run", "0")).strip().lower() in ("1", "true", "yes")
+
+    if not entity_type:
+        raise HTTPException(status_code=400, detail="缺少 type 字段")
+
+    # 读取上传的文件
+    file_item = form.get("file")
+    if not file_item or not hasattr(file_item, "read"):
+        raise HTTPException(status_code=400, detail="缺少 file 文件")
+
+    fname = getattr(file_item, "filename", "") or "upload.txt"
+    suffix = Path(fname).suffix.lower()
+
+    file_data = await file_item.read()
+
+    if suffix == ".pdf":
+        try:
+            import pdfplumber
+            import io
+            text_parts = []
+            with pdfplumber.open(io.BytesIO(file_data)) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        text_parts.append(t)
+            raw_text = "\n\n".join(text_parts)
+        except ImportError:
+            raise HTTPException(status_code=400, detail="服务器未安装 pdfplumber，无法处理 PDF")
+    else:
+        # txt / md 等文本文件
+        for enc in ("utf-8-sig", "utf-8", "gbk", "gb2312"):
+            try:
+                raw_text = file_data.decode(enc)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        else:
+            raw_text = file_data.decode("utf-8", errors="replace")
+
+    if not raw_text.strip():
+        raise HTTPException(status_code=400, detail="上传的文件内容为空")
+
+    # 构造请求，复用 JSON 接口逻辑
+    import_req = ImportKnowledgeRequest(
+        type=entity_type,
+        id=entity_id,
+        content=raw_text,
+        build=build,
+        dry_run=dry_run,
+    )
+    return admin_import_knowledge(import_req)
