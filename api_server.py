@@ -926,6 +926,42 @@ def admin_llm_stop():
     return stop_llm_service()
 
 
+@app.post("/admin/service/llm/test")
+def admin_llm_test():
+    """测试 LLM API 连接（发送一次简短请求验证连通性）"""
+    from rag_runtime_config import USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE
+    if not USE_OPENAI:
+        return {"ok": False, "error": "LLM 未启用"}
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        return {"ok": False, "error": "未设置 OPENAI_API_KEY"}
+    t0 = time.monotonic()
+    try:
+        from openai import OpenAI
+        kwargs = {"api_key": key}
+        if OPENAI_API_BASE:
+            kwargs["base_url"] = OPENAI_API_BASE
+        client = OpenAI(**kwargs)
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": "请回复OK"}],
+            max_tokens=10,
+            temperature=0,
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        reply = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        return {
+            "ok": True,
+            "model": OPENAI_MODEL,
+            "api_base": OPENAI_API_BASE or "(default)",
+            "reply": reply,
+            "latency_ms": latency_ms,
+        }
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": False, "error": str(e), "latency_ms": latency_ms}
+
+
 # ===== 系统状态接口 =====
 
 @app.get("/admin/stats")

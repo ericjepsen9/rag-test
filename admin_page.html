@@ -191,6 +191,7 @@
     /* Progress */
     .progress { height: 4px; background: #e0e0e6; border-radius: 2px; overflow: hidden; }
     .progress .bar { height: 100%; background: var(--primary); transition: width .3s; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
   </style>
 </head>
 <body>
@@ -206,6 +207,8 @@
         <span class="icon">&#x1f4da;</span> 知识库管理</a>
       <a href="#" onclick="showPage('upload')" data-page="upload">
         <span class="icon">&#x2b06;</span> 上传资料</a>
+      <a href="#" onclick="showPage('import')" data-page="import">
+        <span class="icon">&#x2728;</span> 智能导入</a>
       <a href="#" onclick="showPage('index')" data-page="index">
         <span class="icon">&#x26a1;</span> 索引构建</a>
       <div class="group-label">配置</div>
@@ -347,6 +350,124 @@
               <input id="template-product" placeholder="产品名（英文ID）" style="width:180px">
               <input id="template-cn-name" placeholder="中文名" style="width:120px">
               <button class="btn-success" onclick="createTemplate()">创建模板</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 智能导入 ==================== -->
+    <div class="page" id="page-import">
+      <h1>&#x2728; 智能导入（LLM 自动整理）</h1>
+
+      <!-- LLM 连接状态卡片 -->
+      <div class="card" id="import-llm-card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h2 style="margin:0">Cherry Studio / LLM API 状态</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="import-llm-badge"></span>
+            <button class="btn-secondary btn-sm" onclick="checkImportLLM()">刷新</button>
+            <button class="btn-ghost btn-sm" onclick="testImportLLM()">测试连接</button>
+          </div>
+        </div>
+        <div id="import-llm-info" style="margin-top:10px;font-size:12px;line-height:2"></div>
+        <div id="import-llm-test" style="margin-top:6px"></div>
+      </div>
+
+      <div class="row">
+        <!-- 左侧：导入表单 -->
+        <div class="col">
+          <div class="card">
+            <h2>文档导入设置</h2>
+            <div class="form-group">
+              <label>知识类型</label>
+              <select id="import-type" style="width:100%" onchange="onImportTypeChange()">
+                <option value="product">product - 医美产品</option>
+                <option value="procedure">procedure - 医美项目/手术</option>
+                <option value="equipment">equipment - 设备/仪器</option>
+                <option value="material">material - 材料/成分</option>
+                <option value="anatomy">anatomy - 面部解剖</option>
+                <option value="indication">indication - 皮肤适应症</option>
+                <option value="complication">complication - 术后并发症</option>
+                <option value="course">course - 疗程规划</option>
+                <option value="script">script - 客户沟通话术</option>
+              </select>
+            </div>
+            <div class="form-group" id="import-id-group">
+              <label>实体ID（目录名）</label>
+              <input type="text" id="import-id" style="width:100%" placeholder="例如: botox, thermage, hyaluronic_acid">
+              <div class="form-hint">product / procedure / equipment / material 类型必填，作为知识库的目录名</div>
+            </div>
+            <div class="form-group">
+              <label>导入方式</label>
+              <div class="tabs" id="import-mode-tabs" style="margin-bottom:0">
+                <button class="active" onclick="switchImportMode('text')">粘贴文本</button>
+                <button onclick="switchImportMode('file')">上传文件</button>
+              </div>
+            </div>
+
+            <!-- 文本模式 -->
+            <div id="import-text-mode">
+              <div class="form-group">
+                <label>原始文档内容</label>
+                <textarea id="import-content" rows="14" placeholder="将原始文档内容粘贴到这里...&#10;&#10;支持任意格式的产品说明、培训资料、操作手册等原始文档。&#10;LLM 会自动将其整理为结构化的知识库文件。"></textarea>
+                <div class="form-hint">字数：<span id="import-char-count">0</span></div>
+              </div>
+            </div>
+
+            <!-- 文件模式 -->
+            <div id="import-file-mode" style="display:none">
+              <div class="form-group">
+                <div class="upload-zone" id="import-file-zone"
+                     onclick="document.getElementById('import-file-input').click()">
+                  <div class="icon">&#x1f4c4;</div>
+                  <p><strong>点击或拖拽文件</strong></p>
+                  <p>支持 .txt .md .pdf 格式</p>
+                  <input type="file" id="import-file-input" accept=".txt,.md,.pdf"
+                         style="display:none" onchange="handleImportFile(event)">
+                </div>
+                <div id="import-file-info" style="margin-top:8px"></div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="inline-label">
+                <input type="checkbox" id="import-build" checked>
+                导入后自动构建索引
+              </label>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="btn-ghost" onclick="doImport(true)" id="btn-import-preview">预览整理结果</button>
+              <button class="btn-primary" onclick="doImport(false)" id="btn-import-submit">正式导入</button>
+            </div>
+            <div id="import-progress" style="margin-top:10px"></div>
+          </div>
+        </div>
+
+        <!-- 右侧：结果预览 -->
+        <div class="col">
+          <div class="card" id="import-result-card" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h2 id="import-result-title" style="margin:0">导入结果</h2>
+              <span id="import-result-badge"></span>
+            </div>
+            <div id="import-result-meta" style="margin-top:10px;font-size:12px;line-height:2"></div>
+
+            <!-- 别名提示 -->
+            <div id="import-alias-hint" class="card" style="display:none;margin-top:12px;background:#fffbe6;border:1px solid #ffe58f"></div>
+
+            <!-- 预览内容 Tabs -->
+            <div id="import-preview-section" style="display:none;margin-top:14px">
+              <div class="tabs" id="preview-tabs">
+                <button class="active" onclick="switchPreviewTab('main')">main.txt</button>
+                <button onclick="switchPreviewTab('faq')">faq.txt</button>
+                <button onclick="switchPreviewTab('alias')">alias.txt</button>
+              </div>
+              <div id="preview-content">
+                <textarea id="preview-text" rows="20" readonly
+                          style="font-family:monospace;font-size:12px;background:#f5f6fa;width:100%"></textarea>
+              </div>
             </div>
           </div>
         </div>
@@ -598,6 +719,14 @@
         </div>
       </div>
       <div class="card">
+        <h2>Cherry Studio / LLM API 连接测试</h2>
+        <div class="form-hint" style="margin-bottom:12px">
+          测试与 Cherry Studio 或其他 OpenAI 兼容 API 的实际连通性。发送一次真实请求验证模型是否响应正常。
+        </div>
+        <div id="llm-conn-test-result" style="margin-bottom:10px"></div>
+        <button class="btn-primary" onclick="doLLMConnTest()">测试 LLM 连接</button>
+      </div>
+      <div class="card">
         <h2>服务健康检查</h2>
         <div id="health-detail" style="line-height:2"></div>
         <button class="btn-secondary btn-sm" onclick="loadHealthDetail()" style="margin-top:8px">刷新健康状态</button>
@@ -639,6 +768,9 @@ let selectedProvider = '';
 let kbEditingFile = '';
 let kbEditingProduct = '';
 let uploadFiles = [];
+let importMode = 'text';
+let importFile = null;
+let importPreviewData = null;
 
 // ===== Navigation =====
 function showPage(page) {
@@ -653,6 +785,7 @@ function showPage(page) {
     dashboard: loadDashboard,
     knowledge: loadKBProductList,
     upload: loadUploadProducts,
+    import: loadImportPage,
     index: loadIndexStatus,
     domain: loadDomainPage,
     services: loadServiceStatus,
@@ -1535,6 +1668,31 @@ async function llmStop() {
   loadServiceStatus();
 }
 
+async function doLLMConnTest() {
+  const out = document.getElementById('llm-conn-test-result');
+  out.innerHTML = '<span style="color:var(--primary)">正在测试 LLM API 连接...</span>';
+  try {
+    const r = await api('/admin/service/llm/test', {method:'POST'});
+    if (r.ok) {
+      out.innerHTML = `<span class="badge badge-ok" style="font-size:13px;padding:4px 12px">连接正常</span>
+        <div style="margin-top:8px;font-size:12px;line-height:2">
+          <b>模型：</b> <code>${esc(r.model)}</code> &nbsp;|&nbsp;
+          <b>API Base：</b> <code>${esc(r.api_base)}</code><br>
+          <b>延迟：</b> ${r.latency_ms}ms &nbsp;|&nbsp;
+          <b>模型回复：</b> "${esc(r.reply)}"
+        </div>`;
+    } else {
+      out.innerHTML = `<span class="badge badge-danger" style="font-size:13px;padding:4px 12px">连接失败</span>
+        <div style="margin-top:8px;font-size:12px;color:var(--danger)">${esc(r.error)}</div>
+        <div style="margin-top:4px;font-size:11px;color:var(--text-secondary)">
+          请检查：1) Cherry Studio API 服务是否已启动 &nbsp; 2) API Key 是否正确 &nbsp; 3) API Base 地址是否正确
+        </div>`;
+    }
+  } catch(e) {
+    out.innerHTML = `<span class="badge badge-danger">请求异常: ${esc(e.message)}</span>`;
+  }
+}
+
 async function loadHealthDetail() {
   try {
     const h = await api('/health');
@@ -1553,6 +1711,232 @@ async function loadHealthDetail() {
     }
     document.getElementById('health-detail').innerHTML = html;
   } catch(e) {}
+}
+
+// ===== Smart Import =====
+async function loadImportPage() {
+  checkImportLLM();
+  // Bind char count
+  const ta = document.getElementById('import-content');
+  if (ta && !ta._bound) {
+    ta.addEventListener('input', () => {
+      document.getElementById('import-char-count').textContent = ta.value.length;
+    });
+    ta._bound = true;
+  }
+  // Bind file drop
+  const zone = document.getElementById('import-file-zone');
+  if (zone && !zone._bound) {
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.classList.remove('dragover');
+      const f = e.dataTransfer.files[0];
+      if (f) { importFile = f; renderImportFile(); }
+    });
+    zone._bound = true;
+  }
+}
+
+async function checkImportLLM() {
+  try {
+    const llm = await api('/admin/service/llm');
+    const badge = document.getElementById('import-llm-badge');
+    const info = document.getElementById('import-llm-info');
+    if (llm.enabled && llm.api_key_set) {
+      badge.innerHTML = '<span class="badge badge-ok">LLM 已就绪</span>';
+    } else if (llm.enabled && !llm.api_key_set) {
+      badge.innerHTML = '<span class="badge badge-warn">缺少 API Key</span>';
+    } else {
+      badge.innerHTML = '<span class="badge badge-danger">LLM 未启用</span>';
+    }
+    info.innerHTML = `
+      <b>模型：</b> <code>${esc(llm.model || '未设置')}</code> &nbsp;|&nbsp;
+      <b>API Base：</b> <code>${esc(llm.api_base || '默认')}</code> &nbsp;|&nbsp;
+      <b>API Key：</b> ${llm.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'} &nbsp;|&nbsp;
+      <b>状态：</b> ${llm.enabled ? (llm.client_ready ? '<span class="badge badge-ok">已连接</span>' : '<span class="badge badge-warn">未连接</span>') : '<span class="badge badge-danger">已禁用</span>'}
+    `;
+    // Warn if not ready
+    if (!llm.enabled || !llm.api_key_set) {
+      info.innerHTML += `<br><span style="color:var(--danger)">请先在「服务控制」或「模型切换」页面配置 LLM（Cherry Studio API 地址和 Key），否则无法使用智能导入</span>`;
+    }
+  } catch(e) {}
+}
+
+async function testImportLLM() {
+  const out = document.getElementById('import-llm-test');
+  out.innerHTML = '<span style="color:var(--primary)">正在测试 LLM 连接...</span>';
+  try {
+    const r = await api('/admin/service/llm/test', {method:'POST'});
+    if (r.ok) {
+      out.innerHTML = `<span class="badge badge-ok">连接成功</span>
+        <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
+        模型: ${esc(r.model)} | 延迟: ${r.latency_ms}ms | 回复: "${esc(r.reply)}"</span>`;
+    } else {
+      out.innerHTML = `<span class="badge badge-danger">连接失败</span>
+        <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
+    }
+  } catch(e) {
+    out.innerHTML = `<span class="badge badge-danger">请求异常: ${esc(e.message)}</span>`;
+  }
+}
+
+function onImportTypeChange() {
+  const t = document.getElementById('import-type').value;
+  const needId = ['product','procedure','equipment','material'].includes(t);
+  document.getElementById('import-id-group').style.display = needId ? '' : 'none';
+}
+
+function switchImportMode(mode) {
+  importMode = mode;
+  document.getElementById('import-text-mode').style.display = mode === 'text' ? '' : 'none';
+  document.getElementById('import-file-mode').style.display = mode === 'file' ? '' : 'none';
+  document.querySelectorAll('#import-mode-tabs button').forEach((b, i) =>
+    b.classList.toggle('active', (i === 0 && mode === 'text') || (i === 1 && mode === 'file')));
+}
+
+function handleImportFile(e) {
+  importFile = e.target.files[0] || null;
+  renderImportFile();
+}
+
+function renderImportFile() {
+  const info = document.getElementById('import-file-info');
+  if (importFile) {
+    info.innerHTML = `<div class="upload-item">
+      <span class="name">${esc(importFile.name)}</span>
+      <span class="size">${fmtSize(importFile.size)}</span>
+      <button class="btn-danger btn-sm" onclick="importFile=null;renderImportFile();document.getElementById('import-file-input').value=''">移除</button>
+    </div>`;
+  } else {
+    info.innerHTML = '';
+  }
+}
+
+async function doImport(dryRun) {
+  const entityType = document.getElementById('import-type').value;
+  const entityId = document.getElementById('import-id')?.value.trim() || '';
+  const build = document.getElementById('import-build').checked;
+  const progress = document.getElementById('import-progress');
+  const resultCard = document.getElementById('import-result-card');
+
+  // Validate
+  const needId = ['product','procedure','equipment','material'].includes(entityType);
+  if (needId && !entityId) {
+    toast('请填写实体ID', 'error'); return;
+  }
+
+  // Determine submit mode
+  const btnPreview = document.getElementById('btn-import-preview');
+  const btnSubmit = document.getElementById('btn-import-submit');
+  btnPreview.disabled = true; btnSubmit.disabled = true;
+
+  if (dryRun) {
+    progress.innerHTML = '<span style="color:var(--primary)">正在调用 LLM 整理预览中，请耐心等待...</span>' +
+      '<div class="progress" style="margin-top:8px"><div class="bar" style="width:30%;animation:pulse 2s infinite"></div></div>';
+  } else {
+    progress.innerHTML = '<span style="color:var(--primary)">正在导入，LLM 整理 + 写入文件 + 构建索引，请耐心等待...</span>' +
+      '<div class="progress" style="margin-top:8px"><div class="bar" style="width:50%;animation:pulse 2s infinite"></div></div>';
+  }
+
+  try {
+    let result;
+    if (importMode === 'file' && importFile) {
+      // File upload mode
+      const fd = new FormData();
+      fd.append('type', entityType);
+      fd.append('id', entityId);
+      fd.append('build', build ? '1' : '0');
+      fd.append('dry_run', dryRun ? '1' : '0');
+      fd.append('file', importFile);
+      const resp = await fetch('/admin/import_knowledge_file', {method:'POST', body: fd});
+      result = await resp.json();
+      if (!resp.ok) throw new Error(result.detail || `HTTP ${resp.status}`);
+    } else {
+      // Text mode
+      const content = document.getElementById('import-content').value.trim();
+      if (!content || content.length < 10) {
+        toast('请输入至少10个字的文档内容', 'error');
+        btnPreview.disabled = false; btnSubmit.disabled = false;
+        progress.innerHTML = ''; return;
+      }
+      result = await api('/admin/import_knowledge', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({type: entityType, id: entityId, content, build, dry_run: dryRun}),
+      });
+    }
+
+    // Show result
+    progress.innerHTML = '';
+    resultCard.style.display = '';
+    importPreviewData = result;
+
+    if (dryRun) {
+      document.getElementById('import-result-title').textContent = '预览结果（未写入文件）';
+      document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-info">预览模式</span>';
+    } else {
+      document.getElementById('import-result-title').textContent = '导入完成';
+      document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-ok">成功</span>';
+    }
+
+    // Meta info
+    const files = result.files_generated || {};
+    let metaHtml = `<b>类型：</b> ${esc(result.type)} &nbsp;|&nbsp; <b>ID：</b> ${esc(result.id||'-')} &nbsp;|&nbsp; <b>模型：</b> ${esc(result.model||'-')}<br>`;
+    metaHtml += `<b>生成文件：</b> `;
+    const fileList = Object.entries(files).map(([f, sz]) => `${f} (${fmtSize(sz)})`);
+    metaHtml += fileList.length ? fileList.join('、') : '无';
+    if (!dryRun && result.built_index) {
+      metaHtml += `<br><span class="badge badge-ok">索引已构建</span>`;
+    } else if (!dryRun && !result.built_index) {
+      metaHtml += `<br><span class="badge badge-warn">索引未构建（可前往索引构建页面手动构建）</span>`;
+    }
+    document.getElementById('import-result-meta').innerHTML = metaHtml;
+
+    // Alias hint
+    const aliasHint = document.getElementById('import-alias-hint');
+    if (result.alias_hint) {
+      const h = result.alias_hint;
+      aliasHint.style.display = '';
+      aliasHint.innerHTML = `<h2 style="margin:0 0 6px;font-size:13px;color:#b36b00">&#x26a0; 别名注册提醒</h2>
+        <div style="font-size:12px;line-height:1.8">
+        请在 <code>rag_runtime_config.py</code> 的 <code>${esc(h.config_key)}</code> 中添加：<br>
+        <code style="background:#fff;padding:4px 8px;border-radius:4px;display:inline-block;margin-top:4px">
+        "${esc(h.entity_id)}": ${esc(JSON.stringify(h.aliases))},
+        </code></div>`;
+    } else {
+      aliasHint.style.display = 'none';
+    }
+
+    // Preview content (dry_run mode)
+    const previewSection = document.getElementById('import-preview-section');
+    if (dryRun && result.preview) {
+      previewSection.style.display = '';
+      switchPreviewTab('main');
+    } else {
+      previewSection.style.display = 'none';
+    }
+
+    toast(dryRun ? '预览完成，确认后可正式导入' : '知识库导入成功', 'success');
+
+  } catch(e) {
+    progress.innerHTML = `<span class="badge badge-danger">导入失败: ${esc(e.message)}</span>`;
+    toast('导入失败: ' + e.message, 'error');
+  }
+  btnPreview.disabled = false; btnSubmit.disabled = false;
+}
+
+function switchPreviewTab(tab) {
+  document.querySelectorAll('#preview-tabs button').forEach((b, i) => {
+    const tabs = ['main','faq','alias'];
+    b.classList.toggle('active', tabs[i] === tab);
+  });
+  const ta = document.getElementById('preview-text');
+  if (!importPreviewData || !importPreviewData.preview) { ta.value = ''; return; }
+  const p = importPreviewData.preview;
+  if (tab === 'main') ta.value = p.main_txt || '（无内容）';
+  else if (tab === 'faq') ta.value = p.faq_txt || '（无 FAQ，仅产品类型生成）';
+  else ta.value = p.alias_txt || '（无别名）';
 }
 
 // ===== Init =====
