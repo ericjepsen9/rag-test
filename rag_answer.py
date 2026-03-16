@@ -185,7 +185,16 @@ def get_model():
     return _model
 
 
+_embed_cache: Dict[str, np.ndarray] = {}  # query text -> normalized embedding
+_EMBED_CACHE_MAX = 256  # 最多缓存 256 条查询向量（每条 ~4KB，总占用 ~1MB）
+
+
 def embed_query(text: str) -> np.ndarray:
+    # LRU 缓存：相同查询直接返回已计算的向量，避免重复编码（节省 2-5s/次）
+    cached = _embed_cache.get(text)
+    if cached is not None:
+        return cached.copy()  # 返回副本防止外部修改
+
     model = get_model()
     out = model.encode([text], batch_size=EMBED_BATCH_SIZE_QUERY, max_length=EMBED_MAX_LENGTH_QUERY)
     if isinstance(out, dict):
@@ -201,6 +210,15 @@ def embed_query(text: str) -> np.ndarray:
         vec = out
     vec = np.asarray(vec, dtype="float32")
     get_faiss().normalize_L2(vec)
+
+    # 写入缓存（超限时淘汰最早条目）
+    if len(_embed_cache) >= _EMBED_CACHE_MAX:
+        try:
+            oldest = next(iter(_embed_cache))
+            _embed_cache.pop(oldest, None)
+        except StopIteration:
+            pass
+    _embed_cache[text] = vec.copy()
     return vec
 
 

@@ -39,7 +39,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _warmup_models():
-    """启动时预热嵌入模型，避免首次查询延迟"""
+    """启动时预热嵌入模型并预构建共享知识索引，避免首次查询延迟"""
     if os.environ.get("SKIP_WARMUP"):
         return
     try:
@@ -48,6 +48,14 @@ def _warmup_models():
         print("[INFO] 嵌入模型预热完成")
     except Exception as e:
         print(f"[WARN] 模型预热失败: {e}")
+    # 预构建共享知识索引（procedures/equipment/anatomy 等），
+    # 避免首次跨实体查询时 30s+ 的冷启动延迟
+    try:
+        from rag_answer import _ensure_shared_store
+        _ensure_shared_store()
+        print("[INFO] 共享知识库索引预检完成")
+    except Exception as e:
+        print(f"[WARN] 共享知识库预构建失败: {e}")
 
 MAX_QUESTION_LEN = 500
 MAX_HISTORY_TOTAL_CHARS = 3000  # 防止历史内容过大
