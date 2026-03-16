@@ -319,12 +319,13 @@ _CACHE_MAX_SIZE = CACHE_MAX_PRODUCTS
 _bm25_cache: Dict[Any, Tuple[List[str], int, float]] = {}
 
 
-def _cache_put(cache: dict, key: Any, value: Any) -> None:
+def _cache_put(cache: dict, key: Any, value: Any, max_size: int = 0) -> None:
     """写入缓存，超过上限时清除最早的条目。已有 key 时直接覆盖不淘汰。"""
+    limit = max_size if max_size > 0 else _CACHE_MAX_SIZE
     if key in cache:
         cache[key] = value
         return
-    while len(cache) >= _CACHE_MAX_SIZE:
+    while len(cache) >= limit:
         try:
             oldest = next(iter(cache))
             cache.pop(oldest, None)
@@ -396,6 +397,55 @@ def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dic
     return {t: cached.get(t, 0) for t in terms}
 
 
+# ============================================================
+# 倒排索引：加速 BM25 检索，跳过不包含任何查询词的文档
+# ============================================================
+
+_inverted_index_cache: Dict[Any, Dict[str, List[int]]] = {}  # corpus_key -> {term: [doc_ids]}
+_doc_len_cache: Dict[Any, List[int]] = {}  # corpus_key -> [doc_len_per_doc]
+
+
+def _get_inverted_index(texts: List[str], corpus_key: Any) -> Dict[str, List[int]]:
+    """构建/获取倒排索引：{term: [doc_indices]}，按 bigram 粒度索引。
+    惰性构建，缓存复用。索引粒度为 2-gram 以匹配 _extract_terms 的输出。"""
+    cached = _inverted_index_cache.get(corpus_key)
+    if cached is not None:
+        return cached
+    inv: Dict[str, List[int]] = {}
+    for i, text in enumerate(texts):
+        # 对每个文档建立字符级 bigram 索引
+        for j in range(len(text) - 1):
+            bg = text[j:j+2]
+            if bg not in inv:
+                inv[bg] = [i]
+            elif inv[bg][-1] != i:  # 去重：同一文档只记录一次
+                inv[bg].append(i)
+    _cache_put(_inverted_index_cache, corpus_key, inv)
+    return inv
+
+
+def _get_candidate_docs(terms: List[str], inv_index: Dict[str, List[int]],
+                         n_docs: int) -> List[int]:
+    """用倒排索引找出包含至少一个查询词的文档集合。
+    返回排序后的文档索引列表。"""
+    candidate_set: set = set()
+    for term in terms:
+        # 对每个查询词，查找包含它的文档
+        # 如果 term 长度 >= 2，用其 bigram 做交集过滤
+        if len(term) >= 2:
+            # 取 term 的第一个 bigram 作为候选过滤
+            bg = term[:2]
+            doc_ids = inv_index.get(bg)
+            if doc_ids is not None:
+                candidate_set.update(doc_ids)
+        elif len(term) == 1:
+            # 单字符 term：遍历所有包含该字符的 bigram
+            for bg_key, doc_ids in inv_index.items():
+                if term in bg_key:
+                    candidate_set.update(doc_ids)
+    return sorted(candidate_set)
+
+
 def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
                     skip_synonym_expand: bool = False) -> List[Dict]:
     if not docs:
@@ -412,13 +462,16 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
 
     doc_freqs = _batch_doc_freqs(q_terms, texts, corpus_key)
 
+    # 倒排索引加速：只对包含查询词的文档计算 BM25，跳过无关文档
+    inv_index = _get_inverted_index(texts, corpus_key)
+    candidates = _get_candidate_docs(q_terms, inv_index, n_docs)
+
     scored = []
-    for i, d in enumerate(docs):
-        # 传入预提取的 q_terms 和预小写的 texts[i]，避免 per-doc 重复解析
+    for i in candidates:
         s = bm25_score(q_terms, texts[i], avg_dl, n_docs, doc_freqs)
         if s <= 0:
             continue
-        scored.append({**d, "keyword_score": s})
+        scored.append({**docs[i], "keyword_score": s})
 
     scored.sort(key=lambda x: x.get("keyword_score", 0.0), reverse=True)
 
@@ -623,13 +676,40 @@ def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
 # Reranker：使用 BGE-M3 compute_score 对候选文档重排序
 # ============================================================
 
+# Rerank 结果缓存：避免相同 query + 相同候选集重复调用 compute_score
+_rerank_cache: Dict[str, List[Tuple[str, float]]] = {}  # cache_key -> [(hit_key, score), ...]
+_RERANK_CACHE_MAX = 512
+
+
+def _rerank_cache_key(query: str, hits: List[Dict]) -> str:
+    """生成 rerank 缓存键：query + 候选文档标识的组合哈希"""
+    hit_keys = "|".join(_hit_key(h) for h in hits)
+    return hashlib.md5(f"{query}||{hit_keys}".encode()).hexdigest()
+
+
 def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
     """使用 BGE-M3 的 compute_score 对混合检索结果重排序。
 
     model: 已加载的 BGEM3FlagModel 实例（复用嵌入模型，无额外模型开销）。
     返回按 rerank_score 降序排列的 top_k 结果。
+    带缓存：相同 query + 相同候选集直接返回缓存分数，跳过 compute_score。
     """
     if not hits or not model:
+        return hits[:top_k]
+
+    # 缓存查找
+    cache_key = _rerank_cache_key(query, hits)
+    cached = _rerank_cache.get(cache_key)
+    if cached is not None:
+        # 用缓存的分数重建排序
+        score_map = dict(cached)
+        for h in hits:
+            hk = _hit_key(h)
+            if hk in score_map:
+                h["rerank_score"] = score_map[hk]
+                h["hybrid_score_before_rerank"] = h.get("hybrid_score", 0.0)
+                h["hybrid_score"] = score_map[hk]
+        hits.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
         return hits[:top_k]
 
     sentence_pairs = [[query, (h.get("text") or "")[:512]] for h in hits]
@@ -665,12 +745,16 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
         max_s = max(final_scores) if final_scores else 1.0
         min_s = min(final_scores) if final_scores else 0.0
         rng = max_s - min_s if max_s > min_s else 1.0
+        cache_entries = []
         for i, h in enumerate(hits):
             raw = final_scores[i] if i < len(final_scores) else 0.0
-            h["rerank_score"] = (raw - min_s) / rng
-            # 融合：rerank 分数覆盖 hybrid_score（保留原始 hybrid_score 供调试）
+            normalized = (raw - min_s) / rng
+            h["rerank_score"] = normalized
             h["hybrid_score_before_rerank"] = h.get("hybrid_score", 0.0)
-            h["hybrid_score"] = h["rerank_score"]
+            h["hybrid_score"] = normalized
+            cache_entries.append((_hit_key(h), normalized))
+        # 写入缓存
+        _cache_put(_rerank_cache, cache_key, cache_entries, max_size=_RERANK_CACHE_MAX)
 
     hits.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
     return hits[:top_k]

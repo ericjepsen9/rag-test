@@ -130,18 +130,13 @@ def _llm_rewrite_query(question: str) -> str:
     if cached is not None:
         return cached
 
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not key:
-        _llm_rewrite_cache.put(question, "")
-        return ""
-
+    # 复用 rag_answer 的单例 OpenAI client，避免每次改写重建连接
     try:
-        from openai import OpenAI
-        client_kwargs = {"api_key": key}
-        if OPENAI_API_BASE:
-            client_kwargs["base_url"] = OPENAI_API_BASE
-        client = OpenAI(**client_kwargs)
+        from rag_answer import _get_openai_client
+        client = _get_openai_client()
     except Exception:
+        client = None
+    if client is None:
         _llm_rewrite_cache.put(question, "")
         return ""
 

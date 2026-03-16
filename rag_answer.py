@@ -58,6 +58,11 @@ _store_product_locks_guard = threading.Lock()  # 保护 _store_product_locks 字
 # 注：FAISS IndexFlatIP / IndexHNSWFlat 的 search() 是只读线程安全的，
 # 不再需要全局锁串行化搜索，移除 _search_lock 以提升并发性能。
 
+# 模块级线程池：复用线程，避免每次请求创建/销毁线程的开销
+# max_workers=6: 支持 product(v+k) + shared(v+k) = 4 路并行搜索，
+# 额外 2 个 worker 避免多子问题场景下的排队
+_search_pool = ThreadPoolExecutor(max_workers=6)
+
 # 跨实体路由：这些路由需要检索共享知识库（_shared store）
 _SHARED_ROUTES = {"complication", "course", "anatomy_q", "indication_q",
                   "procedure_q", "equipment_q", "script"}
@@ -186,7 +191,7 @@ def get_model():
 
 
 _embed_cache: Dict[str, np.ndarray] = {}  # query text -> normalized embedding
-_EMBED_CACHE_MAX = 256  # 最多缓存 256 条查询向量（每条 ~4KB，总占用 ~1MB）
+_EMBED_CACHE_MAX = 1024  # 最多缓存 1024 条查询向量（每条 ~4KB，总占用 ~4MB）
 
 
 def embed_query(text: str) -> np.ndarray:
@@ -1596,25 +1601,24 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
     vector_hits, keyword_hits = [], []
     futures = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        if search_product:
-            futures["v_prod"] = pool.submit(_do_vector, product)
-            futures["k_prod"] = pool.submit(_do_keyword, product)
-        if search_shared:
-            futures["v_shared"] = pool.submit(_do_vector, "_shared")
-            futures["k_shared"] = pool.submit(_do_keyword, "_shared")
-        for key, fut in futures.items():
-            try:
-                result = fut.result(timeout=30)
-            except Exception as e:
-                from rag_logger import log_error
-                log_error("answer_one", f"搜索超时/异常: {key}: {e}",
-                          meta={"product": product, "route": route})
-                result = []
-            if key.startswith("v_"):
-                vector_hits.extend(result)
-            else:
-                keyword_hits.extend(result)
+    if search_product:
+        futures["v_prod"] = _search_pool.submit(_do_vector, product)
+        futures["k_prod"] = _search_pool.submit(_do_keyword, product)
+    if search_shared:
+        futures["v_shared"] = _search_pool.submit(_do_vector, "_shared")
+        futures["k_shared"] = _search_pool.submit(_do_keyword, "_shared")
+    for key, fut in futures.items():
+        try:
+            result = fut.result(timeout=30)
+        except Exception as e:
+            from rag_logger import log_error
+            log_error("answer_one", f"搜索超时/异常: {key}: {e}",
+                      meta={"product": product, "route": route})
+            result = []
+        if key.startswith("v_"):
+            vector_hits.extend(result)
+        else:
+            keyword_hits.extend(result)
 
     # 路由感知权重：精确参数类问题提高关键词权重
     vw = route_cfg.get("vw", HYBRID_VECTOR_WEIGHT)
@@ -1824,32 +1828,53 @@ def answer_question(question: str, mode: str, history: list = None,
                    meta={"method": "special_intent", "intent": special})
             return reply
 
-    outputs = []
-    seen_routes = set()
     # 预提取历史上下文供子问题复用（避免每个子问题重复解析历史）
     _history_ctx = None
     if history:
         from query_rewrite import _extract_history_context
         _history_ctx = _extract_history_context(history)
-    for subq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]:
-        # 如果子问题与原问题相同，复用已有的 rewrite 结果；
-        # 否则用 history 重新 rewrite，使子问题也能继承上下文
-        # （如 "成分是什么？禁忌人群呢？" 拆分后 "禁忌人群呢" 需要产品名）
+
+    sub_questions = rewrite["sub_questions"][:MAX_SUB_QUESTIONS]
+
+    # 预计算所有子问题的 rewrite 和 route（快速阶段，为并行执行做准备）
+    sub_tasks = []  # [(subq, sub_rewrite, route)]
+    seen_routes = set()
+    for subq in sub_questions:
         sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq, history=history, _cached_ctx=_history_ctx)
         route = _detect_route_with_history(subq, sub_rewrite)
-        # 同路由的子问题只回答一次（避免重复检索相同 chunk）
         if route in seen_routes:
             continue
         seen_routes.add(route)
-        ans = answer_one(subq, mode, rewrite=sub_rewrite, route_override=route)
-        key = ans.strip()
-        if key:
-            outputs.append(ans)
-    if not outputs and len(rewrite["sub_questions"]) > 1:
+        sub_tasks.append((subq, sub_rewrite, route))
+
+    # 多子问题时并行执行 answer_one，单子问题时直接调用（避免额外开销）
+    outputs = []
+    if len(sub_tasks) > 1:
+        futures = []
+        for subq, sub_rewrite, route in sub_tasks:
+            fut = _search_pool.submit(answer_one, subq, mode,
+                                      sub_rewrite, route)
+            futures.append(fut)
+        for fut in futures:
+            try:
+                ans = fut.result(timeout=60)
+                if ans and ans.strip():
+                    outputs.append(ans)
+            except Exception as e:
+                from rag_logger import log_error
+                log_error("answer_question", f"子问题并行执行异常: {e}",
+                          meta={"question": q[:100]})
+    else:
+        for subq, sub_rewrite, route in sub_tasks:
+            ans = answer_one(subq, mode, rewrite=sub_rewrite, route_override=route)
+            if ans and ans.strip():
+                outputs.append(ans)
+
+    if not outputs and len(sub_questions) > 1:
         from rag_logger import log_error
         log_error("answer_question", "所有子问题均未产生有效回答",
                   meta={"question": q[:100],
-                        "sub_questions": [sq[:50] for sq in rewrite["sub_questions"][:MAX_SUB_QUESTIONS]]})
+                        "sub_questions": [sq[:50] for sq in sub_questions]})
     return "\n\n".join(outputs) if outputs else _NO_MATCH_REPLY
 
 
