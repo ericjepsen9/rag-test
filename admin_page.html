@@ -438,18 +438,17 @@
             </div>
 
             <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn-ghost" onclick="doImport(true)" id="btn-import-preview">预览整理结果</button>
-              <button class="btn-primary" onclick="doImport(false)" id="btn-import-submit">正式导入</button>
+              <button class="btn-primary" onclick="doImport(true)" id="btn-import-preview">开始整理</button>
             </div>
             <div id="import-progress" style="margin-top:10px"></div>
           </div>
         </div>
 
-        <!-- 右侧：结果预览 -->
+        <!-- 右侧：审阅 & 修订 -->
         <div class="col">
           <div class="card" id="import-result-card" style="display:none">
             <div style="display:flex;justify-content:space-between;align-items:center">
-              <h2 id="import-result-title" style="margin:0">导入结果</h2>
+              <h2 id="import-result-title" style="margin:0">审阅整理结果</h2>
               <span id="import-result-badge"></span>
             </div>
             <div id="import-result-meta" style="margin-top:10px;font-size:12px;line-height:2"></div>
@@ -457,17 +456,51 @@
             <!-- 别名提示 -->
             <div id="import-alias-hint" class="card" style="display:none;margin-top:12px;background:#fffbe6;border:1px solid #ffe58f"></div>
 
-            <!-- 预览内容 Tabs -->
+            <!-- 内容审阅 Tabs（全文显示 + 可编辑） -->
             <div id="import-preview-section" style="display:none;margin-top:14px">
-              <div class="tabs" id="preview-tabs">
-                <button class="active" onclick="switchPreviewTab('main')">main.txt</button>
-                <button onclick="switchPreviewTab('faq')">faq.txt</button>
-                <button onclick="switchPreviewTab('alias')">alias.txt</button>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="tabs" id="preview-tabs" style="margin-bottom:0">
+                  <button class="active" onclick="switchPreviewTab('main')">main.txt</button>
+                  <button onclick="switchPreviewTab('faq')">faq.txt</button>
+                  <button onclick="switchPreviewTab('alias')">alias.txt</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="preview-char-count" style="font-size:11px;color:var(--text-secondary)"></span>
+                  <button class="btn-ghost btn-sm" id="btn-toggle-edit" onclick="togglePreviewEdit()">编辑模式</button>
+                </div>
               </div>
               <div id="preview-content">
-                <textarea id="preview-text" rows="20" readonly
-                          style="font-family:monospace;font-size:12px;background:#f5f6fa;width:100%"></textarea>
+                <textarea id="preview-text" rows="20"
+                          style="font-family:monospace;font-size:12px;background:#f5f6fa;width:100%"
+                          readonly oninput="onPreviewTextEdit()"></textarea>
               </div>
+
+              <!-- 修订历史导航 -->
+              <div id="revision-history-bar" style="display:none;margin-top:8px;align-items:center;gap:8px;font-size:12px">
+                <button class="btn-ghost btn-sm" id="btn-rev-prev" onclick="navigateRevision(-1)" disabled>&lt; 上一版</button>
+                <span id="revision-indicator" style="color:var(--text-secondary)">第 1 版 / 共 1 版</span>
+                <button class="btn-ghost btn-sm" id="btn-rev-next" onclick="navigateRevision(1)" disabled>下一版 &gt;</button>
+              </div>
+
+              <!-- 修改指令区域 -->
+              <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+                <h3 style="margin:0 0 8px;font-size:14px">修改指令</h3>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+                  <button class="btn-ghost btn-sm" onclick="appendFeedback('FAQ 数量不够，请增加到 20 个以上')">FAQ 数量不够</button>
+                  <button class="btn-ghost btn-sm" onclick="appendFeedback('缺少具体参数（深度、剂量、时间等）')">缺少具体参数</button>
+                  <button class="btn-ghost btn-sm" onclick="appendFeedback('章节内容太笼统，需要更具体的描述')">章节内容太笼统</button>
+                  <button class="btn-ghost btn-sm" onclick="appendFeedback('请补充禁忌人群信息')">补充禁忌人群</button>
+                  <button class="btn-ghost btn-sm" onclick="appendFeedback('请补充术后护理细节')">补充术后护理</button>
+                </div>
+                <textarea id="refine-feedback" rows="3" placeholder="输入具体修改要求，支持多条（换行分隔）...&#10;例如：&#10;1. FAQ太少，请增加到20个以上&#10;2. 第四章注射指南缺少具体深度参数"></textarea>
+              </div>
+
+              <!-- 操作按钮 -->
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="btn-ghost" id="btn-refine" onclick="doRefine()">重新整理</button>
+                <button class="btn-primary" id="btn-commit" onclick="doCommit()">正式导入</button>
+              </div>
+              <div id="refine-progress" style="margin-top:10px"></div>
             </div>
           </div>
         </div>
@@ -771,6 +804,11 @@ let uploadFiles = [];
 let importMode = 'text';
 let importFile = null;
 let importPreviewData = null;
+let importRawText = '';         // 原始文档，供 refine 时参考
+let revisionHistory = [];       // 修订版本历史
+let revisionIndex = -1;         // 当前查看的版本索引
+let currentPreviewTab = 'main'; // 当前 Tab
+let previewEditing = false;     // 是否处于编辑模式
 
 // ===== Navigation =====
 function showPage(page) {
@@ -1826,71 +1864,52 @@ async function doImport(dryRun) {
     toast('请填写实体ID', 'error'); return;
   }
 
-  // Determine submit mode
   const btnPreview = document.getElementById('btn-import-preview');
-  const btnSubmit = document.getElementById('btn-import-submit');
-  btnPreview.disabled = true; btnSubmit.disabled = true;
+  btnPreview.disabled = true;
 
-  if (dryRun) {
-    progress.innerHTML = '<span style="color:var(--primary)">正在调用 LLM 整理预览中，请耐心等待...</span>' +
-      '<div class="progress" style="margin-top:8px"><div class="bar" style="width:30%;animation:pulse 2s infinite"></div></div>';
-  } else {
-    progress.innerHTML = '<span style="color:var(--primary)">正在导入，LLM 整理 + 写入文件 + 构建索引，请耐心等待...</span>' +
-      '<div class="progress" style="margin-top:8px"><div class="bar" style="width:50%;animation:pulse 2s infinite"></div></div>';
-  }
+  progress.innerHTML = '<span style="color:var(--primary)">正在调用 LLM 整理预览中，请耐心等待...</span>' +
+    '<div class="progress" style="margin-top:8px"><div class="bar" style="width:30%;animation:pulse 2s infinite"></div></div>';
 
   try {
     let result;
     if (importMode === 'file' && importFile) {
-      // File upload mode
       const fd = new FormData();
       fd.append('type', entityType);
       fd.append('id', entityId);
-      fd.append('build', build ? '1' : '0');
-      fd.append('dry_run', dryRun ? '1' : '0');
+      fd.append('build', '0');
+      fd.append('dry_run', '1');
       fd.append('file', importFile);
       const resp = await fetch('/admin/import_knowledge_file', {method:'POST', body: fd});
       result = await resp.json();
       if (!resp.ok) throw new Error(result.detail || `HTTP ${resp.status}`);
     } else {
-      // Text mode
       const content = document.getElementById('import-content').value.trim();
       if (!content || content.length < 10) {
         toast('请输入至少10个字的文档内容', 'error');
-        btnPreview.disabled = false; btnSubmit.disabled = false;
+        btnPreview.disabled = false;
         progress.innerHTML = ''; return;
       }
+      importRawText = content;
       result = await api('/admin/import_knowledge', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({type: entityType, id: entityId, content, build, dry_run: dryRun}),
+        body: JSON.stringify({type: entityType, id: entityId, content, build: false, dry_run: true}),
       });
     }
 
-    // Show result
     progress.innerHTML = '';
     resultCard.style.display = '';
     importPreviewData = result;
 
-    if (dryRun) {
-      document.getElementById('import-result-title').textContent = '预览结果（未写入文件）';
-      document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-info">预览模式</span>';
-    } else {
-      document.getElementById('import-result-title').textContent = '导入完成';
-      document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-ok">成功</span>';
-    }
+    document.getElementById('import-result-title').textContent = '审阅整理结果';
+    document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-info">审阅中</span>';
 
     // Meta info
     const files = result.files_generated || {};
     let metaHtml = `<b>类型：</b> ${esc(result.type)} &nbsp;|&nbsp; <b>ID：</b> ${esc(result.id||'-')} &nbsp;|&nbsp; <b>模型：</b> ${esc(result.model||'-')}<br>`;
     metaHtml += `<b>生成文件：</b> `;
     const fileList = Object.entries(files).map(([f, sz]) => `${f} (${fmtSize(sz)})`);
-    metaHtml += fileList.length ? fileList.join('、') : '无';
-    if (!dryRun && result.built_index) {
-      metaHtml += `<br><span class="badge badge-ok">索引已构建</span>`;
-    } else if (!dryRun && !result.built_index) {
-      metaHtml += `<br><span class="badge badge-warn">索引未构建（可前往索引构建页面手动构建）</span>`;
-    }
+    metaHtml += fileList.length ? fileList.join(', ') : '无';
     document.getElementById('import-result-meta').innerHTML = metaHtml;
 
     // Alias hint
@@ -1908,35 +1927,236 @@ async function doImport(dryRun) {
       aliasHint.style.display = 'none';
     }
 
-    // Preview content (dry_run mode)
-    const previewSection = document.getElementById('import-preview-section');
-    if (dryRun && result.preview) {
-      previewSection.style.display = '';
-      switchPreviewTab('main');
-    } else {
-      previewSection.style.display = 'none';
+    // 初始化修订历史
+    if (result.preview) {
+      revisionHistory = [JSON.parse(JSON.stringify(result.preview))];
+      revisionIndex = 0;
     }
 
-    toast(dryRun ? '预览完成，确认后可正式导入' : '知识库导入成功', 'success');
+    // 显示预览区域
+    const previewSection = document.getElementById('import-preview-section');
+    previewSection.style.display = '';
+    previewEditing = false;
+    document.getElementById('btn-toggle-edit').textContent = '编辑模式';
+    document.getElementById('preview-text').readOnly = true;
+    document.getElementById('preview-text').style.background = '#f5f6fa';
+    switchPreviewTab('main');
+    updateRevisionBar();
+
+    toast('LLM 整理完成，请审阅内容。满意后点击「正式导入」，或输入修改指令「重新整理」', 'success');
 
   } catch(e) {
-    progress.innerHTML = `<span class="badge badge-danger">导入失败: ${esc(e.message)}</span>`;
-    toast('导入失败: ' + e.message, 'error');
+    progress.innerHTML = `<span class="badge badge-danger">整理失败: ${esc(e.message)}</span>`;
+    toast('整理失败: ' + e.message, 'error');
   }
-  btnPreview.disabled = false; btnSubmit.disabled = false;
+  btnPreview.disabled = false;
 }
 
 function switchPreviewTab(tab) {
+  currentPreviewTab = tab;
   document.querySelectorAll('#preview-tabs button').forEach((b, i) => {
     const tabs = ['main','faq','alias'];
     b.classList.toggle('active', tabs[i] === tab);
   });
   const ta = document.getElementById('preview-text');
-  if (!importPreviewData || !importPreviewData.preview) { ta.value = ''; return; }
-  const p = importPreviewData.preview;
-  if (tab === 'main') ta.value = p.main_txt || '（无内容）';
-  else if (tab === 'faq') ta.value = p.faq_txt || '（无 FAQ，仅产品类型生成）';
-  else ta.value = p.alias_txt || '（无别名）';
+  const data = getCurrentRevisionData();
+  if (!data) { ta.value = ''; updateCharCount(''); return; }
+  let text = '';
+  if (tab === 'main') text = data.main_txt || '（无内容）';
+  else if (tab === 'faq') text = data.faq_txt || '（无 FAQ，仅产品类型生成）';
+  else text = data.alias_txt || '（无别名）';
+  ta.value = text;
+  updateCharCount(text);
+}
+
+function getCurrentRevisionData() {
+  if (revisionHistory.length > 0 && revisionIndex >= 0 && revisionIndex < revisionHistory.length) {
+    return revisionHistory[revisionIndex];
+  }
+  return importPreviewData ? importPreviewData.preview : null;
+}
+
+function updateCharCount(text) {
+  const el = document.getElementById('preview-char-count');
+  if (el) el.textContent = text ? `${text.length} 字` : '';
+}
+
+function updateRevisionBar() {
+  const bar = document.getElementById('revision-history-bar');
+  if (revisionHistory.length <= 1) {
+    bar.style.display = 'none'; return;
+  }
+  bar.style.display = 'flex';
+  document.getElementById('revision-indicator').textContent =
+    `第 ${revisionIndex + 1} 版 / 共 ${revisionHistory.length} 版`;
+  document.getElementById('btn-rev-prev').disabled = revisionIndex <= 0;
+  document.getElementById('btn-rev-next').disabled = revisionIndex >= revisionHistory.length - 1;
+}
+
+function navigateRevision(delta) {
+  const newIdx = revisionIndex + delta;
+  if (newIdx < 0 || newIdx >= revisionHistory.length) return;
+  // 保存当前编辑
+  saveCurrentEditToRevision();
+  revisionIndex = newIdx;
+  switchPreviewTab(currentPreviewTab);
+  updateRevisionBar();
+}
+
+function togglePreviewEdit() {
+  previewEditing = !previewEditing;
+  const ta = document.getElementById('preview-text');
+  const btn = document.getElementById('btn-toggle-edit');
+  if (previewEditing) {
+    ta.readOnly = false;
+    ta.style.background = '#fff';
+    btn.textContent = '只读模式';
+  } else {
+    saveCurrentEditToRevision();
+    ta.readOnly = true;
+    ta.style.background = '#f5f6fa';
+    btn.textContent = '编辑模式';
+  }
+}
+
+function onPreviewTextEdit() {
+  const ta = document.getElementById('preview-text');
+  updateCharCount(ta.value);
+}
+
+function saveCurrentEditToRevision() {
+  if (!previewEditing) return;
+  if (revisionIndex < 0 || revisionIndex >= revisionHistory.length) return;
+  const ta = document.getElementById('preview-text');
+  const key = currentPreviewTab === 'main' ? 'main_txt' :
+              currentPreviewTab === 'faq' ? 'faq_txt' : 'alias_txt';
+  revisionHistory[revisionIndex][key] = ta.value;
+}
+
+function appendFeedback(text) {
+  const ta = document.getElementById('refine-feedback');
+  if (ta.value.trim()) {
+    ta.value = ta.value.trimEnd() + '\n' + text;
+  } else {
+    ta.value = text;
+  }
+  ta.focus();
+}
+
+async function doRefine() {
+  const feedback = document.getElementById('refine-feedback').value.trim();
+  if (!feedback) { toast('请输入修改意见', 'error'); return; }
+
+  const entityType = document.getElementById('import-type').value;
+  const entityId = document.getElementById('import-id')?.value.trim() || '';
+  const progress = document.getElementById('refine-progress');
+  const btnRefine = document.getElementById('btn-refine');
+  const btnCommit = document.getElementById('btn-commit');
+
+  // 保存当前编辑
+  saveCurrentEditToRevision();
+  const current = getCurrentRevisionData();
+  if (!current || !current.main_txt) {
+    toast('无可修订的内容', 'error'); return;
+  }
+
+  btnRefine.disabled = true; btnCommit.disabled = true;
+  progress.innerHTML = '<span style="color:var(--primary)">LLM 正在根据修改意见修订中，请耐心等待...</span>' +
+    '<div class="progress" style="margin-top:8px"><div class="bar" style="width:40%;animation:pulse 2s infinite"></div></div>';
+
+  try {
+    const result = await api('/admin/import_knowledge/refine', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        type: entityType,
+        id: entityId,
+        feedback: feedback,
+        current: current,
+        raw_text: importRawText,
+      }),
+    });
+
+    progress.innerHTML = '';
+
+    if (result.preview) {
+      revisionHistory.push(JSON.parse(JSON.stringify(result.preview)));
+      revisionIndex = revisionHistory.length - 1;
+      switchPreviewTab(currentPreviewTab);
+      updateRevisionBar();
+
+      // 更新 meta
+      const files = result.files_generated || {};
+      let metaHtml = `<b>类型：</b> ${esc(result.type)} &nbsp;|&nbsp; <b>ID：</b> ${esc(result.id||'-')} &nbsp;|&nbsp; <b>模型：</b> ${esc(result.model||'-')}<br>`;
+      metaHtml += `<b>生成文件：</b> `;
+      const fileList = Object.entries(files).map(([f, sz]) => `${f} (${fmtSize(sz)})`);
+      metaHtml += fileList.length ? fileList.join(', ') : '无';
+      metaHtml += `<br><span class="badge badge-info">第 ${revisionHistory.length} 次修订</span>`;
+      document.getElementById('import-result-meta').innerHTML = metaHtml;
+    }
+
+    document.getElementById('refine-feedback').value = '';
+    toast('修订完成，请继续审阅', 'success');
+
+  } catch(e) {
+    progress.innerHTML = `<span class="badge badge-danger">修订失败: ${esc(e.message)}</span>`;
+    toast('修订失败: ' + e.message, 'error');
+  }
+  btnRefine.disabled = false; btnCommit.disabled = false;
+}
+
+async function doCommit() {
+  // 保存当前编辑
+  saveCurrentEditToRevision();
+  const current = getCurrentRevisionData();
+  if (!current || !current.main_txt) {
+    toast('无可导入的内容', 'error'); return;
+  }
+
+  const entityType = document.getElementById('import-type').value;
+  const entityId = document.getElementById('import-id')?.value.trim() || '';
+  const build = document.getElementById('import-build').checked;
+  const progress = document.getElementById('refine-progress');
+  const btnRefine = document.getElementById('btn-refine');
+  const btnCommit = document.getElementById('btn-commit');
+
+  btnRefine.disabled = true; btnCommit.disabled = true;
+  progress.innerHTML = '<span style="color:var(--primary)">正在写入知识库文件并构建索引，请耐心等待...</span>' +
+    '<div class="progress" style="margin-top:8px"><div class="bar" style="width:60%;animation:pulse 2s infinite"></div></div>';
+
+  try {
+    const result = await api('/admin/import_knowledge/commit', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        type: entityType,
+        id: entityId,
+        content: current,
+        build: build,
+      }),
+    });
+
+    progress.innerHTML = '';
+
+    document.getElementById('import-result-title').textContent = '导入完成';
+    document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-ok">已写入</span>';
+
+    let metaHtml = `<b>类型：</b> ${esc(result.type)} &nbsp;|&nbsp; <b>ID：</b> ${esc(result.id||'-')}<br>`;
+    metaHtml += `<b>目录：</b> ${esc(result.output_dir||'-')}<br>`;
+    if (result.built_index) {
+      metaHtml += `<span class="badge badge-ok">索引已构建</span>`;
+    } else {
+      metaHtml += `<span class="badge badge-warn">索引未构建（可前往索引构建页面手动构建）</span>`;
+    }
+    document.getElementById('import-result-meta').innerHTML = metaHtml;
+
+    toast('知识库导入成功', 'success');
+
+  } catch(e) {
+    progress.innerHTML = `<span class="badge badge-danger">导入失败: ${esc(e.message)}</span>`;
+    toast('导入失败: ' + e.message, 'error');
+  }
+  btnRefine.disabled = false; btnCommit.disabled = false;
 }
 
 // ===== Init =====

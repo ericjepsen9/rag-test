@@ -1162,6 +1162,182 @@ def admin_import_knowledge(req: ImportKnowledgeRequest):
         lock.release()
 
 
+class RefineKnowledgeRequest(BaseModel):
+    """修订知识库内容"""
+    type: str = Field(..., description="知识类型")
+    id: str = Field(default="", description="实体ID")
+    feedback: str = Field(..., min_length=2, description="用户修改意见")
+    current: dict = Field(..., description="当前整理结果，包含 main_txt/faq_txt/alias_txt")
+    raw_text: str = Field(default="", description="可选，原始文档供 LLM 参考")
+
+
+class CommitKnowledgeRequest(BaseModel):
+    """正式写入知识库"""
+    type: str = Field(..., description="知识类型")
+    id: str = Field(default="", description="实体ID")
+    content: dict = Field(..., description="最终确认的内容，包含 main_txt/faq_txt/alias_txt")
+    build: bool = Field(default=True, description="是否自动构建索引")
+
+
+@app.post("/admin/import_knowledge/refine")
+def admin_import_knowledge_refine(req: RefineKnowledgeRequest):
+    """根据用户反馈修订知识库内容（LLM 修订）。"""
+    from import_knowledge import (
+        _ENTITY_TYPES, _get_openai_client, refine_knowledge,
+    )
+
+    entity_type = req.type.strip()
+    entity_id = req.id.strip()
+
+    if entity_type not in _ENTITY_TYPES:
+        raise HTTPException(status_code=400,
+            detail=f"不支持的类型: {entity_type}")
+
+    _, is_single = _ENTITY_TYPES[entity_type]
+    if not is_single and not entity_id:
+        raise HTTPException(status_code=400,
+            detail=f"类型 '{entity_type}' 需要提供 id 参数")
+
+    if entity_id:
+        if ".." in entity_id or "/" in entity_id or "\\" in entity_id:
+            raise HTTPException(status_code=400, detail="非法 ID")
+        if not _SAFE_NAME_RE.match(entity_id):
+            raise HTTPException(status_code=400, detail="ID 只允许字母、数字、下划线、横线、中文")
+
+    lock_key = f"refine:{entity_type}:{entity_id or '_single'}"
+    with _import_locks_guard:
+        if lock_key not in _import_locks:
+            _import_locks[lock_key] = threading.Lock()
+        lock = _import_locks[lock_key]
+
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="正在修订中，请稍后重试")
+
+    try:
+        from rag_runtime_config import USE_OPENAI, OPENAI_MODEL
+        if not USE_OPENAI:
+            raise HTTPException(status_code=400,
+                detail="LLM 未启用，请先启用 LLM 服务")
+
+        client = _get_openai_client()
+        result = refine_knowledge(
+            client,
+            current=req.current,
+            feedback=req.feedback,
+            raw_text=req.raw_text,
+            entity_type=entity_type,
+        )
+
+        response = {
+            "ok": True,
+            "type": entity_type,
+            "id": entity_id,
+            "model": OPENAI_MODEL,
+            "preview": {},
+            "files_generated": {},
+        }
+
+        if result.get("main_txt"):
+            response["preview"]["main_txt"] = result["main_txt"]
+            response["files_generated"]["main.txt"] = len(result["main_txt"])
+        if result.get("faq_txt"):
+            response["preview"]["faq_txt"] = result["faq_txt"]
+            response["files_generated"]["faq.txt"] = len(result["faq_txt"])
+        if result.get("alias_txt"):
+            response["preview"]["alias_txt"] = result["alias_txt"]
+            response["files_generated"]["alias.txt"] = len(result["alias_txt"])
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error("admin_import_refine", repr(e),
+                  meta={"type": entity_type, "id": entity_id})
+        raise HTTPException(status_code=500, detail=f"修订失败: {e}")
+    finally:
+        lock.release()
+
+
+@app.post("/admin/import_knowledge/commit")
+def admin_import_knowledge_commit(req: CommitKnowledgeRequest):
+    """将审阅确认的内容正式写入知识库文件并建索引。"""
+    from import_knowledge import (
+        _ENTITY_TYPES, _write_knowledge_files,
+    )
+
+    entity_type = req.type.strip()
+    entity_id = req.id.strip()
+
+    if entity_type not in _ENTITY_TYPES:
+        raise HTTPException(status_code=400,
+            detail=f"不支持的类型: {entity_type}")
+
+    _, is_single = _ENTITY_TYPES[entity_type]
+    if not is_single and not entity_id:
+        raise HTTPException(status_code=400,
+            detail=f"类型 '{entity_type}' 需要提供 id 参数")
+
+    if entity_id:
+        if ".." in entity_id or "/" in entity_id or "\\" in entity_id:
+            raise HTTPException(status_code=400, detail="非法 ID")
+        if not _SAFE_NAME_RE.match(entity_id):
+            raise HTTPException(status_code=400, detail="ID 只允许字母、数字、下划线、横线、中文")
+
+    content = req.content
+    if not content.get("main_txt"):
+        raise HTTPException(status_code=400, detail="内容不能为空（至少需要 main_txt）")
+
+    lock_key = f"commit:{entity_type}:{entity_id or '_single'}"
+    with _import_locks_guard:
+        if lock_key not in _import_locks:
+            _import_locks[lock_key] = threading.Lock()
+        lock = _import_locks[lock_key]
+
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="正在写入中，请稍后重试")
+
+    try:
+        out_dir = _write_knowledge_files(content, entity_type, entity_id,
+                                          dry_run=False)
+
+        built_index = False
+        if req.build:
+            try:
+                if entity_type == "product":
+                    from build_faiss import build_for_product
+                    build_for_product(entity_id)
+                    invalidate_store_cache(entity_id)
+                else:
+                    from build_faiss import build_shared
+                    build_shared()
+                    invalidate_store_cache("_shared")
+                with _health_lock:
+                    global _health_cache
+                    _health_cache = {}
+                built_index = True
+            except Exception as e:
+                log_error("commit_build_index", repr(e),
+                          meta={"type": entity_type, "id": entity_id})
+
+        return {
+            "ok": True,
+            "type": entity_type,
+            "id": entity_id,
+            "output_dir": str(out_dir),
+            "built_index": built_index,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error("admin_import_commit", repr(e),
+                  meta={"type": entity_type, "id": entity_id})
+        raise HTTPException(status_code=500, detail=f"写入失败: {e}")
+    finally:
+        lock.release()
+
+
 @app.post("/admin/import_knowledge_file")
 async def admin_import_knowledge_file(request: "Request"):
     """通过文件上传导入知识库（LLM 自动整理）。

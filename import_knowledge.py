@@ -211,6 +211,88 @@ main_txt 整理规则：
 4. 用"- "做要点列表"""
 
 
+_SYSTEM_REFINE = """你是医美行业知识库整理专家。用户对上一次的整理结果不满意，
+请根据用户的修改意见进行修订。
+
+规则：
+1. 仅修改用户指出的问题部分，保留其他已满意的内容
+2. 不要丢失原有的数字参数、具体数据
+3. 输出完整的修订后 JSON（不是只输出修改部分）
+4. 遵循与首次整理相同的格式规范
+5. JSON 格式与首次整理一致（包含 main_txt, faq_txt, alias_txt 等字段）"""
+
+
+def refine_knowledge(client, current: dict, feedback: str,
+                     raw_text: str = "", entity_type: str = "product") -> dict:
+    """根据用户反馈修订知识库内容。
+
+    Args:
+        client: OpenAI 兼容客户端
+        current: 当前整理结果，包含 main_txt / faq_txt / alias_txt
+        feedback: 用户修改意见
+        raw_text: 可选，原始文档供 LLM 参考
+        entity_type: 实体类型
+
+    Returns:
+        修订后的完整结果 dict
+    """
+    user_parts = []
+    user_parts.append("【当前整理结果】")
+    if current.get("main_txt"):
+        user_parts.append(f"main_txt:\n{current['main_txt']}")
+    if current.get("faq_txt"):
+        user_parts.append(f"faq_txt:\n{current['faq_txt']}")
+    if current.get("alias_txt"):
+        user_parts.append(f"alias_txt:\n{current['alias_txt']}")
+
+    user_parts.append(f"\n【用户修改意见】\n{feedback}")
+
+    if raw_text:
+        # 限制原始文档长度，避免超 token
+        max_raw = 6000
+        if len(raw_text) > max_raw:
+            raw_text = raw_text[:max_raw] + f"\n...(原始文档省略 {len(raw_text) - max_raw} 字)"
+        user_parts.append(f"\n【原始文档参考】\n{raw_text}")
+
+    user_prompt = "\n\n".join(user_parts)
+
+    # 根据实体类型决定输出 JSON 字段提示
+    if entity_type == "product":
+        field_hint = '输出 JSON 需包含字段: main_txt, faq_txt, alias_txt'
+    else:
+        _, is_single = _ENTITY_TYPES.get(entity_type, ("", False))
+        if is_single:
+            field_hint = '输出 JSON 需包含字段: main_txt'
+        else:
+            field_hint = '输出 JSON 需包含字段: main_txt, alias_txt'
+
+    system_prompt = _SYSTEM_REFINE + f"\n\n{field_hint}"
+
+    result_text = _llm_call(client, system_prompt, user_prompt, max_tokens=4000)
+
+    # 解析 JSON（复用首次整理的解析逻辑）
+    cleaned = result_text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        cleaned = "\n".join(lines)
+
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        import re
+        m = re.search(r'\{[\s\S]*\}', cleaned)
+        if m:
+            try:
+                result = json.loads(m.group())
+            except json.JSONDecodeError:
+                raise ValueError(f"LLM 返回内容无法解析为 JSON: {cleaned[:300]}")
+        else:
+            raise ValueError(f"LLM 返回内容中未找到 JSON: {cleaned[:300]}")
+
+    return result
+
+
 _ENTITY_LABELS = {
     "product":      "医美产品",
     "procedure":    "医美项目/手术",
