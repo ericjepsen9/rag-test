@@ -363,7 +363,7 @@
       <!-- LLM 连接状态卡片 -->
       <div class="card" id="import-llm-card">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <h2 style="margin:0">Cherry Studio / LLM API 状态</h2>
+          <h2 style="margin:0">知识库 LLM 状态（用于文档整理）</h2>
           <div style="display:flex;gap:8px;align-items:center">
             <span id="import-llm-badge"></span>
             <button class="btn-secondary btn-sm" onclick="checkImportLLM()">刷新</button>
@@ -547,8 +547,20 @@
     <!-- ==================== 模型切换 ==================== -->
     <div class="page" id="page-model">
       <h1>&#x1f916; 模型切换</h1>
+
+      <!-- 用途切换标签 -->
+      <div class="card" style="padding-bottom:0">
+        <div class="tabs" id="llm-purpose-tabs">
+          <button class="active" onclick="switchLLMPurpose('chat')">对话 LLM（用户问答）</button>
+          <button onclick="switchLLMPurpose('knowledge')">知识库 LLM（文档整理）</button>
+        </div>
+        <div class="form-hint" style="margin-top:4px;margin-bottom:12px">
+          可以为用户对话和知识库文档整理分别配置不同的 LLM 提供商和模型
+        </div>
+      </div>
+
       <div class="card">
-        <h2>选择 LLM 提供商</h2>
+        <h2 id="llm-purpose-title">选择 LLM 提供商（对话）</h2>
         <div class="model-cards" id="model-cards"></div>
       </div>
       <div class="card" id="model-config-panel" style="display:none">
@@ -570,7 +582,7 @@
         <div class="form-group">
           <label class="inline-label">
             <span class="switch"><input type="checkbox" id="model-enabled"><span class="slider"></span></span>
-            启用 LLM（关闭后使用纯规则提取）
+            启用此用途的 LLM
           </label>
         </div>
         <div style="margin-top:16px">
@@ -730,7 +742,7 @@
           <div class="card">
             <h2>LLM 大语言模型</h2>
             <div class="form-hint" style="margin-bottom:12px">
-              LLM 用于 RAG 答案生成和查询改写。通过 OpenAI 兼容 API 调用，支持多种模型提供商。
+              支持为「对话」和「知识库整理」分别配置不同的 LLM 提供商。可在「模型切换」页面设置。
             </div>
             <div id="llm-status" style="margin-bottom:14px"></div>
             <div class="form-group">
@@ -1211,13 +1223,43 @@ async function rebuildShared() {
   } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
 }
 
-// ===== Model Switch =====
+// ===== Model Switch (Multi-LLM) =====
+let currentLLMPurpose = 'chat';  // 'chat' | 'knowledge'
+let _multiLLMCache = null;       // 缓存从 /admin/llm/configs 获取的数据
+
+function switchLLMPurpose(purpose) {
+  currentLLMPurpose = purpose;
+  document.querySelectorAll('#llm-purpose-tabs button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#llm-purpose-tabs button').forEach(b => {
+    if ((purpose === 'chat' && b.textContent.includes('对话')) ||
+        (purpose === 'knowledge' && b.textContent.includes('知识库')))
+      b.classList.add('active');
+  });
+  const titleMap = {chat: '选择 LLM 提供商（对话 / 用户问答）', knowledge: '选择 LLM 提供商（知识库文档整理）'};
+  document.getElementById('llm-purpose-title').textContent = titleMap[purpose] || titleMap.chat;
+  selectedProvider = '';
+  document.getElementById('model-config-panel').style.display = 'none';
+  loadModelConfig();
+}
+
 async function loadModelConfig() {
   try {
-    const j = await api('/admin/config/model');
+    const j = await api('/admin/llm/configs');
+    _multiLLMCache = j;
+    const configs = j.configs || {};
+    const cfg = configs[currentLLMPurpose] || {};
+    const otherCfg = configs[currentLLMPurpose === 'chat' ? 'knowledge' : 'chat'] || {};
     document.getElementById('model-current-status').textContent = JSON.stringify({
-      enabled: j.use_openai, model: j.model, api_base: j.api_base || '(default)',
-      api_key_set: j.api_key_set, llm_rewrite: j.llm_rewrite,
+      '对话 LLM': {
+        enabled: configs.chat?.enabled, provider: configs.chat?.provider,
+        model: configs.chat?.model, api_base: configs.chat?.api_base || '(default)',
+        api_key_set: configs.chat?.api_key_set,
+      },
+      '知识库 LLM': {
+        enabled: configs.knowledge?.enabled, provider: configs.knowledge?.provider,
+        model: configs.knowledge?.model, api_base: configs.knowledge?.api_base || '(default)',
+        api_key_set: configs.knowledge?.api_key_set,
+      },
     }, null, 2);
     // Render provider cards
     const presets = j.presets || {};
@@ -1225,38 +1267,64 @@ async function loadModelConfig() {
       `<div class="model-card ${k===selectedProvider?'selected':''}" onclick="selectProvider('${k}')">
         <div class="name">${esc(v.label)}</div>
         <div class="models">${v.models.length ? v.models.slice(0,3).join(', ') : '自定义模型'}</div>
+        ${k === cfg.provider ? '<div style="font-size:11px;color:var(--primary);margin-top:4px">当前使用</div>' : ''}
       </div>`
     ).join('');
-    // If provider already selected, show config
-    if (selectedProvider) selectProvider(selectedProvider, j);
-  } catch(e) {}
+    // If provider already selected or matches current config, show config
+    if (selectedProvider) selectProvider(selectedProvider);
+    else if (cfg.provider) selectProvider(cfg.provider);
+  } catch(e) {
+    // Fallback to old API
+    try {
+      const j = await api('/admin/config/model');
+      document.getElementById('model-current-status').textContent = JSON.stringify({
+        enabled: j.use_openai, model: j.model, api_base: j.api_base || '(default)',
+        api_key_set: j.api_key_set, llm_rewrite: j.llm_rewrite,
+      }, null, 2);
+    } catch(e2) {}
+  }
 }
 
-function selectProvider(provider, cachedConfig) {
+function selectProvider(provider) {
   selectedProvider = provider;
   document.querySelectorAll('.model-card').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.model-card').forEach(c => {
-    if (c.onclick.toString().includes(`'${provider}'`)) c.classList.add('selected');
+    if (c.onclick && c.onclick.toString().includes(`'${provider}'`)) c.classList.add('selected');
   });
   document.getElementById('model-config-panel').style.display = 'block';
-  // Populate model select
-  const presets = cachedConfig?.presets;
-  const preset = presets?.[provider];
+
+  const presets = _multiLLMCache?.presets || {};
+  const preset = presets[provider];
+  const cfg = _multiLLMCache?.configs?.[currentLLMPurpose] || {};
+
   const sel = document.getElementById('model-name');
   const customInput = document.getElementById('model-name-custom');
   if (preset && preset.models.length) {
-    sel.innerHTML = preset.models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('')
+    sel.innerHTML = preset.models.map(m => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('')
       + '<option value="__custom__">自定义...</option>';
     sel.style.display = '';
     customInput.style.display = 'none';
+    // If current model is not in the preset list, show custom
+    if (cfg.provider === provider && cfg.model && !preset.models.includes(cfg.model)) {
+      sel.value = '__custom__';
+      customInput.style.display = '';
+      customInput.value = cfg.model;
+    }
   } else {
     sel.innerHTML = '<option value="__custom__">自定义...</option>';
     sel.style.display = 'none';
     customInput.style.display = '';
+    customInput.value = cfg.provider === provider ? (cfg.model || '') : '';
   }
-  if (preset?.api_base) document.getElementById('model-api-base').value = preset.api_base;
-  else document.getElementById('model-api-base').value = '';
-  document.getElementById('model-enabled').checked = cachedConfig?.use_openai ?? true;
+  if (cfg.provider === provider && cfg.api_base) {
+    document.getElementById('model-api-base').value = cfg.api_base;
+  } else if (preset?.api_base) {
+    document.getElementById('model-api-base').value = preset.api_base;
+  } else {
+    document.getElementById('model-api-base').value = '';
+  }
+  document.getElementById('model-enabled').checked = cfg.enabled ?? true;
+  document.getElementById('model-test-result').innerHTML = '';
 }
 
 function onModelNameChange() {
@@ -1273,19 +1341,18 @@ async function saveModelConfig() {
     : modelSel;
   if (!model) { toast('请输入模型名称', 'error'); return; }
   const payload = {
+    purpose: currentLLMPurpose,
     provider: selectedProvider,
     model,
     api_base: document.getElementById('model-api-base').value.trim(),
     api_key: document.getElementById('model-api-key').value.trim(),
+    enabled: document.getElementById('model-enabled').checked,
   };
   try {
-    await api('/admin/config/model', {method:'POST', headers:{'Content-Type':'application/json'},
+    await api('/admin/llm/configs', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(payload)});
-    // Update enabled state
-    const enabled = document.getElementById('model-enabled').checked;
-    await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({updates: {use_openai: enabled}})});
-    toast('模型配置已更新', 'success');
+    const purposeLabel = currentLLMPurpose === 'chat' ? '对话' : '知识库';
+    toast(`${purposeLabel} LLM 配置已更新`, 'success');
     document.getElementById('model-api-key').value = '';
     loadModelConfig();
   } catch(e) {}
@@ -1295,13 +1362,14 @@ async function testModelConnection() {
   const out = document.getElementById('model-test-result');
   out.innerHTML = '<span style="color:var(--primary)">测试连接中...</span>';
   try {
-    const r = await fetch('/ask', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({question:'你好', mode:'brief', debug:true})});
-    const j = await r.json();
-    if (j.ok) {
-      out.innerHTML = `<span class="badge badge-ok">连接成功</span> <span style="font-size:12px;color:var(--text-secondary)">${j.latency_ms}ms</span>`;
+    const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
+    if (r.ok) {
+      out.innerHTML = `<span class="badge badge-ok">连接成功</span>
+        <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
+        提供商: ${esc(r.provider || '')} | 模型: ${esc(r.model)} | 延迟: ${r.latency_ms}ms | 回复: "${esc(r.reply)}"</span>`;
     } else {
-      out.innerHTML = `<span class="badge badge-danger">连接异常</span> <span style="font-size:12px">${esc(j.answer)}</span>`;
+      out.innerHTML = `<span class="badge badge-danger">连接失败</span>
+        <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
     }
   } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
 }
@@ -1634,7 +1702,7 @@ async function loadServiceStatus() {
       <tr><td>构建最大长度</td><td>${emb.max_length_build||'-'}</td></tr>
       <tr><td>查询最大长度</td><td>${emb.max_length_query||'-'}</td></tr>
     `;
-    // LLM status
+    // LLM status - show both chat and knowledge configs
     const llmEl = document.getElementById('llm-status');
     if (llm.enabled && llm.client_ready) {
       llmEl.innerHTML = '<span class="badge badge-ok" style="font-size:13px;padding:4px 12px">运行中</span>';
@@ -1649,13 +1717,39 @@ async function loadServiceStatus() {
       document.getElementById('btn-llm-start').disabled = false;
       document.getElementById('btn-llm-stop').disabled = true;
     }
-    document.getElementById('llm-params').innerHTML = `
-      <tr><td style="width:140px">模型</td><td><code>${esc(llm.model||'')}</code></td></tr>
-      <tr><td>API Base</td><td><code>${esc(llm.api_base||'默认')}</code></td></tr>
-      <tr><td>API Key</td><td>${llm.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'}</td></tr>
-      <tr><td>查询改写</td><td>${llm.rewrite_enabled ? 'ON' : 'OFF'}</td></tr>
-      <tr><td>温度</td><td>${llm.temperature ?? '-'}</td></tr>
-    `;
+    // Try to load multi-LLM config for richer display
+    let multiHtml = '';
+    try {
+      const mc = await api('/admin/llm/configs');
+      if (mc.configs) {
+        const chat = mc.configs.chat || {};
+        const know = mc.configs.knowledge || {};
+        multiHtml = `
+          <tr><td colspan="2" style="font-weight:600;padding-top:8px">对话 LLM（用户问答）</td></tr>
+          <tr><td style="width:140px">提供商</td><td><code>${esc(chat.provider||'未设置')}</code></td></tr>
+          <tr><td>模型</td><td><code>${esc(chat.model||'未设置')}</code></td></tr>
+          <tr><td>API Base</td><td><code>${esc(chat.api_base||'默认')}</code></td></tr>
+          <tr><td>API Key</td><td>${chat.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'}</td></tr>
+          <tr><td>状态</td><td>${chat.enabled ? '<span class="badge badge-ok">已启用</span>' : '<span class="badge badge-danger">已禁用</span>'}</td></tr>
+          <tr><td colspan="2" style="font-weight:600;padding-top:8px">知识库 LLM（文档整理）</td></tr>
+          <tr><td>提供商</td><td><code>${esc(know.provider||'未设置')}</code></td></tr>
+          <tr><td>模型</td><td><code>${esc(know.model||'未设置')}</code></td></tr>
+          <tr><td>API Base</td><td><code>${esc(know.api_base||'默认')}</code></td></tr>
+          <tr><td>API Key</td><td>${know.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'}</td></tr>
+          <tr><td>状态</td><td>${know.enabled ? '<span class="badge badge-ok">已启用</span>' : '<span class="badge badge-danger">已禁用</span>'}</td></tr>
+        `;
+      }
+    } catch(e2) {}
+    if (!multiHtml) {
+      multiHtml = `
+        <tr><td style="width:140px">模型</td><td><code>${esc(llm.model||'')}</code></td></tr>
+        <tr><td>API Base</td><td><code>${esc(llm.api_base||'默认')}</code></td></tr>
+        <tr><td>API Key</td><td>${llm.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'}</td></tr>
+        <tr><td>查询改写</td><td>${llm.rewrite_enabled ? 'ON' : 'OFF'}</td></tr>
+        <tr><td>温度</td><td>${llm.temperature ?? '-'}</td></tr>
+      `;
+    }
+    document.getElementById('llm-params').innerHTML = multiHtml;
     loadHealthDetail();
   } catch(e) {}
 }
@@ -1778,38 +1872,48 @@ async function loadImportPage() {
 
 async function checkImportLLM() {
   try {
-    const llm = await api('/admin/service/llm');
+    // 优先使用新的多 LLM 配置接口获取知识库 LLM 状态
+    let llm = null;
+    try {
+      const j = await api('/admin/llm/configs');
+      if (j.configs && j.configs.knowledge) {
+        llm = j.configs.knowledge;
+      }
+    } catch(e2) {}
+    // 回退到旧接口
+    if (!llm) {
+      llm = await api('/admin/service/llm');
+    }
     const badge = document.getElementById('import-llm-badge');
     const info = document.getElementById('import-llm-info');
     if (llm.enabled && llm.api_key_set) {
-      badge.innerHTML = '<span class="badge badge-ok">LLM 已就绪</span>';
+      badge.innerHTML = '<span class="badge badge-ok">知识库 LLM 已就绪</span>';
     } else if (llm.enabled && !llm.api_key_set) {
       badge.innerHTML = '<span class="badge badge-warn">缺少 API Key</span>';
     } else {
-      badge.innerHTML = '<span class="badge badge-danger">LLM 未启用</span>';
+      badge.innerHTML = '<span class="badge badge-danger">知识库 LLM 未启用</span>';
     }
     info.innerHTML = `
+      <b>提供商：</b> <code>${esc(llm.provider || '未设置')}</code> &nbsp;|&nbsp;
       <b>模型：</b> <code>${esc(llm.model || '未设置')}</code> &nbsp;|&nbsp;
       <b>API Base：</b> <code>${esc(llm.api_base || '默认')}</code> &nbsp;|&nbsp;
-      <b>API Key：</b> ${llm.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'} &nbsp;|&nbsp;
-      <b>状态：</b> ${llm.enabled ? (llm.client_ready ? '<span class="badge badge-ok">已连接</span>' : '<span class="badge badge-warn">未连接</span>') : '<span class="badge badge-danger">已禁用</span>'}
+      <b>API Key：</b> ${llm.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-danger">未设置</span>'}
     `;
-    // Warn if not ready
     if (!llm.enabled || !llm.api_key_set) {
-      info.innerHTML += `<br><span style="color:var(--danger)">请先在「服务控制」或「模型切换」页面配置 LLM（Cherry Studio API 地址和 Key），否则无法使用智能导入</span>`;
+      info.innerHTML += `<br><span style="color:var(--danger)">请先在「模型切换」页面的「知识库 LLM」标签配置提供商和 Key，否则无法使用智能导入</span>`;
     }
   } catch(e) {}
 }
 
 async function testImportLLM() {
   const out = document.getElementById('import-llm-test');
-  out.innerHTML = '<span style="color:var(--primary)">正在测试 LLM 连接...</span>';
+  out.innerHTML = '<span style="color:var(--primary)">正在测试知识库 LLM 连接...</span>';
   try {
-    const r = await api('/admin/service/llm/test', {method:'POST'});
+    const r = await api('/admin/llm/test?purpose=knowledge', {method:'POST'});
     if (r.ok) {
       out.innerHTML = `<span class="badge badge-ok">连接成功</span>
         <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
-        模型: ${esc(r.model)} | 延迟: ${r.latency_ms}ms | 回复: "${esc(r.reply)}"</span>`;
+        提供商: ${esc(r.provider || '')} | 模型: ${esc(r.model)} | 延迟: ${r.latency_ms}ms | 回复: "${esc(r.reply)}"</span>`;
     } else {
       out.innerHTML = `<span class="badge badge-danger">连接失败</span>
         <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;

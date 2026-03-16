@@ -1248,9 +1248,32 @@ _openai_client = None
 _openai_client_checked = False
 
 
+def _get_chat_model() -> str:
+    """获取对话用 LLM 模型名称（优先 llm_client，回退全局 OPENAI_MODEL）"""
+    try:
+        from llm_client import get_model as _get_multi_model, is_enabled as _is_enabled
+        if _is_enabled("chat"):
+            m = _get_multi_model("chat")
+            if m:
+                return m
+    except ImportError:
+        pass
+    return OPENAI_MODEL
+
+
 def _get_openai_client():
-    """获取 OpenAI client（单例缓存），失败返回 None"""
+    """获取对话用 LLM client（优先使用 llm_client 多提供商管理，回退到旧版单例）"""
     global _openai_client, _openai_client_checked
+    # 优先通过 llm_client 获取（支持多提供商独立配置）
+    try:
+        from llm_client import get_client as _get_multi_client, is_enabled as _is_enabled
+        if _is_enabled("chat"):
+            client = _get_multi_client("chat")
+            if client is not None:
+                return client
+    except ImportError:
+        pass
+    # 回退到旧版逻辑
     if _openai_client_checked:
         return _openai_client
     if not USE_OPENAI:
@@ -1347,7 +1370,7 @@ def llm_generate_answer(question: str, context: str, route: str, mode: str,
 
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_get_chat_model(),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -1385,7 +1408,7 @@ def openai_rewrite_answer(text: str, route: str) -> str:
             "合理分段，有层次感；不要新增事实。\n\n" + text
         )
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_get_chat_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=ROUTE_LLM_TEMPERATURE.get(route, LLM_TEMPERATURE),
             max_tokens=LLM_MAX_TOKENS_BRIEF,
@@ -1524,7 +1547,7 @@ def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
 
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_get_chat_model(),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

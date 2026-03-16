@@ -130,12 +130,23 @@ def _llm_rewrite_query(question: str) -> str:
     if cached is not None:
         return cached
 
-    # 复用 rag_answer 的单例 OpenAI client，避免每次改写重建连接
+    # 优先通过 llm_client 获取对话用 client，回退到 rag_answer 单例
     try:
-        from rag_answer import _get_openai_client
-        client = _get_openai_client()
-    except Exception:
+        from llm_client import get_client as _get_multi_client, get_model as _get_multi_model, is_enabled as _is_enabled
+        if _is_enabled("chat"):
+            client = _get_multi_client("chat")
+            _chat_model = _get_multi_model("chat") if client else OPENAI_MODEL
+        else:
+            client = None
+    except ImportError:
         client = None
+    if client is None:
+        try:
+            from rag_answer import _get_openai_client
+            client = _get_openai_client()
+        except Exception:
+            client = None
+        _chat_model = OPENAI_MODEL
     if client is None:
         _llm_rewrite_cache.put(question, "")
         return ""
@@ -152,7 +163,7 @@ def _llm_rewrite_query(question: str) -> str:
 
     try:
         resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=_chat_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question},

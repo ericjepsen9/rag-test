@@ -830,6 +830,111 @@ def admin_switch_model(req: ModelSwitchRequest):
     return result
 
 
+# ===== 多 LLM 提供商配置接口 =====
+
+def _get_knowledge_model_name() -> str:
+    """获取知识库 LLM 模型名，用于 API 响应"""
+    try:
+        from llm_client import get_model as _gm, is_enabled as _ie
+        if _ie("knowledge"):
+            m = _gm("knowledge")
+            if m:
+                return m
+    except ImportError:
+        pass
+    from rag_runtime_config import OPENAI_MODEL
+    return OPENAI_MODEL
+
+
+@app.get("/admin/llm/configs")
+def admin_get_llm_configs():
+    """获取所有用途的 LLM 配置（chat / knowledge）"""
+    try:
+        from llm_client import get_all_llm_configs
+        from rag_runtime_config import MODEL_PRESETS
+        return {
+            "ok": True,
+            "configs": get_all_llm_configs(),
+            "presets": MODEL_PRESETS,
+        }
+    except ImportError:
+        from rag_runtime_config import get_model_config, MODEL_PRESETS
+        cfg = get_model_config()
+        return {
+            "ok": True,
+            "configs": {"chat": cfg, "knowledge": cfg},
+            "presets": MODEL_PRESETS,
+        }
+
+
+class MultiLLMUpdateRequest(BaseModel):
+    purpose: str = Field(..., pattern="^(chat|knowledge)$")
+    provider: str = ""
+    model: str = ""
+    api_base: str = ""
+    api_key: str = ""
+    enabled: Optional[bool] = None
+
+
+@app.post("/admin/llm/configs")
+def admin_update_llm_config(req: MultiLLMUpdateRequest):
+    """更新指定用途的 LLM 配置"""
+    from llm_client import update_llm_config
+    result = update_llm_config(
+        req.purpose,
+        provider=req.provider,
+        model=req.model,
+        api_base=req.api_base,
+        api_key=req.api_key,
+        enabled=req.enabled,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/admin/llm/test")
+def admin_llm_test_purpose(purpose: str = "chat"):
+    """测试指定用途的 LLM 连接"""
+    from llm_client import get_client, get_model, is_enabled, get_llm_config
+    if purpose not in ("chat", "knowledge"):
+        raise HTTPException(status_code=400, detail="purpose 必须为 chat 或 knowledge")
+
+    if not is_enabled(purpose):
+        return {"ok": False, "error": f"{purpose} LLM 未启用"}
+
+    cfg = get_llm_config(purpose)
+    if not cfg["api_key_set"]:
+        return {"ok": False, "error": f"{purpose} LLM 未设置 API Key"}
+
+    t0 = time.monotonic()
+    try:
+        client = get_client(purpose)
+        if client is None:
+            return {"ok": False, "error": "LLM client 创建失败"}
+        model_name = get_model(purpose)
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": "请回复OK"}],
+            max_tokens=10,
+            temperature=0,
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        reply = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        return {
+            "ok": True,
+            "purpose": purpose,
+            "provider": cfg["provider"],
+            "model": model_name,
+            "api_base": cfg["api_base"] or "(default)",
+            "reply": reply,
+            "latency_ms": latency_ms,
+        }
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": False, "error": str(e), "latency_ms": latency_ms}
+
+
 # ===== 服务器 / 域名配置接口 =====
 
 @app.get("/admin/config/server")
@@ -1066,12 +1171,19 @@ def admin_import_knowledge(req: ImportKnowledgeRequest):
         raise HTTPException(status_code=409, detail="该知识正在导入中，请稍后重试")
 
     try:
-        # 检查 LLM 是否可用
-        from rag_runtime_config import USE_OPENAI, OPENAI_MODEL
-        if not USE_OPENAI:
-            raise HTTPException(
-                status_code=400,
-                detail="LLM 未启用，请先在管理后台启用 LLM 服务（设置 RAG_USE_OPENAI=1）")
+        # 检查 LLM 是否可用（优先检查知识库专用 LLM，回退到全局）
+        try:
+            from llm_client import is_enabled as _llm_is_enabled
+            knowledge_llm_ok = _llm_is_enabled("knowledge")
+        except ImportError:
+            knowledge_llm_ok = False
+        if not knowledge_llm_ok:
+            from rag_runtime_config import USE_OPENAI
+            if not USE_OPENAI:
+                raise HTTPException(
+                    status_code=400,
+                    detail="知识库 LLM 未启用，请先在管理后台「模型切换」中配置知识库整理用的 LLM")
+        from rag_runtime_config import OPENAI_MODEL
 
         # 调用 LLM 整理
         client = _get_openai_client()
@@ -1110,7 +1222,7 @@ def admin_import_knowledge(req: ImportKnowledgeRequest):
             "dry_run": req.dry_run,
             "output_dir": str(out_dir),
             "built_index": built_index,
-            "model": OPENAI_MODEL,
+            "model": _get_knowledge_model_name(),
             "files_generated": {},
         }
         if result.get("main_txt"):
@@ -1214,10 +1326,17 @@ def admin_import_knowledge_refine(req: RefineKnowledgeRequest):
         raise HTTPException(status_code=409, detail="正在修订中，请稍后重试")
 
     try:
-        from rag_runtime_config import USE_OPENAI, OPENAI_MODEL
-        if not USE_OPENAI:
-            raise HTTPException(status_code=400,
-                detail="LLM 未启用，请先启用 LLM 服务")
+        # 检查知识库 LLM 是否可用
+        try:
+            from llm_client import is_enabled as _llm_is_enabled
+            knowledge_llm_ok = _llm_is_enabled("knowledge")
+        except ImportError:
+            knowledge_llm_ok = False
+        if not knowledge_llm_ok:
+            from rag_runtime_config import USE_OPENAI
+            if not USE_OPENAI:
+                raise HTTPException(status_code=400,
+                    detail="知识库 LLM 未启用，请先在管理后台配置知识库整理用的 LLM")
 
         client = _get_openai_client()
         result = refine_knowledge(
@@ -1232,7 +1351,7 @@ def admin_import_knowledge_refine(req: RefineKnowledgeRequest):
             "ok": True,
             "type": entity_type,
             "id": entity_id,
-            "model": OPENAI_MODEL,
+            "model": _get_knowledge_model_name(),
             "preview": {},
             "files_generated": {},
         }

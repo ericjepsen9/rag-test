@@ -58,7 +58,17 @@ _ENTITY_TYPES = {
 
 
 def _get_openai_client():
-    """获取 OpenAI 兼容 client"""
+    """获取知识库整理用 LLM client（优先 llm_client 多提供商，回退旧版）"""
+    # 优先通过 llm_client 获取知识库专用 client
+    try:
+        from llm_client import get_client as _get_multi_client, is_enabled as _is_enabled
+        if _is_enabled("knowledge"):
+            client = _get_multi_client("knowledge")
+            if client is not None:
+                return client
+    except ImportError:
+        pass
+    # 回退到旧版逻辑
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         print("[ERROR] 未设置 OPENAI_API_KEY 环境变量")
@@ -72,6 +82,19 @@ def _get_openai_client():
     except ImportError:
         print("[ERROR] 未安装 openai 库，请运行: pip install openai")
         sys.exit(1)
+
+
+def _get_knowledge_model() -> str:
+    """获取知识库整理用的模型名称"""
+    try:
+        from llm_client import get_model as _get_multi_model, is_enabled as _is_enabled
+        if _is_enabled("knowledge"):
+            m = _get_multi_model("knowledge")
+            if m:
+                return m
+    except ImportError:
+        pass
+    return OPENAI_MODEL
 
 
 def _read_input_file(path: str) -> str:
@@ -109,7 +132,7 @@ def _llm_call(client, system_prompt: str, user_prompt: str,
               max_tokens: int = 4000) -> str:
     """调用 LLM API"""
     resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=_get_knowledge_model(),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -539,7 +562,7 @@ def main():
     print(f"[INFO] 总计 {len(raw_text)} 字原始内容")
 
     # 调用 LLM 整理
-    print(f"[INFO] 调用 LLM 整理内容（模型: {OPENAI_MODEL}）...")
+    print(f"[INFO] 调用 LLM 整理内容（模型: {_get_knowledge_model()}）...")
     client = _get_openai_client()
     result = _generate_knowledge(client, raw_text, entity_type, entity_id)
     print(f"[OK] LLM 整理完成")
