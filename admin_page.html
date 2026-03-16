@@ -6,124 +6,140 @@
   <title>RAG 后台管理中心</title>
   <style>
     :root {
-      --primary: #4f6ef7; --primary-dark: #3b5de7; --primary-light: #e8ecff;
-      --success: #2db84d; --danger: #e54d42; --warning: #f5a623;
-      --bg: #f0f2f5; --card: #fff; --border: #e0e0e6; --text: #1a1a2e;
-      --text-secondary: #666; --radius: 10px; --shadow: 0 2px 8px rgba(0,0,0,.06);
+      --primary: #5b6bf0; --primary-dark: #4558e0; --primary-light: #eef0ff;
+      --success: #22c55e; --danger: #ef4444; --warning: #f59e0b;
+      --bg: #f4f6f9; --card: #fff; --border: #e2e5ea; --text: #1e2330;
+      --text-secondary: #6b7280; --radius: 12px; --shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+      --sidebar-bg: #161926; --sidebar-active: rgba(91,107,240,.18);
     }
     * { box-sizing: border-box; margin: 0; }
     body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-           background: var(--bg); color: var(--text); font-size: 14px; }
+           background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
 
     /* Layout */
     .app { display: flex; min-height: 100vh; }
-    .sidebar { width: 220px; background: #1a1a2e; color: #ccc; padding: 0; flex-shrink: 0;
-               position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto; z-index: 100; }
-    .sidebar .logo { padding: 20px 16px; font-size: 17px; font-weight: 700; color: #fff;
-                     border-bottom: 1px solid rgba(255,255,255,.08); }
-    .sidebar .logo small { display: block; font-size: 11px; color: #888; font-weight: 400; margin-top: 3px; }
-    .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 12px 18px;
-                     color: #aab; text-decoration: none; font-size: 13px; transition: all .15s;
-                     border-left: 3px solid transparent; }
-    .sidebar nav a:hover { background: rgba(255,255,255,.06); color: #fff; }
-    .sidebar nav a.active { background: rgba(79,110,247,.15); color: var(--primary);
+    .sidebar { width: 230px; background: var(--sidebar-bg); color: #9ca3b0; padding: 0; flex-shrink: 0;
+               position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto; z-index: 100;
+               border-right: 1px solid rgba(255,255,255,.04); }
+    .sidebar .logo { padding: 22px 20px; font-size: 17px; font-weight: 700; color: #fff;
+                     border-bottom: 1px solid rgba(255,255,255,.06);
+                     background: linear-gradient(135deg, rgba(91,107,240,.1), transparent); }
+    .sidebar .logo small { display: block; font-size: 11px; color: #6b7280; font-weight: 400; margin-top: 4px;
+                           letter-spacing: .3px; }
+    .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 11px 20px;
+                     color: #9ca3b0; text-decoration: none; font-size: 13px; transition: all .18s;
+                     border-left: 3px solid transparent; margin: 1px 0; }
+    .sidebar nav a:hover { background: rgba(255,255,255,.05); color: #e0e4ea; }
+    .sidebar nav a.active { background: var(--sidebar-active); color: #a5b0ff;
                             border-left-color: var(--primary); font-weight: 600; }
-    .sidebar nav .group-label { padding: 16px 18px 6px; font-size: 11px; color: #555;
-                                text-transform: uppercase; letter-spacing: 1px; }
-    .main { margin-left: 220px; padding: 24px 28px; flex: 1; min-width: 0; }
-    .page { display: none; }
+    .sidebar nav .group-label { padding: 18px 20px 6px; font-size: 10px; color: #4b5060;
+                                text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600; }
+    .main { margin-left: 230px; padding: 28px 32px; flex: 1; min-width: 0; }
+    .page { display: none; animation: fadeIn .25s ease; }
     .page.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     /* Common */
-    h1 { font-size: 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
-    h2 { font-size: 15px; margin: 0 0 14px; color: var(--text); }
-    .card { background: var(--card); border-radius: var(--radius); padding: 18px 22px;
-            margin-bottom: 16px; box-shadow: var(--shadow); }
+    h1 { font-size: 21px; margin-bottom: 22px; display: flex; align-items: center; gap: 10px;
+         font-weight: 700; color: var(--text); }
+    h2 { font-size: 15px; margin: 0 0 14px; color: var(--text); font-weight: 600; }
+    .card { background: var(--card); border-radius: var(--radius); padding: 20px 24px;
+            margin-bottom: 16px; box-shadow: var(--shadow); border: 1px solid rgba(0,0,0,.03); }
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
     .col { flex: 1; min-width: 280px; }
 
     /* Buttons */
-    button, .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;
-             font-size: 13px; font-weight: 500; transition: all .15s; display: inline-flex;
+    button, .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer;
+             font-size: 13px; font-weight: 500; transition: all .18s; display: inline-flex;
              align-items: center; gap: 6px; }
-    .btn-primary { background: var(--primary); color: #fff; }
-    .btn-primary:hover { background: var(--primary-dark); }
-    .btn-success { background: var(--success); color: #fff; }
-    .btn-success:hover { background: #24a043; }
-    .btn-danger { background: var(--danger); color: #fff; }
-    .btn-danger:hover { background: #c93a30; }
-    .btn-warning { background: var(--warning); color: #fff; }
-    .btn-warning:hover { background: #db9520; }
-    .btn-secondary { background: #e8e8ec; color: #333; }
-    .btn-secondary:hover { background: #d4d4da; }
-    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-primary { background: var(--primary); color: #fff; box-shadow: 0 1px 3px rgba(91,107,240,.25); }
+    .btn-primary:hover { background: var(--primary-dark); box-shadow: 0 2px 6px rgba(91,107,240,.35); transform: translateY(-1px); }
+    .btn-success { background: var(--success); color: #fff; box-shadow: 0 1px 3px rgba(34,197,94,.25); }
+    .btn-success:hover { background: #16a34a; transform: translateY(-1px); }
+    .btn-danger { background: var(--danger); color: #fff; box-shadow: 0 1px 3px rgba(239,68,68,.25); }
+    .btn-danger:hover { background: #dc2626; transform: translateY(-1px); }
+    .btn-warning { background: var(--warning); color: #fff; box-shadow: 0 1px 3px rgba(245,158,11,.25); }
+    .btn-warning:hover { background: #d97706; transform: translateY(-1px); }
+    .btn-secondary { background: #f0f1f4; color: #374151; }
+    .btn-secondary:hover { background: #e2e4e8; }
+    .btn-sm { padding: 5px 12px; font-size: 12px; }
     .btn-ghost { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
     .btn-ghost:hover { background: var(--primary-light); }
+    button:disabled, .btn:disabled { opacity: .5; cursor: not-allowed; pointer-events: none; transform: none !important; box-shadow: none !important; }
 
     /* Form */
-    input, select, textarea { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
-                              font-size: 13px; font-family: inherit; transition: border .15s; }
+    input, select, textarea { padding: 9px 13px; border: 1px solid var(--border); border-radius: 8px;
+                              font-size: 13px; font-family: inherit; transition: border .18s, box-shadow .18s;
+                              background: #fff; }
     input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary);
-                                                box-shadow: 0 0 0 3px rgba(79,110,247,.12); }
+                                                box-shadow: 0 0 0 3px rgba(91,107,240,.1); }
     textarea { resize: vertical; min-height: 120px; width: 100%; }
     label { font-size: 13px; font-weight: 500; display: block; margin-bottom: 5px; color: var(--text); }
     .form-group { margin-bottom: 14px; }
     .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-    .form-hint { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+    .form-hint { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
     .inline-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
     .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
     .switch input { opacity: 0; width: 0; height: 0; }
-    .switch .slider { position: absolute; inset: 0; background: #ccc; border-radius: 22px;
-                      transition: .2s; cursor: pointer; }
+    .switch .slider { position: absolute; inset: 0; background: #d1d5db; border-radius: 22px;
+                      transition: .25s; cursor: pointer; }
     .switch .slider:before { content: ''; position: absolute; height: 16px; width: 16px;
                              left: 3px; bottom: 3px; background: #fff; border-radius: 50%;
-                             transition: .2s; }
+                             transition: .25s; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
     .switch input:checked + .slider { background: var(--primary); }
     .switch input:checked + .slider:before { transform: translateX(18px); }
 
     /* Stats */
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px;
-                  margin-bottom: 16px; }
-    .stat-card { background: #f8f9fb; border-radius: 8px; padding: 14px; text-align: center; }
-    .stat-card .num { font-size: 28px; font-weight: 700; color: var(--primary); }
-    .stat-card .lbl { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px;
+                  margin-bottom: 18px; }
+    .stat-card { background: linear-gradient(135deg, #f8f9fc, #fff); border-radius: 10px; padding: 16px;
+                 text-align: center; border: 1px solid var(--border); transition: transform .15s; }
+    .stat-card:hover { transform: translateY(-2px); }
+    .stat-card .num { font-size: 28px; font-weight: 700; color: var(--primary);
+                      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+                      -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .stat-card .lbl { font-size: 11px; color: var(--text-secondary); margin-top: 3px; font-weight: 500; }
 
     /* Table */
     .table-wrap { max-height: 500px; overflow: auto; border: 1px solid var(--border);
-                  border-radius: 8px; }
+                  border-radius: 10px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; padding: 10px 12px; background: #f5f6fa; border-bottom: 2px solid #ddd;
-         font-weight: 600; position: sticky; top: 0; z-index: 1; }
-    td { padding: 8px 12px; border-bottom: 1px solid #eee; }
+    th { text-align: left; padding: 11px 14px; background: #f8f9fc; border-bottom: 2px solid var(--border);
+         font-weight: 600; position: sticky; top: 0; z-index: 1; color: var(--text-secondary);
+         font-size: 12px; text-transform: uppercase; letter-spacing: .3px; }
+    td { padding: 10px 14px; border-bottom: 1px solid #f0f1f4; }
     tr:hover td { background: #f8f9ff; }
 
     /* Badges */
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-    .badge-ok { background: #e6f9ed; color: #1a8c3f; }
-    .badge-warn { background: #fff3e0; color: #b36b00; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-ok { background: #dcfce7; color: #15803d; }
+    .badge-warn { background: #fef3c7; color: #92400e; }
     .badge-info { background: var(--primary-light); color: var(--primary); }
-    .badge-danger { background: #fde8e8; color: var(--danger); }
+    .badge-danger { background: #fee2e2; color: #b91c1c; }
 
     /* Toast */
-    .toast-container { position: fixed; top: 16px; right: 16px; z-index: 9999; display: flex;
-                       flex-direction: column; gap: 8px; }
-    .toast { padding: 12px 20px; border-radius: 8px; color: #fff; font-size: 13px;
-             box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: slideIn .3s ease; min-width: 200px; }
-    .toast-success { background: var(--success); }
-    .toast-error { background: var(--danger); }
-    .toast-info { background: var(--primary); }
-    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+    .toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex;
+                       flex-direction: column; gap: 10px; }
+    .toast { padding: 14px 22px; border-radius: 10px; color: #fff; font-size: 13px; font-weight: 500;
+             box-shadow: 0 8px 24px rgba(0,0,0,.18); animation: slideIn .3s cubic-bezier(.22,1,.36,1);
+             min-width: 220px; backdrop-filter: blur(8px); }
+    .toast-success { background: linear-gradient(135deg, #22c55e, #16a34a); }
+    .toast-error { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .toast-info { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); }
+    @keyframes slideIn { from { transform: translateX(100%) scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
 
     /* Upload zone */
-    .upload-zone { border: 2px dashed var(--border); border-radius: 10px; padding: 36px;
-                   text-align: center; cursor: pointer; transition: all .2s; background: #fafbfc; }
-    .upload-zone:hover, .upload-zone.dragover { border-color: var(--primary); background: var(--primary-light); }
+    .upload-zone { border: 2px dashed var(--border); border-radius: 12px; padding: 36px;
+                   text-align: center; cursor: pointer; transition: all .25s; background: #fafbfd; }
+    .upload-zone:hover, .upload-zone.dragover { border-color: var(--primary); background: var(--primary-light);
+                                                 transform: scale(1.01); }
     .upload-zone .icon { font-size: 36px; margin-bottom: 8px; }
     .upload-zone p { color: var(--text-secondary); margin: 6px 0; }
     .upload-list { margin-top: 12px; }
-    .upload-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-                   background: #f5f6fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px; }
-    .upload-item .name { flex: 1; }
+    .upload-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+                   background: #f5f6fa; border-radius: 8px; margin-bottom: 6px; font-size: 12px;
+                   border: 1px solid var(--border); }
+    .upload-item .name { flex: 1; font-weight: 500; }
     .upload-item .size { color: var(--text-secondary); }
 
     /* File editor */
@@ -135,39 +151,43 @@
 
     /* Config grid */
     .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-    .config-item { background: #f8f9fb; border-radius: 8px; padding: 14px;
-                   display: flex; flex-direction: column; gap: 6px; }
+    .config-item { background: #f8f9fc; border-radius: 10px; padding: 16px;
+                   display: flex; flex-direction: column; gap: 6px; border: 1px solid transparent;
+                   transition: border-color .15s; }
     .config-item label { font-weight: 600; font-size: 13px; margin: 0; }
     .config-item .desc { font-size: 11px; color: var(--text-secondary); }
     .config-item input[type="number"], .config-item input[type="text"], .config-item select {
       width: 100%; }
 
     /* Tabs */
-    .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid var(--border);
+    .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 2px solid var(--border);
             padding-bottom: 0; }
-    .tabs button { padding: 10px 18px; border: none; background: none; cursor: pointer;
+    .tabs button { padding: 10px 20px; border: none; background: none; cursor: pointer;
                    font-size: 13px; font-weight: 500; color: var(--text-secondary);
-                   border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s; }
-    .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
-    .tabs button:hover { color: var(--text); }
+                   border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .18s;
+                   border-radius: 6px 6px 0 0; }
+    .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); background: rgba(91,107,240,.04); }
+    .tabs button:hover { color: var(--text); background: rgba(0,0,0,.02); }
 
     /* Logs */
-    .log-entry { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 12px;
-                 line-height: 1.5; }
+    .log-entry { padding: 12px 14px; border-bottom: 1px solid #f0f1f4; font-size: 12px;
+                 line-height: 1.6; transition: background .1s; }
     .log-entry:hover { background: #f8f9ff; }
-    .log-entry .meta { color: var(--text-secondary); margin-bottom: 4px; }
-    .log-entry .question { font-weight: 600; }
-    .log-entry .answer { color: #444; white-space: pre-wrap; word-break: break-word;
-                         max-height: 100px; overflow: hidden; }
+    .log-entry .meta { color: var(--text-secondary); margin-bottom: 4px; font-size: 11px; }
+    .log-entry .question { font-weight: 600; color: var(--text); }
+    .log-entry .answer { color: #4b5563; white-space: pre-wrap; word-break: break-word;
+                         max-height: 100px; overflow: hidden; cursor: pointer;
+                         transition: max-height .3s ease; }
     .log-entry .answer.expanded { max-height: none; }
 
     /* Model cards */
-    .model-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-    .model-card { border: 2px solid var(--border); border-radius: var(--radius); padding: 16px;
-                  cursor: pointer; transition: all .15s; text-align: center; }
-    .model-card:hover { border-color: var(--primary); background: var(--primary-light); }
+    .model-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+    .model-card { border: 2px solid var(--border); border-radius: var(--radius); padding: 18px;
+                  cursor: pointer; transition: all .2s; text-align: center; background: #fff; }
+    .model-card:hover { border-color: var(--primary); background: var(--primary-light);
+                        transform: translateY(-2px); box-shadow: 0 4px 12px rgba(91,107,240,.12); }
     .model-card.selected { border-color: var(--primary); background: var(--primary-light);
-                           box-shadow: 0 0 0 3px rgba(79,110,247,.15); }
+                           box-shadow: 0 0 0 3px rgba(91,107,240,.12); }
     .model-card .name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
     .model-card .models { font-size: 11px; color: var(--text-secondary); }
 
@@ -185,13 +205,36 @@
     /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #999; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
     /* Progress */
-    .progress { height: 4px; background: #e0e0e6; border-radius: 2px; overflow: hidden; }
-    .progress .bar { height: 100%; background: var(--primary); transition: width .3s; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+    .progress { height: 4px; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
+    .progress .bar { height: 100%; background: linear-gradient(90deg, var(--primary), #8b5cf6);
+                     border-radius: 2px; transition: width .3s; }
+    .progress .bar.indeterminate { width: 30% !important; animation: progressSlide 1.5s ease-in-out infinite; }
+    @keyframes progressSlide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+
+    /* Loading skeleton */
+    .skeleton { background: linear-gradient(90deg, #f0f1f4 25%, #e5e7eb 50%, #f0f1f4 75%);
+                background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px;
+                min-height: 20px; }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+    /* Close button for cards */
+    .card-close { float: right; background: none; border: none; cursor: pointer; color: var(--text-secondary);
+                  font-size: 18px; padding: 0 4px; line-height: 1; transition: color .15s; margin: -4px -4px 0 0; }
+    .card-close:hover { color: var(--danger); }
+
+    /* Preview editing indicator */
+    .preview-editing { border: 2px solid var(--warning) !important; background: #fffef5 !important; }
+
+    /* Refined code/pre */
+    code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: 'Menlo','Consolas',monospace; }
+    pre { font-family: 'Menlo','Consolas',monospace; }
   </style>
 </head>
 <body>
@@ -401,8 +444,8 @@
             <div class="form-group">
               <label>导入方式</label>
               <div class="tabs" id="import-mode-tabs" style="margin-bottom:0">
-                <button class="active" onclick="switchImportMode('text')">粘贴文本</button>
-                <button onclick="switchImportMode('file')">上传文件</button>
+                <button class="active" data-tab="text" onclick="switchImportMode('text')">粘贴文本</button>
+                <button data-tab="file" onclick="switchImportMode('file')">上传文件</button>
               </div>
             </div>
 
@@ -449,7 +492,10 @@
           <div class="card" id="import-result-card" style="display:none">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <h2 id="import-result-title" style="margin:0">审阅整理结果</h2>
-              <span id="import-result-badge"></span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span id="import-result-badge"></span>
+                <button class="card-close" onclick="closeImportResult()" title="关闭">&times;</button>
+              </div>
             </div>
             <div id="import-result-meta" style="margin-top:10px;font-size:12px;line-height:2"></div>
 
@@ -460,9 +506,9 @@
             <div id="import-preview-section" style="display:none;margin-top:14px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
                 <div class="tabs" id="preview-tabs" style="margin-bottom:0">
-                  <button class="active" onclick="switchPreviewTab('main')">main.txt</button>
-                  <button onclick="switchPreviewTab('faq')">faq.txt</button>
-                  <button onclick="switchPreviewTab('alias')">alias.txt</button>
+                  <button class="active" data-tab="main" onclick="switchPreviewTab('main')">main.txt</button>
+                  <button data-tab="faq" onclick="switchPreviewTab('faq')">faq.txt</button>
+                  <button data-tab="alias" onclick="switchPreviewTab('alias')">alias.txt</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">
                   <span id="preview-char-count" style="font-size:11px;color:var(--text-secondary)"></span>
@@ -492,7 +538,7 @@
                   <button class="btn-ghost btn-sm" onclick="appendFeedback('请补充禁忌人群信息')">补充禁忌人群</button>
                   <button class="btn-ghost btn-sm" onclick="appendFeedback('请补充术后护理细节')">补充术后护理</button>
                 </div>
-                <textarea id="refine-feedback" rows="3" placeholder="输入具体修改要求，支持多条（换行分隔）...&#10;例如：&#10;1. FAQ太少，请增加到20个以上&#10;2. 第四章注射指南缺少具体深度参数"></textarea>
+                <textarea id="refine-feedback" rows="5" placeholder="输入具体修改要求，支持多条（换行分隔）...&#10;例如：&#10;1. FAQ太少，请增加到20个以上&#10;2. 第四章注射指南缺少具体深度参数" style="min-height:100px"></textarea>
               </div>
 
               <!-- 操作按钮 -->
@@ -551,8 +597,8 @@
       <!-- 用途切换标签 -->
       <div class="card" style="padding-bottom:0">
         <div class="tabs" id="llm-purpose-tabs">
-          <button class="active" onclick="switchLLMPurpose('chat')">对话 LLM（用户问答）</button>
-          <button onclick="switchLLMPurpose('knowledge')">知识库 LLM（文档整理）</button>
+          <button class="active" data-tab="chat" onclick="switchLLMPurpose('chat')">对话 LLM（用户问答）</button>
+          <button data-tab="knowledge" onclick="switchLLMPurpose('knowledge')">知识库 LLM（文档整理）</button>
         </div>
         <div class="form-hint" style="margin-top:4px;margin-bottom:12px">
           可以为用户对话和知识库文档整理分别配置不同的 LLM 提供商和模型
@@ -609,10 +655,10 @@
           </div>
         </div>
         <div class="tabs" id="config-tabs">
-          <button class="active" onclick="switchConfigTab('search')">搜索参数</button>
-          <button onclick="switchConfigTab('llm')">LLM 参数</button>
-          <button onclick="switchConfigTab('index_cfg')">索引参数</button>
-          <button onclick="switchConfigTab('advanced')">高级参数</button>
+          <button class="active" data-tab="search" onclick="switchConfigTab('search')">搜索参数</button>
+          <button data-tab="llm" onclick="switchConfigTab('llm')">LLM 参数</button>
+          <button data-tab="index_cfg" onclick="switchConfigTab('index_cfg')">索引参数</button>
+          <button data-tab="advanced" onclick="switchConfigTab('advanced')">高级参数</button>
         </div>
         <div id="config-content"></div>
       </div>
@@ -623,9 +669,9 @@
       <h1>&#x1f4d6; 词库管理</h1>
       <div class="card">
         <div class="stats-grid" id="syn-stats"></div>
-        <div class="tabs">
-          <button class="active" onclick="switchSynTab('learned')">LLM 学习词库</button>
-          <button onclick="switchSynTab('static')">静态同义词</button>
+        <div class="tabs" id="syn-tabs">
+          <button class="active" data-tab="learned" onclick="switchSynTab('learned')">LLM 学习词库</button>
+          <button data-tab="static" onclick="switchSynTab('static')">静态同义词</button>
         </div>
         <div style="margin-bottom:10px;display:flex;gap:8px">
           <input id="syn_search" placeholder="搜索词条..." oninput="filterSynTable()" style="width:260px">
@@ -677,7 +723,7 @@
             </div>
             <div class="form-group">
               <label class="inline-label">
-                <label class="switch"><input type="checkbox" id="srv-ssl"><span class="slider"></span></label>
+                <label class="switch"><input type="checkbox" id="srv-ssl" onchange="toggleSSLFields()"><span class="slider"></span></label>
                 启用 SSL (HTTPS)
               </label>
             </div>
@@ -782,10 +828,10 @@
     <div class="page" id="page-logs">
       <h1>&#x1f4cb; 日志查看</h1>
       <div class="card">
-        <div class="tabs">
-          <button class="active" onclick="switchLogTab('qa')">问答日志</button>
-          <button onclick="switchLogTab('miss')">未命中</button>
-          <button onclick="switchLogTab('error')">错误日志</button>
+        <div class="tabs" id="log-tabs">
+          <button class="active" data-tab="qa" onclick="switchLogTab('qa')">问答日志</button>
+          <button data-tab="miss" onclick="switchLogTab('miss')">未命中</button>
+          <button data-tab="error" onclick="switchLogTab('error')">错误日志</button>
         </div>
         <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
           <label style="margin:0">显示条数</label>
@@ -824,6 +870,12 @@ let previewEditing = false;     // 是否处于编辑模式
 
 // ===== Navigation =====
 function showPage(page) {
+  // Clean up KB editor state when leaving knowledge page
+  if (currentPage === 'knowledge' && page !== 'knowledge') {
+    if (kbEditingFile && document.getElementById('kb-editor').style.display !== 'none') {
+      closeEditor();
+    }
+  }
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
@@ -879,6 +931,7 @@ async function api(url, opts = {}) {
 
 // ===== Dashboard =====
 async function loadDashboard() {
+  document.getElementById('dash-stats').innerHTML = '<div class="skeleton" style="height:70px;grid-column:1/-1"></div>';
   try {
     const [stats, qa] = await Promise.all([
       api('/admin/stats'),
@@ -1229,11 +1282,8 @@ let _multiLLMCache = null;       // 缓存从 /admin/llm/configs 获取的数据
 
 function switchLLMPurpose(purpose) {
   currentLLMPurpose = purpose;
-  document.querySelectorAll('#llm-purpose-tabs button').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('#llm-purpose-tabs button').forEach(b => {
-    if ((purpose === 'chat' && b.textContent.includes('对话')) ||
-        (purpose === 'knowledge' && b.textContent.includes('知识库')))
-      b.classList.add('active');
+    b.classList.toggle('active', b.dataset.tab === purpose);
   });
   const titleMap = {chat: '选择 LLM 提供商（对话 / 用户问答）', knowledge: '选择 LLM 提供商（知识库文档整理）'};
   document.getElementById('llm-purpose-title').textContent = titleMap[purpose] || titleMap.chat;
@@ -1273,6 +1323,7 @@ async function loadModelConfig() {
     if (selectedProvider) selectProvider(selectedProvider);
     else if (cfg.provider) selectProvider(cfg.provider);
   } catch(e) {
+    _multiLLMCache = null;  // Clear stale cache on failure
     // Fallback to old API
     try {
       const j = await api('/admin/config/model');
@@ -1291,7 +1342,9 @@ function selectProvider(provider) {
   document.querySelectorAll('.model-card').forEach(c => {
     c.classList.toggle('selected', c.dataset.provider === provider);
   });
+  if (!_multiLLMCache) return;  // Guard against null cache
   document.getElementById('model-config-panel').style.display = 'block';
+  document.getElementById('model-api-key').value = '';  // Clear API key on provider change
 
   const presets = _multiLLMCache?.presets || {};
   const preset = presets[provider];
@@ -1395,9 +1448,8 @@ async function loadConfig() {
 
 function switchConfigTab(tab) {
   currentConfigTab = tab;
-  document.querySelectorAll('#config-tabs button').forEach((b,i) => {
-    const tabs = ['search','llm','index_cfg','advanced'];
-    b.classList.toggle('active', tabs[i] === tab);
+  document.querySelectorAll('#config-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
   });
   renderConfigTab();
 }
@@ -1497,8 +1549,8 @@ function switchSynTab(tab) {
   currentSynTab = tab;
   document.getElementById('syn_learned').style.display = tab==='learned' ? '' : 'none';
   document.getElementById('syn_static').style.display = tab==='static' ? '' : 'none';
-  document.querySelectorAll('#page-synonyms .tabs button').forEach((b,i) =>
-    b.classList.toggle('active', (i===0&&tab==='learned')||(i===1&&tab==='static')));
+  document.querySelectorAll('#syn-tabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab));
 }
 
 function filterSynTable() {
@@ -1521,10 +1573,10 @@ async function deleteSyn(orig) {
 // ===== Logs =====
 function switchLogTab(tab) {
   currentLogTab = tab;
-  document.querySelectorAll('#page-logs .tabs button').forEach((b,i) => {
-    const tabs = ['qa','miss','error'];
-    b.classList.toggle('active', tabs[i] === tab);
+  document.querySelectorAll('#log-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
   });
+  document.getElementById('log-content').innerHTML = '<div class="skeleton" style="height:100px"></div>';
   loadCurrentLog();
 }
 
@@ -1601,12 +1653,6 @@ function toggleSSLFields() {
   document.getElementById('ssl-cert-group').style.display = ssl ? '' : 'none';
   document.getElementById('ssl-key-group').style.display = ssl ? '' : 'none';
 }
-// Bind SSL toggle
-document.addEventListener('DOMContentLoaded', () => {
-  const sslCb = document.getElementById('srv-ssl');
-  if (sslCb) sslCb.addEventListener('change', toggleSSLFields);
-});
-
 async function saveServerConfig() {
   try {
     const updates = {
@@ -1933,8 +1979,8 @@ function switchImportMode(mode) {
   importMode = mode;
   document.getElementById('import-text-mode').style.display = mode === 'text' ? '' : 'none';
   document.getElementById('import-file-mode').style.display = mode === 'file' ? '' : 'none';
-  document.querySelectorAll('#import-mode-tabs button').forEach((b, i) =>
-    b.classList.toggle('active', (i === 0 && mode === 'text') || (i === 1 && mode === 'file')));
+  document.querySelectorAll('#import-mode-tabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === mode));
 }
 
 function handleImportFile(e) {
@@ -1971,8 +2017,14 @@ async function doImport(dryRun) {
   const btnPreview = document.getElementById('btn-import-preview');
   btnPreview.disabled = true;
 
+  // Reset previous import state
+  revisionHistory = [];
+  revisionIndex = -1;
+  importPreviewData = null;
+  document.getElementById('import-result-card').style.display = 'none';
+
   progress.innerHTML = '<span style="color:var(--primary)">正在调用 LLM 整理预览中，请耐心等待...</span>' +
-    '<div class="progress" style="margin-top:8px"><div class="bar" style="width:30%;animation:pulse 2s infinite"></div></div>';
+    '<div class="progress" style="margin-top:8px"><div class="bar indeterminate"></div></div>';
 
   try {
     let result;
@@ -2058,9 +2110,8 @@ async function doImport(dryRun) {
 
 function switchPreviewTab(tab) {
   currentPreviewTab = tab;
-  document.querySelectorAll('#preview-tabs button').forEach((b, i) => {
-    const tabs = ['main','faq','alias'];
-    b.classList.toggle('active', tabs[i] === tab);
+  document.querySelectorAll('#preview-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
   });
   const ta = document.getElementById('preview-text');
   const data = getCurrentRevisionData();
@@ -2113,13 +2164,17 @@ function togglePreviewEdit() {
   const btn = document.getElementById('btn-toggle-edit');
   if (previewEditing) {
     ta.readOnly = false;
-    ta.style.background = '#fff';
+    ta.classList.add('preview-editing');
     btn.textContent = '只读模式';
+    btn.classList.add('btn-warning');
+    btn.classList.remove('btn-ghost');
   } else {
     saveCurrentEditToRevision();
     ta.readOnly = true;
-    ta.style.background = '#f5f6fa';
+    ta.classList.remove('preview-editing');
     btn.textContent = '编辑模式';
+    btn.classList.remove('btn-warning');
+    btn.classList.add('btn-ghost');
   }
 }
 
@@ -2166,7 +2221,7 @@ async function doRefine() {
 
   btnRefine.disabled = true; btnCommit.disabled = true;
   progress.innerHTML = '<span style="color:var(--primary)">LLM 正在根据修改意见修订中，请耐心等待...</span>' +
-    '<div class="progress" style="margin-top:8px"><div class="bar" style="width:40%;animation:pulse 2s infinite"></div></div>';
+    '<div class="progress" style="margin-top:8px"><div class="bar indeterminate"></div></div>';
 
   try {
     const result = await api('/admin/import_knowledge/refine', {
@@ -2226,7 +2281,7 @@ async function doCommit() {
 
   btnRefine.disabled = true; btnCommit.disabled = true;
   progress.innerHTML = '<span style="color:var(--primary)">正在写入知识库文件并构建索引，请耐心等待...</span>' +
-    '<div class="progress" style="margin-top:8px"><div class="bar" style="width:60%;animation:pulse 2s infinite"></div></div>';
+    '<div class="progress" style="margin-top:8px"><div class="bar indeterminate"></div></div>';
 
   try {
     const result = await api('/admin/import_knowledge/commit', {
@@ -2261,6 +2316,15 @@ async function doCommit() {
     toast('导入失败: ' + e.message, 'error');
   }
   btnRefine.disabled = false; btnCommit.disabled = false;
+}
+
+// ===== Close Import Result =====
+function closeImportResult() {
+  document.getElementById('import-result-card').style.display = 'none';
+  importPreviewData = null;
+  revisionHistory = [];
+  revisionIndex = -1;
+  previewEditing = false;
 }
 
 // ===== Init =====
