@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 from rag_runtime_config import REFERENCE_NOTE, RISK_NOTE, MAX_EVIDENCE_CHUNKS
 
 _SAFETY_ROUTES = frozenset(("contraindication", "complication", "repair", "operation"))
@@ -29,7 +29,7 @@ _TITLE_MAP = {
 def format_structured_answer(
     route: str,
     body_lines: List[str],
-    evidence: List[Dict] = None,
+    evidence: Optional[List[Dict]] = None,
     add_risk_note: bool = False,
     custom_title: str = "",
 ) -> str:

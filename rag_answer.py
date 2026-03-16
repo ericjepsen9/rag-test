@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Dict
 
@@ -81,6 +82,8 @@ _ROUTE_ORDER = [
     "contraindication", "design", "effect", "pre_care", "ingredient", "basic",
 ]
 _ROUTE_ORDER_IDX = {r: i for i, r in enumerate(_ROUTE_ORDER)}
+_NON_PROC_STRONG = frozenset({"aftercare", "risk", "combo", "complication",
+                               "contraindication", "operation", "ingredient"})
 
 _CONTRA_SIGNALS = ("体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
                    "能做", "可以做", "能不能", "能打吗", "可以吗")
@@ -141,19 +144,29 @@ def invalidate_store_cache(product: str) -> None:
         _store_cache.pop(product, None)
 
 
+_faiss_lock = threading.Lock()
+
+
 def get_faiss():
     global _faiss
     if _faiss is None:
-        import faiss as _faiss_mod
-        _faiss = _faiss_mod
+        with _faiss_lock:
+            if _faiss is None:
+                import faiss as _faiss_mod
+                _faiss = _faiss_mod
     return _faiss
+
+
+_bgem3_lock = threading.Lock()
 
 
 def get_bg_cls():
     global _BGEM3
     if _BGEM3 is None:
-        from FlagEmbedding import BGEM3FlagModel as _cls
-        _BGEM3 = _cls
+        with _bgem3_lock:
+            if _BGEM3 is None:
+                from FlagEmbedding import BGEM3FlagModel as _cls
+                _BGEM3 = _cls
     return _BGEM3
 
 
@@ -590,8 +603,6 @@ def detect_route(question: str) -> str:
     # procedure_q 不应抢夺有明确非项目意图的路由
     # 当用户问题同时包含项目实体名 + 其他路由的独立关键词时，
     # 说明用户是在"就某个项目问某类问题"，而非问项目本身
-    _NON_PROC_STRONG = {"aftercare", "risk", "combo", "complication",
-                        "contraindication", "operation", "ingredient"}
     if "procedure_q" in scores:
         proc_kws_set = set(_QUESTION_ROUTES_LOWER.get("procedure_q", []))
         for rival in _NON_PROC_STRONG:
@@ -652,9 +663,12 @@ def build_evidence(hits: List[Dict]) -> List[Dict]:
     """构建答案的证据列表，按 source_file+chunk_id 去重"""
     seen = set()
     ev = []
-    for h in hits:
+    for i, h in enumerate(hits):
         meta = h.get("meta", {})
-        key = (meta.get("source_file", ""), meta.get("chunk_id", ""))
+        sf = meta.get("source_file", "")
+        cid = meta.get("chunk_id", "")
+        # 当 source_file 和 chunk_id 都为空时，用索引作为唯一键避免全部被去重
+        key = (sf, cid) if sf or cid else ("_idx_", str(i))
         if key in seen:
             continue
         seen.add(key)
@@ -1041,6 +1055,7 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
         return cached[1] if cached else ""
 
 
+@lru_cache(maxsize=256)
 def _detect_material(question: str) -> str:
     """检测用户问题中是否提到了特定材料，返回材料 ID 或空字符串。"""
     found = detect_terms(question, MATERIAL_ALIASES)

@@ -36,7 +36,7 @@ except Exception:
     pass
 
 from rag_runtime_config import (
-    KNOWLEDGE_DIR, USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE,
+    KNOWLEDGE_DIR, OPENAI_MODEL, OPENAI_API_BASE,
     SHARED_ENTITY_DIRS,
 )
 
@@ -71,8 +71,7 @@ def _get_openai_client():
     # 回退到旧版逻辑
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
-        print("[ERROR] 未设置 OPENAI_API_KEY 环境变量")
-        sys.exit(1)
+        raise RuntimeError("未设置 OPENAI_API_KEY 环境变量，且未配置知识库整理用 LLM")
     try:
         from openai import OpenAI
         kwargs = {"api_key": key}
@@ -80,8 +79,7 @@ def _get_openai_client():
             kwargs["base_url"] = OPENAI_API_BASE
         return OpenAI(**kwargs)
     except ImportError:
-        print("[ERROR] 未安装 openai 库，请运行: pip install openai")
-        sys.exit(1)
+        raise RuntimeError("未安装 openai 库，请运行: pip install openai")
 
 
 def _get_knowledge_model() -> str:
@@ -101,8 +99,7 @@ def _read_input_file(path: str) -> str:
     """读取输入文件，支持 txt/md/pdf"""
     p = Path(path)
     if not p.exists():
-        print(f"[ERROR] 文件不存在: {path}")
-        sys.exit(1)
+        raise FileNotFoundError(f"文件不存在: {path}")
 
     suffix = p.suffix.lower()
     if suffix == ".pdf":
@@ -116,8 +113,7 @@ def _read_input_file(path: str) -> str:
                         text_parts.append(t)
             return "\n\n".join(text_parts)
         except ImportError:
-            print("[ERROR] 读取 PDF 需要安装 pdfplumber: pip install pdfplumber")
-            sys.exit(1)
+            raise RuntimeError("读取 PDF 需要安装 pdfplumber: pip install pdfplumber")
     else:
         # txt / md / 其他文本文件
         for enc in ("utf-8-sig", "utf-8", "gbk", "gb2312"):
@@ -360,6 +356,9 @@ def _generate_knowledge(client, raw_text: str, entity_type: str,
         result_text = _llm_call(client, system, user_prompt_1, max_tokens=4000)
 
         # 再发送后半部分补充
+        if len(part2) > max_chars:
+            print(f"[WARN] 文档第2部分仍超长（{len(part2)} 字），截断至 {max_chars} 字，"
+                  f"丢弃 {len(part2) - max_chars} 字内容")
         user_prompt_2 = (
             f"以下是文档的第2部分，请整理并补充到之前的结果中。"
             f"输出完整的最终 JSON（合并两部分内容）：\n\n"
@@ -389,13 +388,9 @@ def _generate_knowledge(client, raw_text: str, entity_type: str,
             try:
                 result = json.loads(m.group())
             except json.JSONDecodeError:
-                print("[ERROR] LLM 返回内容无法解析为 JSON：")
-                print(cleaned[:500])
-                sys.exit(1)
+                raise ValueError(f"LLM 返回内容无法解析为 JSON：{cleaned[:500]}")
         else:
-            print("[ERROR] LLM 返回内容中未找到 JSON：")
-            print(cleaned[:500])
-            sys.exit(1)
+            raise ValueError(f"LLM 返回内容中未找到 JSON：{cleaned[:500]}")
 
     return result
 

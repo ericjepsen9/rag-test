@@ -447,7 +447,7 @@ def admin_rebuild(req: RebuildRequest):
         return {"ok": True, "product": product}
     except Exception as e:
         log_error("admin_rebuild", repr(e), meta={"product": product})
-        raise HTTPException(status_code=500, detail=repr(e))
+        raise HTTPException(status_code=500, detail="索引重建失败，请查看服务器日志")
     finally:
         lock.release()
 
@@ -467,7 +467,7 @@ def admin_rebuild_shared():
         return {"ok": True, "store": "_shared"}
     except Exception as e:
         log_error("admin_rebuild_shared", repr(e))
-        raise HTTPException(status_code=500, detail=repr(e))
+        raise HTTPException(status_code=500, detail="共享索引重建失败，请查看服务器日志")
 
 
 # ===== 词库管理接口 =====
@@ -529,8 +529,6 @@ def admin_logs_error(limit: int = 20):
 
 # 安全校验：产品名只允许字母数字下划线横线
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-\u4e00-\u9fff]+$")
-# 允许上传的文件名白名单
-_ALLOWED_FILES = {"main.txt", "faq.txt", "alias.txt", "media.json"}
 # 允许的文件扩展名
 _ALLOWED_EXTENSIONS = {".txt", ".json"}
 
@@ -612,11 +610,10 @@ def admin_knowledge_write(product: str, filename: str, req: KnowledgeWriteReques
     tmp = fpath.with_suffix(fpath.suffix + ".tmp")
     try:
         tmp.write_text(req.content, encoding="utf-8")
-        import os as _os
-        _os.replace(str(tmp), str(fpath))
+        os.replace(str(tmp), str(fpath))
     except Exception as e:
         tmp.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"写入失败: {e}")
+        raise HTTPException(status_code=500, detail="写入失败，请查看服务器日志")
     return {"ok": True, "product": product, "filename": filename,
             "size": len(req.content)}
 
@@ -679,52 +676,57 @@ async def admin_upload(request: "Request"):
     """通用文件上传：支持上传 txt/json 文件到指定产品目录。
     Form fields: product (str), files (UploadFile[])
     """
-    from starlette.requests import Request as _Req
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
         raise HTTPException(status_code=400, detail="需要 multipart/form-data 格式")
     try:
         form = await request.form()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"解析表单失败: {e}")
-    product = str(form.get("product", "")).strip()
-    if not product:
-        raise HTTPException(status_code=400, detail="缺少 product 字段")
-    product = _validate_product_name(product)
-    pdir = KNOWLEDGE_DIR / product
-    pdir.mkdir(parents=True, exist_ok=True)
-    uploaded = []
-    errors = []
-    for key in form:
-        if key == "product":
-            continue
-        item = form[key]
-        # UploadFile 对象
-        if hasattr(item, "filename") and hasattr(item, "read"):
-            fname = item.filename or ""
-            if ".." in fname or "/" in fname or "\\" in fname:
-                errors.append({"file": fname, "error": "非法文件名"})
+        raise HTTPException(status_code=400, detail="解析表单失败")
+    try:
+        product = str(form.get("product", "")).strip()
+        if not product:
+            raise HTTPException(status_code=400, detail="缺少 product 字段")
+        product = _validate_product_name(product)
+        pdir = KNOWLEDGE_DIR / product
+        pdir.mkdir(parents=True, exist_ok=True)
+        uploaded = []
+        errors = []
+        for key in form:
+            if key == "product":
                 continue
-            suffix = Path(fname).suffix.lower()
-            if suffix not in _ALLOWED_EXTENSIONS:
-                errors.append({"file": fname, "error": f"不允许的文件类型: {suffix}"})
-                continue
-            try:
-                content = await item.read()
-                text = content.decode("utf-8")
-            except UnicodeDecodeError:
+            item = form[key]
+            # UploadFile 对象
+            if hasattr(item, "filename") and hasattr(item, "read"):
+                fname = item.filename or ""
+                if ".." in fname or "/" in fname or "\\" in fname:
+                    errors.append({"file": fname, "error": "非法文件名"})
+                    continue
+                suffix = Path(fname).suffix.lower()
+                if suffix not in _ALLOWED_EXTENSIONS:
+                    errors.append({"file": fname, "error": f"不允许的文件类型: {suffix}"})
+                    continue
                 try:
-                    text = content.decode("utf-8-sig")
+                    content = await item.read()
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    try:
+                        text = content.decode("utf-8-sig")
+                    except Exception:
+                        text = content.decode("gbk", errors="replace")
+                fpath = pdir / fname
+                # 原子写入
+                tmp = fpath.with_suffix(fpath.suffix + ".tmp")
+                try:
+                    tmp.write_text(text, encoding="utf-8")
+                    os.replace(str(tmp), str(fpath))
                 except Exception:
-                    text = content.decode("gbk", errors="replace")
-            fpath = pdir / fname
-            # 原子写入
-            tmp = fpath.with_suffix(fpath.suffix + ".tmp")
-            tmp.write_text(text, encoding="utf-8")
-            import os as _os2
-            _os2.replace(str(tmp), str(fpath))
-            uploaded.append({"file": fname, "size": len(text)})
-    return {"ok": True, "product": product, "uploaded": uploaded, "errors": errors}
+                    tmp.unlink(missing_ok=True)
+                    raise
+                uploaded.append({"file": fname, "size": len(text)})
+        return {"ok": True, "product": product, "uploaded": uploaded, "errors": errors}
+    finally:
+        await form.close()
 
 
 # ===== 批量上传：ZIP 包解压 =====
@@ -740,49 +742,60 @@ async def admin_upload_zip(request: "Request"):
     if "multipart/form-data" not in content_type:
         raise HTTPException(status_code=400, detail="需要 multipart/form-data 格式")
     form = await request.form()
-    results = []
-    for key in form:
-        item = form[key]
-        if not hasattr(item, "read"):
-            continue
-        fname = getattr(item, "filename", "") or ""
-        if not fname.lower().endswith(".zip"):
-            results.append({"file": fname, "error": "只支持 .zip 文件"})
-            continue
-        data = await item.read()
-        try:
-            with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                for info in zf.infolist():
-                    if info.is_dir():
-                        continue
-                    # 安全校验路径
-                    parts = Path(info.filename).parts
-                    if len(parts) < 2:
-                        continue
-                    product_name = parts[0]
-                    file_name = parts[-1]
-                    if ".." in info.filename:
-                        continue
-                    suffix = Path(file_name).suffix.lower()
-                    if suffix not in _ALLOWED_EXTENSIONS:
-                        continue
-                    try:
-                        product_name = _validate_product_name(product_name)
-                    except Exception:
-                        continue
-                    pdir = KNOWLEDGE_DIR / product_name
-                    pdir.mkdir(parents=True, exist_ok=True)
-                    content = zf.read(info.filename)
-                    try:
-                        text = content.decode("utf-8")
-                    except UnicodeDecodeError:
-                        text = content.decode("utf-8-sig", errors="replace")
-                    (pdir / file_name).write_text(text, encoding="utf-8")
-                    results.append({"product": product_name, "file": file_name,
-                                    "size": len(text)})
-        except zipfile.BadZipFile:
-            results.append({"file": fname, "error": "无效的 ZIP 文件"})
-    return {"ok": True, "results": results}
+    try:
+        results = []
+        for key in form:
+            item = form[key]
+            if not hasattr(item, "read"):
+                continue
+            fname = getattr(item, "filename", "") or ""
+            if not fname.lower().endswith(".zip"):
+                results.append({"file": fname, "error": "只支持 .zip 文件"})
+                continue
+            data = await item.read()
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        # 安全校验路径
+                        parts = Path(info.filename).parts
+                        if len(parts) < 2:
+                            continue
+                        product_name = parts[0]
+                        file_name = parts[-1]
+                        if ".." in info.filename:
+                            continue
+                        suffix = Path(file_name).suffix.lower()
+                        if suffix not in _ALLOWED_EXTENSIONS:
+                            continue
+                        try:
+                            product_name = _validate_product_name(product_name)
+                        except Exception:
+                            continue
+                        pdir = KNOWLEDGE_DIR / product_name
+                        pdir.mkdir(parents=True, exist_ok=True)
+                        content = zf.read(info.filename)
+                        try:
+                            text = content.decode("utf-8")
+                        except UnicodeDecodeError:
+                            text = content.decode("utf-8-sig", errors="replace")
+                        # 原子写入
+                        dest = pdir / file_name
+                        tmp = dest.with_suffix(dest.suffix + ".tmp")
+                        try:
+                            tmp.write_text(text, encoding="utf-8")
+                            os.replace(str(tmp), str(dest))
+                        except Exception:
+                            tmp.unlink(missing_ok=True)
+                            raise
+                        results.append({"product": product_name, "file": file_name,
+                                        "size": len(text)})
+            except zipfile.BadZipFile:
+                results.append({"file": fname, "error": "无效的 ZIP 文件"})
+        return {"ok": True, "results": results}
+    finally:
+        await form.close()
 
 
 # ===== 运行时配置接口 =====
@@ -1132,7 +1145,7 @@ def admin_import_knowledge(req: ImportKnowledgeRequest):
     """
     from import_knowledge import (
         _ENTITY_TYPES, _get_openai_client, _generate_knowledge,
-        _write_knowledge_files, _ENTITY_LABELS,
+        _write_knowledge_files,
     )
 
     entity_type = req.type.strip()
@@ -1271,7 +1284,7 @@ def admin_import_knowledge(req: ImportKnowledgeRequest):
     except Exception as e:
         log_error("admin_import_knowledge", repr(e),
                   meta={"type": entity_type, "id": entity_id})
-        raise HTTPException(status_code=500, detail=f"导入失败: {e}")
+        raise HTTPException(status_code=500, detail="导入失败，请查看服务器日志")
     finally:
         lock.release()
 
@@ -1375,7 +1388,7 @@ def admin_import_knowledge_refine(req: RefineKnowledgeRequest):
     except Exception as e:
         log_error("admin_import_refine", repr(e),
                   meta={"type": entity_type, "id": entity_id})
-        raise HTTPException(status_code=500, detail=f"修订失败: {e}")
+        raise HTTPException(status_code=500, detail="修订失败，请查看服务器日志")
     finally:
         lock.release()
 
@@ -1454,7 +1467,7 @@ def admin_import_knowledge_commit(req: CommitKnowledgeRequest):
     except Exception as e:
         log_error("admin_import_commit", repr(e),
                   meta={"type": entity_type, "id": entity_id})
-        raise HTTPException(status_code=500, detail=f"写入失败: {e}")
+        raise HTTPException(status_code=500, detail="写入失败，请查看服务器日志")
     finally:
         lock.release()
 
@@ -1477,59 +1490,62 @@ async def admin_import_knowledge_file(request: "Request"):
     try:
         form = await request.form()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"解析表单失败: {e}")
+        raise HTTPException(status_code=400, detail="解析表单失败")
 
-    entity_type = str(form.get("type", "")).strip()
-    entity_id = str(form.get("id", "")).strip()
-    build = str(form.get("build", "1")).strip().lower() in ("1", "true", "yes")
-    dry_run = str(form.get("dry_run", "0")).strip().lower() in ("1", "true", "yes")
+    try:
+        entity_type = str(form.get("type", "")).strip()
+        entity_id = str(form.get("id", "")).strip()
+        build = str(form.get("build", "1")).strip().lower() in ("1", "true", "yes")
+        dry_run = str(form.get("dry_run", "0")).strip().lower() in ("1", "true", "yes")
 
-    if not entity_type:
-        raise HTTPException(status_code=400, detail="缺少 type 字段")
+        if not entity_type:
+            raise HTTPException(status_code=400, detail="缺少 type 字段")
 
-    # 读取上传的文件
-    file_item = form.get("file")
-    if not file_item or not hasattr(file_item, "read"):
-        raise HTTPException(status_code=400, detail="缺少 file 文件")
+        # 读取上传的文件
+        file_item = form.get("file")
+        if not file_item or not hasattr(file_item, "read"):
+            raise HTTPException(status_code=400, detail="缺少 file 文件")
 
-    fname = getattr(file_item, "filename", "") or "upload.txt"
-    suffix = Path(fname).suffix.lower()
+        fname = getattr(file_item, "filename", "") or "upload.txt"
+        suffix = Path(fname).suffix.lower()
 
-    file_data = await file_item.read()
+        file_data = await file_item.read()
 
-    if suffix == ".pdf":
-        try:
-            import pdfplumber
-            import io
-            text_parts = []
-            with pdfplumber.open(io.BytesIO(file_data)) as pdf:
-                for page in pdf.pages:
-                    t = page.extract_text()
-                    if t:
-                        text_parts.append(t)
-            raw_text = "\n\n".join(text_parts)
-        except ImportError:
-            raise HTTPException(status_code=400, detail="服务器未安装 pdfplumber，无法处理 PDF")
-    else:
-        # txt / md 等文本文件
-        for enc in ("utf-8-sig", "utf-8", "gbk", "gb2312"):
+        if suffix == ".pdf":
             try:
-                raw_text = file_data.decode(enc)
-                break
-            except (UnicodeDecodeError, LookupError):
-                continue
+                import pdfplumber
+                import io
+                text_parts = []
+                with pdfplumber.open(io.BytesIO(file_data)) as pdf:
+                    for page in pdf.pages:
+                        t = page.extract_text()
+                        if t:
+                            text_parts.append(t)
+                raw_text = "\n\n".join(text_parts)
+            except ImportError:
+                raise HTTPException(status_code=400, detail="服务器未安装 pdfplumber，无法处理 PDF")
         else:
-            raw_text = file_data.decode("utf-8", errors="replace")
+            # txt / md 等文本文件
+            for enc in ("utf-8-sig", "utf-8", "gbk", "gb2312"):
+                try:
+                    raw_text = file_data.decode(enc)
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            else:
+                raw_text = file_data.decode("utf-8", errors="replace")
 
-    if not raw_text.strip():
-        raise HTTPException(status_code=400, detail="上传的文件内容为空")
+        if not raw_text.strip():
+            raise HTTPException(status_code=400, detail="上传的文件内容为空")
 
-    # 构造请求，复用 JSON 接口逻辑
-    import_req = ImportKnowledgeRequest(
-        type=entity_type,
-        id=entity_id,
-        content=raw_text,
-        build=build,
-        dry_run=dry_run,
-    )
-    return admin_import_knowledge(import_req)
+        # 构造请求，复用 JSON 接口逻辑
+        import_req = ImportKnowledgeRequest(
+            type=entity_type,
+            id=entity_id,
+            content=raw_text,
+            build=build,
+            dry_run=dry_run,
+        )
+        return admin_import_knowledge(import_req)
+    finally:
+        await form.close()

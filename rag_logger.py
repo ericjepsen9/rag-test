@@ -15,8 +15,14 @@ MISS_LOG = LOG_DIR / "miss_log.jsonl"
 ERROR_LOG = LOG_DIR / "error_log.jsonl"
 
 # 日志文件大小上限（默认 10MB），超过后轮转
-LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(10 * 1024 * 1024)))
-LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "3"))
+def _safe_int(env_key: str, default: int) -> int:
+    try:
+        return int(os.environ.get(env_key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+LOG_MAX_BYTES = _safe_int("LOG_MAX_BYTES", 10 * 1024 * 1024)
+LOG_BACKUP_COUNT = _safe_int("LOG_BACKUP_COUNT", 3)
 
 _write_lock = threading.Lock()
 

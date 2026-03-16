@@ -1,7 +1,7 @@
 """核心算法单元测试：BM25、路由检测、上下文补全、工具函数"""
 import pytest
 from search_utils import (
-    _count_term, _extract_terms, _extract_terms_bigram, bm25_score, normalize_text,
+    _extract_terms, _extract_terms_bigram, bm25_score, normalize_text,
     normalize_lines, uniq, section_block, split_multi_question,
     keyword_search, merge_hybrid, detect_terms,
     rerank_hits, compute_dynamic_threshold,
@@ -20,23 +20,24 @@ from rag_answer import (
 # ============================================================
 
 class TestCountTerm:
+    """测试字符串计数（str.count 基本功能验证）"""
     def test_basic(self):
-        assert _count_term("ab", "ababab") == 3
+        assert "ababab".count("ab") == 3
 
     def test_no_match(self):
-        assert _count_term("xyz", "hello world") == 0
+        assert "hello world".count("xyz") == 0
 
     def test_empty_term(self):
-        assert _count_term("", "anything") == 0
+        assert "anything".count("") == len("anything") + 1  # Python str.count("") 行为
 
     def test_empty_text(self):
-        assert _count_term("a", "") == 0
+        assert "".count("a") == 0
 
     def test_chinese(self):
-        assert _count_term("菲罗奥", "菲罗奥是一种产品，菲罗奥很安全") == 2
+        assert "菲罗奥是一种产品，菲罗奥很安全".count("菲罗奥") == 2
 
     def test_single_char(self):
-        assert _count_term("a", "banana") == 3
+        assert "banana".count("a") == 3
 
 
 class TestExtractTerms:
@@ -1434,3 +1435,98 @@ class TestJiebaFallback:
         terms = _extract_terms("菲罗奥术后护理注意事项")
         assert len(terms) > 0
         assert "菲罗奥" in terms
+
+
+# ============================================================
+# 回归测试：修复的 bug 验证
+# ============================================================
+
+class TestExpandSynonymsDeterministic:
+    """expand_synonyms 输出应具有确定性（排序后的同义词）"""
+    def test_deterministic_output(self):
+        from search_utils import expand_synonyms
+        results = set()
+        for _ in range(10):
+            r = expand_synonyms("菲罗奥注射")
+            results.add(r)
+        assert len(results) == 1, f"expand_synonyms 输出不稳定: {results}"
+
+    def test_synonyms_appended(self):
+        from search_utils import expand_synonyms
+        result = expand_synonyms("菲罗奥注射")
+        # 应包含原查询
+        assert result.startswith("菲罗奥注射")
+
+
+class TestSectionBlockEdgeCases:
+    """section_block 边界条件测试"""
+    def test_stop_immediately_after_title(self):
+        """当 stop 标记紧跟标题时，应返回空内容"""
+        txt = "# 标题A\n# 标题B\n内容B"
+        result = section_block(txt, ["标题A"], stops=["# 标题B"])
+        # stop 紧跟标题后，结果应为空或仅有换行
+        assert result.strip() == ""
+
+    def test_normal_section_extraction(self):
+        txt = "# 标题A\n这是A的内容\n# 标题B\n这是B的内容"
+        result = section_block(txt, ["标题A"], stops=["# 标题B"])
+        assert "这是A的内容" in result
+        assert "这是B的内容" not in result
+
+
+class TestBuildEvidenceDedup:
+    """build_evidence 去重应正确处理空 meta 的情况"""
+    def test_empty_meta_not_all_deduped(self):
+        hits = [
+            {"text": "文本1", "score": 0.9, "meta": {}},
+            {"text": "文本2", "score": 0.8, "meta": {}},
+            {"text": "文本3", "score": 0.7, "meta": {}},
+        ]
+        ev = build_evidence(hits)
+        # 空 meta 的 hits 不应全部被去重为 1 条
+        assert len(ev) == 3
+
+    def test_same_source_deduped(self):
+        hits = [
+            {"text": "文本1", "score": 0.9, "meta": {"source_file": "a.txt", "chunk_id": "1"}},
+            {"text": "文本2", "score": 0.8, "meta": {"source_file": "a.txt", "chunk_id": "1"}},
+        ]
+        ev = build_evidence(hits)
+        assert len(ev) == 1
+
+
+class TestRerankHitsNoMutation:
+    """rerank_hits 不应修改传入的原始 hits 列表"""
+    def test_no_mutation(self):
+        original_hits = [
+            {"text": "文本1", "score": 0.9, "hybrid_score": 0.8, "meta": {"source_file": "a.txt", "chunk_id": "0"}},
+            {"text": "文本2", "score": 0.7, "hybrid_score": 0.6, "meta": {"source_file": "b.txt", "chunk_id": "1"}},
+        ]
+        import copy
+        original_copy = copy.deepcopy(original_hits)
+        # 不传模型，应直接返回切片
+        result = rerank_hits("query", original_hits, model=None, top_k=2)
+        assert original_hits[0]["hybrid_score"] == original_copy[0]["hybrid_score"]
+        assert original_hits[1]["hybrid_score"] == original_copy[1]["hybrid_score"]
+
+
+class TestDetectRouteProcStrong:
+    """detect_route 中 _NON_PROC_STRONG 应正确消歧"""
+    def test_aftercare_overrides_procedure(self):
+        """术后护理关键词应优先于项目路由"""
+        route = detect_route("水光针术后护理注意事项")
+        assert route == "aftercare"
+
+    def test_risk_with_strong_signals(self):
+        """当有明确风险关键词且无强项目上下文时，应路由到 risk"""
+        route = detect_route("不良反应有哪些")
+        assert route == "risk"
+
+
+class TestNonProcStrongIsModuleLevel:
+    """_NON_PROC_STRONG 应是模块级常量"""
+    def test_is_frozenset(self):
+        from rag_answer import _NON_PROC_STRONG
+        assert isinstance(_NON_PROC_STRONG, frozenset)
+        assert "aftercare" in _NON_PROC_STRONG
+        assert "ingredient" in _NON_PROC_STRONG

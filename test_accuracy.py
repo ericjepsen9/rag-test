@@ -13,7 +13,7 @@
 import pytest
 import re
 from search_utils import (
-    _count_term, _extract_terms, _extract_terms_bigram, bm25_score,
+    _extract_terms, _extract_terms_bigram, bm25_score,
     normalize_text, normalize_lines, uniq, section_block,
     split_multi_question, keyword_search, merge_hybrid, detect_terms,
     expand_synonyms, rerank_hits, compute_dynamic_threshold,

@@ -3,7 +3,6 @@ import sys
 import re
 import json
 import argparse
-import tempfile
 from pathlib import Path
 from typing import List
 
@@ -65,7 +64,7 @@ def read_text_auto(p: Path) -> str:
     for enc in ("utf-8-sig", "utf-8", "gbk"):
         try:
             return p.read_text(encoding=enc)
-        except Exception:
+        except (UnicodeDecodeError, LookupError):
             continue
     return p.read_text(errors="replace")
 

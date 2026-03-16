@@ -181,7 +181,7 @@ def get_drug_interactions(route: str = "", data: Optional[Dict] = None) -> List[
 def get_indication_recommendations(query: str, _data: Optional[Dict] = None) -> List[str]:
     """根据查询中的适应症关键词，返回推荐方案。"""
     if _data is None:
-        _load()
+        _data = _load()
     lines = []
     q_lower = query.lower()
     for indication, items in (_idx_indication or {}).items():
@@ -205,7 +205,7 @@ def get_indication_recommendations(query: str, _data: Optional[Dict] = None) -> 
 def get_anatomy_recommendations(query: str, _data: Optional[Dict] = None) -> List[str]:
     """根据查询中的部位关键词，返回推荐方案。"""
     if _data is None:
-        _load()
+        _data = _load()
     lines = []
     q_lower = query.lower()
     for area, items in (_idx_anatomy or {}).items():
@@ -229,7 +229,7 @@ def get_anatomy_recommendations(query: str, _data: Optional[Dict] = None) -> Lis
 def get_procedure_equipment(query: str, _data: Optional[Dict] = None) -> List[str]:
     """根据查询中的项目关键词，返回对应设备信息。"""
     if _data is None:
-        _load()
+        _data = _load()
     lines = []
     q_lower = query.lower()
     # 使用倒排别名索引：O(aliases) 查找代替 O(procs × aliases) 遍历

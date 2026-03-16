@@ -1,6 +1,7 @@
 import hashlib
 import math
 import re
+import threading
 import unicodedata
 from functools import lru_cache
 from typing import Any, List, Dict, Tuple
@@ -10,6 +11,7 @@ from rag_runtime_config import BM25_K1, BM25_B, SIGMOID_SCALE, CACHE_MAX_PRODUCT
 # jieba 分词延迟加载
 _jieba = None
 _jieba_initialized = False
+_jieba_lock = threading.Lock()
 
 
 def _get_jieba():
@@ -17,28 +19,31 @@ def _get_jieba():
     global _jieba, _jieba_initialized
     if _jieba_initialized:
         return _jieba
-    if not JIEBA_ENABLED:
+    with _jieba_lock:
+        if _jieba_initialized:
+            return _jieba
+        if not JIEBA_ENABLED:
+            _jieba_initialized = True
+            return None
+        try:
+            import jieba as _jieba_mod
+            # 添加医美领域术语，防止被错误切分
+            _CUSTOM_WORDS = [
+                "菲罗奥", "赛洛菲", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽",
+                "胶原蛋白", "法令纹", "苹果肌", "下颌线", "鱼尾纹", "泪沟",
+                "光子嫩肤", "热玛吉", "热拉提", "超声刀", "皮秒", "德玛莎",
+                "水光针", "微针", "中胚层", "淤青", "瘀青",
+                "术后护理", "不良反应", "禁忌人群", "防伪鉴别",
+                "HiddenTag", "PCL", "MTS", "IPL",
+            ]
+            for w in _CUSTOM_WORDS:
+                _jieba_mod.add_word(w)
+            _jieba = _jieba_mod
+        except ImportError:
+            print("[WARN] jieba 未安装，回退到 bigram 分词")
+            _jieba = None
         _jieba_initialized = True
-        return None
-    try:
-        import jieba as _jieba_mod
-        # 添加医美领域术语，防止被错误切分
-        _CUSTOM_WORDS = [
-            "菲罗奥", "赛洛菲", "聚己内酯", "透明质酸", "玻尿酸", "谷胱甘肽",
-            "胶原蛋白", "法令纹", "苹果肌", "下颌线", "鱼尾纹", "泪沟",
-            "光子嫩肤", "热玛吉", "热拉提", "超声刀", "皮秒", "德玛莎",
-            "水光针", "微针", "中胚层", "淤青", "瘀青",
-            "术后护理", "不良反应", "禁忌人群", "防伪鉴别",
-            "HiddenTag", "PCL", "MTS", "IPL",
-        ]
-        for w in _CUSTOM_WORDS:
-            _jieba_mod.add_word(w)
-        _jieba = _jieba_mod
-    except ImportError:
-        print("[WARN] jieba 未安装，回退到 bigram 分词")
-        _jieba = None
-    _jieba_initialized = True
-    return _jieba
+        return _jieba
 
 # 预编译常用正则（避免每次函数调用时隐式编译）
 _RE_WHITESPACE = re.compile(r"\s+")
@@ -160,7 +165,7 @@ def expand_synonyms(query: str) -> str:
             if w not in q_lower:
                 extra.add(w)
     if extra:
-        expanded = query + " " + " ".join(extra)
+        expanded = query + " " + " ".join(sorted(extra))
         return expanded[:2000]  # 防止同义词膨胀过长
     return query
 
@@ -225,7 +230,7 @@ def section_block(text: str, titles: List[str], stops: List[str]) -> str:
         idx = sub.find(s)
         if idx >= 0 and (end is None or idx < end):
             end = idx
-    if end is not None and end > 0:
+    if end is not None:
         sub = sub[:end]
     return sub.strip()
 
@@ -262,7 +267,7 @@ def _extract_terms_jieba(query: str) -> List[str]:
         if not w or w in seen:
             continue
         # 过滤纯标点和空白
-        if _RE_TERM_SPLIT.match(w):
+        if _RE_TERM_SPLIT.fullmatch(w):
             continue
         terms.append(w)
         seen.add(w)
@@ -282,12 +287,6 @@ def _extract_terms(query: str) -> List[str]:
         return _extract_terms_jieba(query)
     return _extract_terms_bigram(query)
 
-
-def _count_term(term: str, text: str) -> int:
-    """统计 term 在 text 中出现的次数（非重叠匹配）"""
-    if not term:
-        return 0
-    return text.count(term)
 
 
 def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
@@ -402,7 +401,6 @@ def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dic
 # ============================================================
 
 _inverted_index_cache: Dict[Any, Dict[str, List[int]]] = {}  # corpus_key -> {term: [doc_ids]}
-_doc_len_cache: Dict[Any, List[int]] = {}  # corpus_key -> [doc_len_per_doc]
 
 
 def _get_inverted_index(texts: List[str], corpus_key: Any) -> Dict[str, List[int]]:
@@ -691,11 +689,14 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
     """使用 BGE-M3 的 compute_score 对混合检索结果重排序。
 
     model: 已加载的 BGEM3FlagModel 实例（复用嵌入模型，无额外模型开销）。
-    返回按 rerank_score 降序排列的 top_k 结果。
+    返回按 rerank_score 降序排列的 top_k 结果（返回副本，不修改原始列表）。
     带缓存：相同 query + 相同候选集直接返回缓存分数，跳过 compute_score。
     """
     if not hits or not model:
         return hits[:top_k]
+
+    # 工作在副本上，避免修改调用者的原始数据
+    hits = [dict(h) for h in hits]
 
     # 缓存查找
     cache_key = _rerank_cache_key(query, hits)

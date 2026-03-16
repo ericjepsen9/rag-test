@@ -910,7 +910,7 @@ function toast(msg, type = 'info') {
 }
 
 // ===== Utilities =====
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;'); }
 function fmtTime(ts) { return ts ? ts.replace('T', ' ') : '-'; }
 function fmtSize(b) {
   if (b < 1024) return b + ' B';
@@ -1717,9 +1717,13 @@ async function genNginxConfig() {
 
 function copyNginxConfig() {
   const ta = document.getElementById('nginx-config');
-  ta.select();
-  document.execCommand('copy');
-  toast('已复制到剪贴板', 'success');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(ta.value).then(() => toast('已复制到剪贴板', 'success'), () => toast('复制失败', 'error'));
+  } else {
+    ta.select();
+    document.execCommand('copy');
+    toast('已复制到剪贴板', 'success');
+  }
 }
 
 // ===== Service Control =====
