@@ -122,29 +122,120 @@ hybrid_score = vector_score * vw + keyword_score * kw
   - `_SHARED_ROUTES`: 仅搜共享库（如 `script`、`procedure_q`）
   - `_HYBRID_ENTITY_ROUTES`: 同时搜产品库+共享库（如 `complication`、`course`）
 
-## 5. 评估与改进建议
+## 5. 性能瓶颈分析：为什么 "水光" 查询耗时 40000ms
 
-### 5.1 当前方案优势
+### 5.1 完整调用链路与耗时
 
-1. **路由感知检索** — 按问题类型动态调整权重、top_k、阈值，是核心亮点
-2. **多级融合** — 查询改写 → 双路检索 → 加权合并 → 路由 boost → FAQ 快速路径
-3. **共享/产品双库** — 跨实体路由解决通用知识检索问题
-4. **并行执行** — 4 线程同时执行向量+关键词检索，降低延迟
-5. **缓存体系** — 索引缓存、语料缓存、文档频率缓存、知识文件缓存，减少重复 I/O
+```
+POST /ask {question: "水光"}
+  │
+  ├── rewrite_query()                         ~10ms
+  │
+  └── answer_question() → answer_one()
+      │
+      ├── detect_route("水光") → procedure_q    ~1ms
+      │   "水光" 在 procedure_q 关键词列表中
+      │   procedure_q ∈ _HYBRID_ENTITY_ROUTES → 双库搜索
+      │
+      ├── ★ 瓶颈1: embed_query()               2-5s (CPU)
+      │   BGE-M3 编码查询向量
+      │
+      ├── ★ 瓶颈2: ThreadPoolExecutor 并行搜索   5-15s
+      │   ├── vector_search(product)    → embed_query + FAISS
+      │   ├── keyword_search(product)   → BM25
+      │   ├── vector_search(_shared)    → embed_query + FAISS
+      │   └── keyword_search(_shared)   → BM25
+      │   _search_lock 全局互斥锁导致 FAISS 搜索串行化！
+      │
+      ├── ★ 瓶颈3: rerank_hits()                5-15s (CPU)
+      │   BGE-M3 compute_score 对 20 个 sentence_pairs
+      │   做 colbert + sparse + dense 融合评分
+      │   这是最大的性能杀手！
+      │
+      └── ★ 瓶颈4: llm_generate_answer()        3-10s
+          外部 LLM API 调用
+```
 
-### 5.2 改进建议（按优先级排序）
+### 5.2 五大性能瓶颈详解
 
-| 优先级 | 改进项 | 预期收益 | 实现复杂度 |
-|:---:|------|------|:---:|
-| P0 | **加入 Reranker** — BGE-M3 原生支持 ColBERT reranking，可直接利用 | 显著提升排序质量 | 低 |
-| P1 | **中文分词改进** — 引入 jieba 分词替代字符级 bigram | 提升 BM25 精度 | 中 |
-| P1 | **FAQ 问题-答案对嵌入** — 当前 FAQ 与正文混合切块，可独立嵌入问题部分 | 提升 FAQ 匹配率 | 中 |
-| P2 | **ANN 索引** — IndexFlatIP → IndexIVFFlat 或 HNSW | 大规模时加速检索 | 低 |
-| P2 | **动态阈值** — 根据检索结果分数分布自适应调整阈值 | 减少漏答/误答 | 中 |
-| P3 | **查询扩展** — 用 LLM 生成多角度查询 (HyDE / Multi-Query) | 提升语义覆盖 | 高 |
+#### 瓶颈1: BGE-M3 向量编码 (embed_query)
 
-### 5.3 结论
+**位置**: `rag_answer.py:178-194`
 
-对于当前的医美垂直领域场景（中文短文本、术语密集、知识库规模约数百 chunk），**混合检索 + 路由感知方案是合理且高效的选择**。系统在查询改写、检索融合、回答策略三个层面都有精细的工程实现。
+每次 `vector_search` 调用 `embed_query` 编码查询文本。"水光"触发双库搜索，`embed_query` 被调用 2 次，每次 CPU 上耗时 2-5 秒。
 
-最具性价比的改进是 **加入 Reranker**（P0），可在不改变现有架构的前提下显著提升检索排序质量。
+**建议**: 缓存相同查询的 embedding 结果，避免重复编码。
+
+#### 瓶颈2: FAISS 搜索全局互斥锁
+
+**位置**: `rag_answer.py:350-351`
+
+`_search_lock` 是全局 `threading.Lock()`，所有 FAISS 搜索被串行化。即使 ThreadPoolExecutor 并行提交，实际 FAISS index.search 仍串行。
+
+**建议**: FAISS 的只读搜索是线程安全的，可移除全局锁或改为每索引独立锁。
+
+#### 瓶颈3: Rerank（最大瓶颈）
+
+**位置**: `search_utils.py:626-676`
+
+BGE-M3 `compute_score` 对 `RERANK_TOP_N=20` 个 sentence_pairs 做 colbert+sparse+dense 三路融合评分。CPU 上 20 对文本可能耗时 5-15 秒。
+
+**建议**:
+1. 设置 `RAG_RERANK_ENABLED=0` 关闭（立即见效）
+2. 降低 `RAG_RERANK_TOP_N` 到 10 或 5
+3. 使用 GPU 加速
+
+#### 瓶颈4: LLM API 调用
+
+**位置**: `rag_answer.py:1317-1326`
+
+外部 API 网络延迟 + 模型推理延迟。如果走 fallback 路径，可能额外调用 `openai_rewrite_answer()`，一次请求最多 2 次 LLM 调用。
+
+#### 瓶颈5: 共享知识库首次构建（一次性）
+
+**位置**: `rag_answer.py:233-254`
+
+`_shared` 索引不存在时自动构建，涉及 BGE-M3 编码所有共享知识 chunks，首次可能耗时 30s+。
+
+### 5.3 为什么 "水光" 特别慢
+
+1. **双库搜索**: procedure_q ∈ _HYBRID_ENTITY_ROUTES → 同时搜产品库 + 共享库（4 个任务 vs 普通 2 个）
+2. **更多候选**: VECTOR_TOP_K=12 × 2 + KEYWORD_TOP_K=12 × 2 = 48 个初始候选
+3. **更重 Rerank**: 20 个 sentence_pairs 的 compute_score
+4. **更长 context**: 更多 hits → 传给 LLM 的 context 更长 → 生成更慢
+
+### 5.4 优化建议（按效果排序）
+
+| 优先级 | 优化措施 | 预估提速 | 实施方式 |
+|--------|---------|---------|---------|
+| P0 | 关闭 Rerank (`RAG_RERANK_ENABLED=0`) | -5~15s | 环境变量 |
+| P0 | 使用 GPU 运行 BGE-M3 | -10~25s | 需 CUDA |
+| P1 | 缓存 embed_query 结果（LRU） | -2~5s | 改代码 |
+| P1 | 移除/细化 `_search_lock` | -1~3s | 改代码 |
+| P2 | 降低 VECTOR_TOP_K/KEYWORD_TOP_K 到 8 | -1~2s | 环境变量 |
+| P2 | 降低 RERANK_TOP_N 从 20 到 10 | -3~8s | 环境变量 |
+| P3 | LLM 响应缓存（相似问题复用） | -3~10s | 改代码 |
+
+### 5.5 快速验证方法
+
+通过环境变量即可快速验证（无需改代码）：
+
+```bash
+# 关闭 Rerank（预计减少 5-15s）
+export RAG_RERANK_ENABLED=0
+
+# 减少检索候选数（预计减少 1-3s）
+export RAG_VECTOR_TOP_K=8
+export RAG_KEYWORD_TOP_K=8
+
+# 或通过管理 API 热更新
+curl -X POST http://localhost:8000/admin/config \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"rerank_enabled": false, "vector_top_k": 8, "keyword_top_k": 8}}'
+```
+
+## 6. 结论
+
+对于当前医美垂直领域场景（中文短文本、术语密集、知识库规模约数百 chunk），**混合检索 + 路由感知方案是合理且高效的选择**。
+
+40s 延迟的主要原因是 **Rerank（~10s）+ BGE-M3 编码（~5s）+ LLM API 调用（~5s）+ 双库搜索开销（~5s）** 的叠加效应。最快的优化方式是关闭 Rerank 和使用 GPU。
