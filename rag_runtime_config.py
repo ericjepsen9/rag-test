@@ -329,7 +329,7 @@ HYBRID_KEYWORD_WEIGHT = _safe_float("RAG_HYBRID_KW", "0.35")
 # 混合检索结果经 reranker 重排序后再截断到 route_top_k
 # rerank 使用 BGE-M3 的 compute_score (colbert+sparse+dense 融合)
 RERANK_ENABLED = _os.environ.get("RAG_RERANK_ENABLED", "1").strip().lower() in ("1", "true", "yes")
-RERANK_TOP_N = _safe_int("RAG_RERANK_TOP_N", "20")  # 送入 reranker 的候选数（需 > route_top_k）
+RERANK_TOP_N = _safe_int("RAG_RERANK_TOP_N", "10")  # 送入 reranker 的候选数（需 > route_top_k）
 
 # ===== 动态阈值 =====
 # 启用后根据检索结果分数分布自适应调整过滤阈值，降低漏答率
