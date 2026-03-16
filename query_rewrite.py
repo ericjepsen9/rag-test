@@ -131,11 +131,13 @@ def _llm_rewrite_query(question: str) -> str:
         return cached
 
     # 优先通过 llm_client 获取对话用 client，回退到 rag_answer 单例
+    _chat_model = OPENAI_MODEL
     try:
         from llm_client import get_client as _get_multi_client, get_model as _get_multi_model, is_enabled as _is_enabled
         if _is_enabled("chat"):
             client = _get_multi_client("chat")
-            _chat_model = _get_multi_model("chat") if client else OPENAI_MODEL
+            if client:
+                _chat_model = _get_multi_model("chat") or OPENAI_MODEL
         else:
             client = None
     except ImportError:
@@ -146,7 +148,6 @@ def _llm_rewrite_query(question: str) -> str:
             client = _get_openai_client()
         except Exception:
             client = None
-        _chat_model = OPENAI_MODEL
     if client is None:
         _llm_rewrite_cache.put(question, "")
         return ""

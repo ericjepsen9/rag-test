@@ -605,6 +605,12 @@ def switch_model_provider(provider: str, model: str = "", api_base: str = "",
         rag_answer._openai_client_checked = False
     except Exception:
         pass
+    # 同步到 llm_client（保持多 LLM 配置一致）
+    try:
+        from llm_client import sync_from_legacy
+        sync_from_legacy()
+    except Exception:
+        pass
     # 持久化
     _persist_overrides({
         "use_openai": True,
@@ -866,6 +872,12 @@ def start_llm_service(api_key: str = "") -> dict:
         client = rag_answer._get_openai_client()
         if client is None:
             return {"ok": False, "error": "LLM client 创建失败，请检查 API Key 和 API Base"}
+        # 同步到 llm_client
+        try:
+            from llm_client import sync_from_legacy
+            sync_from_legacy()
+        except Exception:
+            pass
         return {"ok": True, "message": f"LLM 服务已启动 (model={OPENAI_MODEL})"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -879,6 +891,12 @@ def stop_llm_service() -> dict:
         import rag_answer
         rag_answer._openai_client = None
         rag_answer._openai_client_checked = False
+    except Exception:
+        pass
+    # 同步到 llm_client
+    try:
+        from llm_client import sync_from_legacy
+        sync_from_legacy()
     except Exception:
         pass
     _persist_overrides({"use_openai": False})

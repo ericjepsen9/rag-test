@@ -82,10 +82,13 @@ def get_all_llm_configs() -> Dict[str, Any]:
 def update_llm_config(purpose: str, *,
                        provider: str = "",
                        model: str = "",
-                       api_base: str = "",
+                       api_base: Optional[str] = None,
                        api_key: str = "",
                        enabled: Optional[bool] = None) -> Dict[str, Any]:
-    """更新指定用途的 LLM 配置，并重置对应的 client 缓存。"""
+    """更新指定用途的 LLM 配置，并重置对应的 client 缓存。
+
+    api_base: None 表示不更新，"" 表示清空（恢复默认）。
+    """
     if purpose not in _llm_configs:
         return {"error": f"未知用途: {purpose}，支持 chat / knowledge"}
 
@@ -98,12 +101,12 @@ def update_llm_config(purpose: str, *,
             if preset:
                 if not model:
                     model = preset["default_model"]
-                if not api_base:
+                if api_base is None:
                     api_base = preset["api_base"]
             cfg["provider"] = provider
         if model:
             cfg["model"] = model
-        if api_base or provider:
+        if api_base is not None:
             cfg["api_base"] = api_base
         if api_key:
             cfg["api_key"] = api_key
@@ -135,31 +138,36 @@ def get_client(purpose: str = "chat"):
     if purpose not in _llm_configs:
         purpose = "chat"
 
+    # 快速路径：已检查过直接返回（GIL 保证 dict 读安全）
     if _clients_checked[purpose]:
         return _clients[purpose]
 
-    cfg = _llm_configs[purpose]
-    if not cfg["enabled"]:
-        _clients_checked[purpose] = True
-        return None
+    # 慢路径：加锁创建 client，防止并发重复创建
+    with _lock:
+        # double-check：另一个线程可能已经完成创建
+        if _clients_checked[purpose]:
+            return _clients[purpose]
 
-    api_key = cfg["api_key"] or os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        _clients_checked[purpose] = True
-        return None
+        cfg = _llm_configs[purpose]
+        if not cfg["enabled"]:
+            _clients_checked[purpose] = True
+            return None
 
-    try:
-        from openai import OpenAI
-        kwargs = {"api_key": api_key}
-        if cfg["api_base"]:
-            kwargs["base_url"] = cfg["api_base"]
-        with _lock:
+        api_key = cfg["api_key"] or os.environ.get("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            _clients_checked[purpose] = True
+            return None
+
+        try:
+            from openai import OpenAI
+            kwargs = {"api_key": api_key}
+            if cfg["api_base"]:
+                kwargs["base_url"] = cfg["api_base"]
             _clients[purpose] = OpenAI(**kwargs)
-    except Exception:
-        with _lock:
+        except Exception:
             _clients[purpose] = None
-    _clients_checked[purpose] = True
-    return _clients[purpose]
+        _clients_checked[purpose] = True
+        return _clients[purpose]
 
 
 def get_model(purpose: str = "chat") -> str:
@@ -206,6 +214,21 @@ def _sync_to_legacy(purpose: str):
             pass
 
 
+def sync_from_legacy():
+    """从旧版全局变量同步到 llm_client（旧 API 调用后调用此函数保持一致）。"""
+    from rag_runtime_config import USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE
+    cfg = _llm_configs["chat"]
+    with _lock:
+        cfg["enabled"] = USE_OPENAI
+        cfg["model"] = OPENAI_MODEL
+        cfg["api_base"] = OPENAI_API_BASE or ""
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if key:
+            cfg["api_key"] = key
+        _clients["chat"] = None
+        _clients_checked["chat"] = False
+
+
 def _persist_llm_configs():
     """持久化多 LLM 配置到文件"""
     import json
@@ -222,9 +245,10 @@ def _persist_llm_configs():
             # api_key 不持久化到文件（安全考虑），仅持久化是否设置过
             "api_key_set": bool(cfg["api_key"]),
         }
-    tmp = config_file.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(config_file)
+    with _lock:
+        tmp = config_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(config_file)
 
 
 def load_persisted_llm_configs():

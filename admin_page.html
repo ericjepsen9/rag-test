@@ -1264,7 +1264,7 @@ async function loadModelConfig() {
     // Render provider cards
     const presets = j.presets || {};
     document.getElementById('model-cards').innerHTML = Object.entries(presets).map(([k,v]) =>
-      `<div class="model-card ${k===selectedProvider?'selected':''}" onclick="selectProvider('${k}')">
+      `<div class="model-card ${k===selectedProvider?'selected':''}" data-provider="${esc(k)}" onclick="selectProvider('${k}')">
         <div class="name">${esc(v.label)}</div>
         <div class="models">${v.models.length ? v.models.slice(0,3).join(', ') : '自定义模型'}</div>
         ${k === cfg.provider ? '<div style="font-size:11px;color:var(--primary);margin-top:4px">当前使用</div>' : ''}
@@ -1281,15 +1281,16 @@ async function loadModelConfig() {
         enabled: j.use_openai, model: j.model, api_base: j.api_base || '(default)',
         api_key_set: j.api_key_set, llm_rewrite: j.llm_rewrite,
       }, null, 2);
-    } catch(e2) {}
+    } catch(e2) {
+      document.getElementById('model-current-status').textContent = '加载 LLM 配置失败，请刷新页面重试';
+    }
   }
 }
 
 function selectProvider(provider) {
   selectedProvider = provider;
-  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.model-card').forEach(c => {
-    if (c.onclick && c.onclick.toString().includes(`'${provider}'`)) c.classList.add('selected');
+    c.classList.toggle('selected', c.dataset.provider === provider);
   });
   document.getElementById('model-config-panel').style.display = 'block';
 

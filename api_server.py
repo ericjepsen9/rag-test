@@ -871,7 +871,7 @@ class MultiLLMUpdateRequest(BaseModel):
     purpose: str = Field(..., pattern="^(chat|knowledge)$")
     provider: str = ""
     model: str = ""
-    api_base: str = ""
+    api_base: Optional[str] = None   # None=不更新, ""=清空
     api_key: str = ""
     enabled: Optional[bool] = None
 
@@ -1091,13 +1091,15 @@ def admin_stats():
             info["docs_count"] = 0
             docs_path = store / "docs.jsonl"
             if docs_path.exists():
-                info["docs_count"] = sum(1 for _ in docs_path.open("r", encoding="utf-8"))
+                with open(docs_path, "r", encoding="utf-8") as f:
+                    info["docs_count"] = sum(1 for _ in f)
             products_info.append(info)
     # 共享知识
     shared_store = STORE_ROOT / "_shared"
     shared_docs = 0
     if (shared_store / "docs.jsonl").exists():
-        shared_docs = sum(1 for _ in (shared_store / "docs.jsonl").open("r", encoding="utf-8"))
+        with open(shared_store / "docs.jsonl", "r", encoding="utf-8") as f:
+            shared_docs = sum(1 for _ in f)
     return {
         "products": products_info,
         "shared_docs": shared_docs,
