@@ -1248,7 +1248,6 @@ async function loadModelConfig() {
     _multiLLMCache = j;
     const configs = j.configs || {};
     const cfg = configs[currentLLMPurpose] || {};
-    const otherCfg = configs[currentLLMPurpose === 'chat' ? 'knowledge' : 'chat'] || {};
     document.getElementById('model-current-status').textContent = JSON.stringify({
       '对话 LLM': {
         enabled: configs.chat?.enabled, provider: configs.chat?.provider,
