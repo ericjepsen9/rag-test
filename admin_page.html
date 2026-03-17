@@ -675,6 +675,12 @@
       <h1>&#x1f4d6; 词库管理</h1>
       <div class="card">
         <div class="stats-grid" id="syn-stats"></div>
+        <!-- 运行时状态提示 -->
+        <div id="syn-runtime-bar" style="margin-bottom:12px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span id="syn-runtime-status"></span>
+          <button class="btn-ghost btn-sm" onclick="reloadSynRuntime()" style="margin-left:auto">刷新运行时</button>
+          <button class="btn-ghost btn-sm" onclick="exportSynonyms()">导出词库</button>
+        </div>
         <div class="tabs" id="syn-tabs">
           <button class="active" data-tab="learned" onclick="switchSynTab('learned')">LLM 学习词库</button>
           <button data-tab="static" onclick="switchSynTab('static')">静态同义词</button>
@@ -726,6 +732,7 @@
           <tbody id="learned_tbody"></tbody></table>
         </div>
         <div id="syn_static" class="table-wrap" style="display:none">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:8px">静态同义词硬编码在 search_utils.py 中，修改需重启服务。如需临时扩展，请在"LLM 学习词库"中手动添加。</div>
           <table><thead><tr><th>变体</th><th>规范形式</th></tr></thead>
           <tbody id="static_tbody"></tbody></table>
         </div>
@@ -1592,6 +1599,7 @@ async function loadSynonyms() {
     const j = await api('/admin/synonyms/all');
     _synLearnedData = j.learned || [];
     const pendingCount = _synLearnedData.filter(it => !it.approved).length;
+    const approvedCount = _synLearnedData.filter(it => it.approved).length;
     const llmCount = _synLearnedData.filter(it => it.source === 'llm_rewrite').length;
     const manualCount = _synLearnedData.filter(it => it.source === 'manual').length;
     document.getElementById('syn-stats').innerHTML = `
@@ -1601,6 +1609,20 @@ async function loadSynonyms() {
       <div class="stat-card"><div class="num">${manualCount}</div><div class="lbl">手动添加</div></div>
       <div class="stat-card"><div class="num" style="${pendingCount>0?'color:var(--danger)':''}">${pendingCount}</div><div class="lbl">待审核</div></div>
       <div class="stat-card"><div class="num">${j.total_count||0}</div><div class="lbl">总计</div></div>`;
+    // 运行时状态
+    const rtActive = j.runtime_active_count || 0;
+    const rtLoaded = j.runtime_loaded;
+    const rtBar = document.getElementById('syn-runtime-bar');
+    const rtStatus = document.getElementById('syn-runtime-status');
+    if (rtLoaded) {
+      rtBar.style.background = '#f0fdf4';
+      rtBar.style.borderColor = '#bbf7d0';
+      rtStatus.innerHTML = `<span class="badge badge-ok">运行中</span> 检索引擎已加载 <strong>${rtActive}</strong> 条已审核学习词汇（共 ${approvedCount} 条已审核）`;
+    } else {
+      rtBar.style.background = '#fef3c7';
+      rtBar.style.borderColor = '#fde68a';
+      rtStatus.innerHTML = `<span class="badge badge-warn">未加载</span> 学习词汇尚未加载到检索引擎，点击"刷新运行时"激活`;
+    }
     renderLearnedTable(_synLearnedData);
     renderStaticTable(j.static || []);
   } catch(e) {}
@@ -1817,6 +1839,38 @@ async function batchDeleteSyn() {
     toast(`已批量删除 ${r.deleted_count||0} 条`, 'success');
     loadSynonyms();
   } catch(e) {}
+}
+
+// --- 运行时刷新 & 导出 ---
+async function reloadSynRuntime() {
+  try {
+    const r = await api('/admin/synonyms/reload', {method: 'POST'});
+    toast(`运行时已刷新，${r.active_count||0} 条词汇已激活`, 'success');
+    loadSynonyms();
+  } catch(e) { toast('刷新失败', 'error'); }
+}
+
+function exportSynonyms() {
+  // 用当前已缓存的数据直接导出，无需再请求
+  const exportData = {
+    exported_at: new Date().toISOString(),
+    static: [],
+    learned: _synLearnedData,
+  };
+  // 从静态表格取数据
+  document.querySelectorAll('#static_tbody tr').forEach(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length >= 2) {
+      exportData.static.push({original: tds[0].textContent, mapped_to: tds[1].textContent});
+    }
+  });
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `synonyms_export_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('词库已导出', 'success');
 }
 
 // ===== Logs =====

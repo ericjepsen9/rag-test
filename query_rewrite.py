@@ -8,7 +8,7 @@ from rag_runtime_config import (
     PROCEDURE_ALIASES, EQUIPMENT_ALIASES, INDICATION_KEYWORDS,
     LLM_REWRITE_ENABLED,
 )
-from search_utils import detect_terms, uniq, split_multi_question
+from search_utils import detect_terms, uniq, split_multi_question, lookup_learned_synonym
 
 # 路由专属检索扩展词：当检测到某路由时，补充高区分度关键词帮助 BM25 命中正确 chunk
 _ROUTE_EXPANSION = {
@@ -557,21 +557,29 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([search_q] + expanded_terms))
 
-    # ---- LLM 查询改写（方案3）----
-    # 当静态同义词/别名/路由关键词全部未命中时，调用 LLM 将未知术语映射到已知概念
-    # 例如 "瘦脸针安全吗" → "肉毒素注射安全吗"，"超皮秒" → "皮秒激光"
+    # ---- 学习词库查找 + LLM 查询改写（方案3）----
+    # 先查已学习词库（零成本），再决定是否调用 LLM（消耗 token）
     llm_rewritten = ""
     if _should_trigger_llm_rewrite(q, products, projects, detected_routes,
                                     is_chitchat, is_offtopic):
-        llm_rewritten = _llm_rewrite_query(q)
+        # 优先查已学习词库：如果之前 LLM 改写过相同/相似的查询，直接复用
+        learned = lookup_learned_synonym(q)
+        if learned:
+            llm_rewritten = learned
+        else:
+            llm_rewritten = _llm_rewrite_query(q)
+            if llm_rewritten:
+                # 自动沉淀：将成功的 LLM 改写持久化到学习词库
+                try:
+                    from synonym_store import save_learned
+                    save_learned(q, llm_rewritten)
+                    # 热更新运行时同义词表，后续查询立即生效
+                    from search_utils import reload_learned_synonyms
+                    reload_learned_synonyms()
+                except Exception:
+                    pass  # 沉淀失败不影响主流程
         if llm_rewritten:
-            # 自动沉淀：将成功的 LLM 改写持久化到学习词库
-            try:
-                from synonym_store import save_learned
-                save_learned(q, llm_rewritten)
-            except Exception:
-                pass  # 沉淀失败不影响主流程
-            # LLM 改写成功：用改写结果替换检索查询，同时保留原始查询做混合检索
+            # 改写成功：用改写结果替换检索查询，同时保留原始查询做混合检索
             search_q = llm_rewritten
             # 重新检测改写后的产品/项目/路由（可能映射到了已知实体）
             products = detect_terms(llm_rewritten, PRODUCT_ALIASES) or products

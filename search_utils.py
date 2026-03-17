@@ -146,12 +146,78 @@ for _k, _v in _SYNONYM_MAP.items():
     _SYNONYM_EXPAND.setdefault(_v, set()).add(_k)
     _SYNONYM_EXPAND.setdefault(_k, set()).add(_v)
 
+# 已学习同义词的直接映射缓存：original → mapped_to
+# 用于 expand_synonyms 和 query_rewrite 的快速查找
+_LEARNED_SYNONYM_DIRECT = {}   # type: dict[str, str]
+_learned_loaded = False
+import threading as _syn_threading
+_learned_lock = _syn_threading.Lock()
+
+
+def reload_learned_synonyms() -> int:
+    """从 synonym_store 加载已审核的学习同义词，合并到 _SYNONYM_EXPAND。
+
+    返回加载的词条数。可在启动时或管理后台操作后调用。
+    """
+    global _learned_loaded
+    try:
+        from synonym_store import get_all_learned
+        items = get_all_learned()
+    except Exception:
+        return 0
+
+    with _learned_lock:
+        # 清除旧的学习词条（避免已删除的词残留）
+        for old_k in list(_LEARNED_SYNONYM_DIRECT.keys()):
+            if old_k in _SYNONYM_EXPAND:
+                mapped = _LEARNED_SYNONYM_DIRECT[old_k]
+                _SYNONYM_EXPAND[old_k].discard(mapped)
+                if not _SYNONYM_EXPAND[old_k]:
+                    del _SYNONYM_EXPAND[old_k]
+                if mapped in _SYNONYM_EXPAND:
+                    _SYNONYM_EXPAND[mapped].discard(old_k)
+                    if not _SYNONYM_EXPAND[mapped]:
+                        del _SYNONYM_EXPAND[mapped]
+        _LEARNED_SYNONYM_DIRECT.clear()
+
+        # 加载已审核的词条
+        count = 0
+        for it in items:
+            if not it.get("approved"):
+                continue
+            orig = it["original"].strip()
+            mapped = it["mapped_to"].strip()
+            if not orig or not mapped or orig == mapped:
+                continue
+            _LEARNED_SYNONYM_DIRECT[orig] = mapped
+            _SYNONYM_EXPAND.setdefault(mapped, set()).add(orig)
+            _SYNONYM_EXPAND.setdefault(orig, set()).add(mapped)
+            count += 1
+        _learned_loaded = True
+    return count
+
+
+def lookup_learned_synonym(term: str) -> str:
+    """查找已学习的同义词映射。返回映射结果或空字符串。
+
+    供 query_rewrite 在调用 LLM 前先查已学习词库，避免重复消耗 token。
+    """
+    if not _learned_loaded:
+        reload_learned_synonyms()
+    return _LEARNED_SYNONYM_DIRECT.get(term.strip(), "")
+
 
 def expand_synonyms(query: str) -> str:
     """在查询中追加同义词，提升 BM25 召回率。
     例如 "打菲罗奥疼吗" → "打菲罗奥疼吗 注射 疼痛"
     支持时间模式扩展：术后第N天 → 追加恢复/消退关键词
+
+    同时包含静态同义词（_SYNONYM_MAP）和已审核的学习同义词。
     """
+    # 确保已学习同义词已加载
+    if not _learned_loaded:
+        reload_learned_synonyms()
+
     extra = set()
     q_lower = query.lower()
     for term, synonyms in _SYNONYM_EXPAND.items():

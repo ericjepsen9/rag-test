@@ -472,9 +472,45 @@ def admin_rebuild_shared():
 
 # ===== 词库管理接口 =====
 
+def _reload_synonym_runtime():
+    """刷新运行时同义词扩展表，使增删改操作立即生效于检索。"""
+    try:
+        from search_utils import reload_learned_synonyms
+        reload_learned_synonyms()
+    except Exception:
+        pass
+
+
 @app.get("/admin/synonyms/all")
 def admin_synonyms_all():
     """返回完整词库：静态同义词 + LLM 学习到的同义词"""
+    from synonym_store import get_all_synonyms_combined
+    data = get_all_synonyms_combined()
+    # 附加运行时状态
+    try:
+        from search_utils import _LEARNED_SYNONYM_DIRECT, _learned_loaded
+        data["runtime_active_count"] = len(_LEARNED_SYNONYM_DIRECT)
+        data["runtime_loaded"] = _learned_loaded
+    except Exception:
+        data["runtime_active_count"] = 0
+        data["runtime_loaded"] = False
+    return data
+
+
+@app.post("/admin/synonyms/reload")
+def admin_synonyms_reload():
+    """手动刷新运行时同义词扩展表"""
+    try:
+        from search_utils import reload_learned_synonyms
+        count = reload_learned_synonyms()
+        return {"ok": True, "active_count": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/synonyms/export")
+def admin_synonyms_export():
+    """导出全部词库为 JSON（供下载）"""
     from synonym_store import get_all_synonyms_combined
     return get_all_synonyms_combined()
 
@@ -495,6 +531,7 @@ def admin_synonyms_approve(original: str):
     ok = approve_learned(original.strip())
     if not ok:
         raise HTTPException(status_code=404, detail="未找到该同义词")
+    _reload_synonym_runtime()
     return {"ok": True, "original": original.strip()}
 
 
@@ -507,6 +544,7 @@ def admin_synonyms_delete(original: str):
     ok = delete_learned(original.strip())
     if not ok:
         raise HTTPException(status_code=404, detail="未找到该同义词")
+    _reload_synonym_runtime()
     return {"ok": True, "deleted": original.strip()}
 
 
@@ -522,6 +560,7 @@ def admin_synonyms_add(req: SynonymAddRequest):
     result = add_manual(req.original, req.mapped_to)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "添加失败"))
+    _reload_synonym_runtime()
     return result
 
 
@@ -537,6 +576,7 @@ def admin_synonyms_edit(req: SynonymEditRequest):
     result = update_learned(req.original, req.mapped_to)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "编辑失败"))
+    _reload_synonym_runtime()
     return result
 
 
@@ -548,14 +588,18 @@ class SynonymBatchRequest(BaseModel):
 def admin_synonyms_batch_approve(req: SynonymBatchRequest):
     """批量审核通过多条同义词"""
     from synonym_store import batch_approve
-    return batch_approve(req.terms)
+    result = batch_approve(req.terms)
+    _reload_synonym_runtime()
+    return result
 
 
 @app.post("/admin/synonyms/learned/batch-delete")
 def admin_synonyms_batch_delete(req: SynonymBatchRequest):
     """批量删除多条同义词"""
     from synonym_store import batch_delete
-    return batch_delete(req.terms)
+    result = batch_delete(req.terms)
+    _reload_synonym_runtime()
+    return result
 
 
 @app.get("/admin/logs/qa")
