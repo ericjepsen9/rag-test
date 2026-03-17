@@ -503,13 +503,22 @@ def _get_candidate_docs(terms: List[str], inv_index: Dict[str, List[int]],
     candidate_set: set = set()
     for term in terms:
         # 对每个查询词，查找包含它的文档
-        # 如果 term 长度 >= 2，用其 bigram 做交集过滤
         if len(term) >= 2:
-            # 取 term 的第一个 bigram 作为候选过滤
-            bg = term[:2]
-            doc_ids = inv_index.get(bg)
-            if doc_ids is not None:
-                candidate_set.update(doc_ids)
+            # 取 term 的所有 bigram，用交集过滤（提高准确率）
+            # 例如 "水光针" → bigram ["水光", "光针"]，取同时包含两者的文档
+            bigrams = [term[i:i+2] for i in range(len(term) - 1)]
+            sets = []
+            for bg in bigrams:
+                doc_ids = inv_index.get(bg)
+                if doc_ids is not None:
+                    sets.append(set(doc_ids))
+            if sets:
+                # 对于 2-char term 只有 1 个 bigram，直接取；
+                # 对于更长 term，取交集确保所有 bigram 都出现
+                if len(sets) == 1:
+                    candidate_set.update(sets[0])
+                else:
+                    candidate_set.update(sets[0].intersection(*sets[1:]))
         elif len(term) == 1:
             # 单字符 term：遍历所有包含该字符的 bigram
             for bg_key, doc_ids in inv_index.items():
