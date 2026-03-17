@@ -297,12 +297,17 @@ def _llm_expand_synonyms_impl(client, model: str, count: int) -> Dict[str, Any]:
             max_tokens=2000,
         )
         raw = (resp.choices[0].message.content or "").strip()
-        # 提取 JSON
+        # 提取 JSON 数组：匹配以 [ 开头、] 结尾的最外层数组
         import re
-        m = re.search(r'\[.*\]', raw, re.DOTALL)
+        m = re.search(r'\[[\s\S]*\]', raw)
         if not m:
             return {"ok": False, "error": "LLM 返回格式异常，无法解析"}
-        items = json.loads(m.group())
+        try:
+            items = json.loads(m.group())
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "LLM 返回的 JSON 数组解析失败"}
+        if not isinstance(items, list):
+            return {"ok": False, "error": "LLM 返回格式异常：期望 JSON 数组"}
 
         # 过滤已存在的词
         existing = set(_SYNONYM_MAP.keys())
@@ -369,10 +374,15 @@ def _llm_expand_clarification_impl(client, model: str, count: int) -> Dict[str, 
         )
         raw = (resp.choices[0].message.content or "").strip()
         import re
-        m = re.search(r'\[.*\]', raw, re.DOTALL)
+        m = re.search(r'\[[\s\S]*\]', raw)
         if not m:
             return {"ok": False, "error": "LLM 返回格式异常，无法解析"}
-        items = json.loads(m.group())
+        try:
+            items = json.loads(m.group())
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "LLM 返回的 JSON 数组解析失败"}
+        if not isinstance(items, list):
+            return {"ok": False, "error": "LLM 返回格式异常：期望 JSON 数组"}
 
         # 过滤已存在的触发词
         existing = set(_CLARIFICATION_RULES.keys())

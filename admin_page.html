@@ -272,6 +272,18 @@
   </div>
 
   <div class="main">
+    <!-- Auth Key Bar -->
+    <div id="auth-bar" class="card" style="display:none;margin-bottom:16px;background:#fffbe6;border:1px solid #ffe58f;padding:12px 18px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600;color:#92400e">&#x1f512; 管理接口需要鉴权</span>
+        <input id="admin-key-input" type="password" placeholder="输入 Admin API Key" style="flex:1;min-width:200px;max-width:360px">
+        <button class="btn-primary btn-sm" onclick="saveAdminKey()">保存</button>
+        <button class="btn-secondary btn-sm" onclick="clearAdminKey()">清除</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:6px">
+        服务端通过环境变量 <code>ADMIN_API_KEY</code> 配置。未配置时无需鉴权。
+      </div>
+    </div>
     <!-- ==================== 系统总览 ==================== -->
     <div class="page active" id="page-dashboard">
       <h1>&#x1f4ca; 系统总览</h1>
@@ -1060,9 +1072,30 @@ function fmtSize(b) {
   if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
   return (b/1024/1024).toFixed(1) + ' MB';
 }
+// ===== Admin Auth =====
+function _getAdminKey() {
+  return (localStorage.getItem('admin_api_key') || '').trim();
+}
+function _setAdminKey(key) {
+  localStorage.setItem('admin_api_key', (key || '').trim());
+}
+function _authHeaders(extra = {}) {
+  const key = _getAdminKey();
+  if (key) extra['Authorization'] = 'Bearer ' + key;
+  return extra;
+}
+
 async function api(url, opts = {}) {
   try {
+    // 自动注入鉴权头
+    opts.headers = _authHeaders(opts.headers || {});
     const r = await fetch(url, opts);
+    if (r.status === 403) {
+      const j = await r.json().catch(() => ({detail: 'HTTP 403 鉴权失败'}));
+      // 显示鉴权输入框
+      _showAuthPrompt();
+      throw new Error(j.detail || '管理接口鉴权失败，请输入正确的 Admin Key');
+    }
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
     return j;
@@ -1070,6 +1103,37 @@ async function api(url, opts = {}) {
     toast(e.message, 'error');
     throw e;
   }
+}
+
+// FormData 请求用（不能设置 Content-Type，但可以追加 query param）
+function _authUrl(url) {
+  const key = _getAdminKey();
+  if (!key) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return url + sep + 'admin_key=' + encodeURIComponent(key);
+}
+
+function _showAuthPrompt() {
+  const el = document.getElementById('auth-bar');
+  if (el) el.style.display = '';
+}
+function _hideAuthPrompt() {
+  const el = document.getElementById('auth-bar');
+  if (el) el.style.display = 'none';
+}
+function saveAdminKey() {
+  const input = document.getElementById('admin-key-input');
+  _setAdminKey(input.value);
+  _hideAuthPrompt();
+  toast('Admin Key 已保存', 'success');
+  // 重新加载当前页面数据
+  const activePage = document.querySelector('.sidebar nav a.active');
+  if (activePage) activePage.click();
+}
+function clearAdminKey() {
+  _setAdminKey('');
+  document.getElementById('admin-key-input').value = '';
+  toast('Admin Key 已清除', 'info');
 }
 
 // ===== Dashboard =====
@@ -1273,7 +1337,7 @@ async function doUpload() {
   const out = document.getElementById('upload-result');
   out.innerHTML = '<span style="color:var(--primary)">上传中...</span>';
   try {
-    const r = await fetch('/admin/upload', {method:'POST', body: fd});
+    const r = await fetch(_authUrl('/admin/upload'), {method:'POST', body: fd, headers: _authHeaders()});
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || 'upload failed');
     const ok = (j.uploaded||[]).length;
@@ -1305,7 +1369,7 @@ async function handleZipUpload(e) {
   const out = document.getElementById('zip-result');
   out.innerHTML = '<span style="color:var(--primary)">解压上传中...</span>';
   try {
-    const r = await fetch('/admin/upload_zip', {method:'POST', body: fd});
+    const r = await fetch(_authUrl('/admin/upload_zip'), {method:'POST', body: fd, headers: _authHeaders()});
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || 'upload failed');
     const results = j.results || [];
@@ -2567,6 +2631,8 @@ async function loadImportPage() {
 }
 
 async function checkImportLLM() {
+  const badge = document.getElementById('import-llm-badge');
+  const info = document.getElementById('import-llm-info');
   try {
     // 优先使用新的多 LLM 配置接口获取知识库 LLM 状态
     let llm = null;
@@ -2575,13 +2641,17 @@ async function checkImportLLM() {
       if (j.configs && j.configs.knowledge) {
         llm = j.configs.knowledge;
       }
-    } catch(e2) {}
-    // 回退到旧接口
-    if (!llm) {
-      llm = await api('/admin/service/llm');
+    } catch(e2) {
+      // 新接口不可用，回退到旧接口
+      try {
+        llm = await api('/admin/service/llm');
+      } catch(e3) {}
     }
-    const badge = document.getElementById('import-llm-badge');
-    const info = document.getElementById('import-llm-info');
+    if (!llm) {
+      badge.innerHTML = '<span class="badge badge-warn">无法检测 LLM 状态</span>';
+      info.innerHTML = '<span style="color:var(--text-secondary)">LLM 配置接口不可用，智能导入可能无法工作</span>';
+      return;
+    }
     if (llm.enabled && llm.api_key_set) {
       badge.innerHTML = '<span class="badge badge-ok">知识库 LLM 已就绪</span>';
     } else if (llm.enabled && !llm.api_key_set) {
@@ -2598,7 +2668,10 @@ async function checkImportLLM() {
     if (!llm.enabled || !llm.api_key_set) {
       info.innerHTML += `<br><span style="color:var(--danger)">请先在「模型切换」页面的「知识库 LLM」标签配置提供商和 Key，否则无法使用智能导入</span>`;
     }
-  } catch(e) {}
+  } catch(e) {
+    badge.innerHTML = '<span class="badge badge-danger">检测异常</span>';
+    info.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  }
 }
 
 async function testImportLLM() {
@@ -2685,7 +2758,7 @@ async function doImport(dryRun) {
       fd.append('build', '0');
       fd.append('dry_run', '1');
       fd.append('file', importFile);
-      const resp = await fetch('/admin/import_knowledge_file', {method:'POST', body: fd});
+      const resp = await fetch(_authUrl('/admin/import_knowledge_file'), {method:'POST', body: fd, headers: _authHeaders()});
       result = await resp.json();
       if (!resp.ok) throw new Error(result.detail || `HTTP ${resp.status}`);
     } else {
@@ -2978,6 +3051,14 @@ function closeImportResult() {
 }
 
 // ===== Init =====
+// 恢复已保存的 Admin Key
+(function() {
+  const savedKey = _getAdminKey();
+  if (savedKey) {
+    const input = document.getElementById('admin-key-input');
+    if (input) input.value = savedKey;
+  }
+})();
 loadDashboard();
 </script>
 </body>
