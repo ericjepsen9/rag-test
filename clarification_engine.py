@@ -160,6 +160,19 @@ _CLARIFICATION_RULES: Dict[str, List[Dict[str, str]]] = {
 # 预编译：触发词长度排序（长词优先匹配，避免短词过早命中）
 _SORTED_TRIGGER_KEYS = sorted(_CLARIFICATION_RULES.keys(), key=len, reverse=True)
 
+
+def _get_merged_rules() -> Dict[str, List[Dict[str, str]]]:
+    """合并静态规则和动态自定义规则（动态优先覆盖静态）"""
+    merged = dict(_CLARIFICATION_RULES)
+    try:
+        from keyword_store import get_clarification_rules
+        custom = get_clarification_rules()
+        for trigger, rule_data in custom.items():
+            merged[trigger] = rule_data.get("options", [])
+    except Exception:
+        pass
+    return merged
+
 # 不触发消歧的上下文关键词：当用户输入中已包含这些词时，说明意图已明确
 _CLEAR_INTENT_PATTERNS = re.compile(
     r"(术后|术前|注射后|打完|做完|之前|之后|恢复期|并发症|禁忌|操作|怎么办|怎么处理"
@@ -256,12 +269,15 @@ def generate_clarification(
     q = question.strip()
     q_lower = q.lower()
 
-    # 查找匹配的消歧规则（长词优先）
+    # 合并静态 + 动态消歧规则，长词优先匹配
+    merged = _get_merged_rules()
+    sorted_keys = sorted(merged.keys(), key=len, reverse=True)
+
     matched_options = None
     matched_key = None
-    for key in _SORTED_TRIGGER_KEYS:
+    for key in sorted_keys:
         if key in q_lower:
-            matched_options = _CLARIFICATION_RULES[key]
+            matched_options = merged[key]
             matched_key = key
             break
 

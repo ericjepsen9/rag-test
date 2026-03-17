@@ -257,7 +257,7 @@ _learned_lock = _syn_threading.Lock()
 
 
 def reload_learned_synonyms() -> int:
-    """从 synonym_store 加载已审核的学习同义词，合并到 _SYNONYM_EXPAND。
+    """从 synonym_store + keyword_store 加载已审核的学习同义词和覆盖词条，合并到 _SYNONYM_EXPAND。
 
     返回加载的词条数。可在启动时或管理后台操作后调用。
     """
@@ -266,7 +266,15 @@ def reload_learned_synonyms() -> int:
         from synonym_store import get_all_learned
         items = get_all_learned()
     except Exception:
-        return 0
+        items = []
+
+    # 加载 keyword_store 的同义词覆盖
+    overrides = {}
+    try:
+        from keyword_store import get_synonym_overrides
+        overrides = get_synonym_overrides()
+    except Exception:
+        pass
 
     with _learned_lock:
         # 清除旧的学习词条（避免已删除的词残留）
@@ -282,7 +290,7 @@ def reload_learned_synonyms() -> int:
                         del _SYNONYM_EXPAND[mapped]
         _LEARNED_SYNONYM_DIRECT.clear()
 
-        # 加载已审核的词条
+        # 加载已审核的学习词条
         count = 0
         for it in items:
             if not it.get("approved"):
@@ -295,6 +303,26 @@ def reload_learned_synonyms() -> int:
             _SYNONYM_EXPAND.setdefault(mapped, set()).add(orig)
             _SYNONYM_EXPAND.setdefault(orig, set()).add(mapped)
             count += 1
+
+        # 加载 keyword_store 的同义词覆盖（可覆盖或删除静态同义词）
+        for orig, ov in overrides.items():
+            action = ov.get("action", "add")
+            mapped = ov.get("mapped_to", "").strip()
+            if action == "delete":
+                # 从扩展表中移除该静态同义词
+                if orig in _SYNONYM_EXPAND:
+                    for syn in list(_SYNONYM_EXPAND[orig]):
+                        if syn in _SYNONYM_EXPAND:
+                            _SYNONYM_EXPAND[syn].discard(orig)
+                    del _SYNONYM_EXPAND[orig]
+                continue
+            if not mapped or orig == mapped:
+                continue
+            _LEARNED_SYNONYM_DIRECT[orig] = mapped
+            _SYNONYM_EXPAND.setdefault(mapped, set()).add(orig)
+            _SYNONYM_EXPAND.setdefault(orig, set()).add(mapped)
+            count += 1
+
         _learned_loaded = True
     return count
 

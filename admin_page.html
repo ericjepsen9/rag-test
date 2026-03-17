@@ -684,6 +684,9 @@
         <div class="tabs" id="syn-tabs">
           <button class="active" data-tab="learned" onclick="switchSynTab('learned')">LLM 学习词库</button>
           <button data-tab="static" onclick="switchSynTab('static')">静态同义词</button>
+          <button data-tab="effective" onclick="switchSynTab('effective')">全部生效词</button>
+          <button data-tab="clarify" onclick="switchSynTab('clarify')">消歧规则</button>
+          <button data-tab="llm_expand" onclick="switchSynTab('llm_expand')">LLM 智能扩充</button>
         </div>
         <!-- 搜索 + 操作栏 -->
         <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -732,9 +735,98 @@
           <tbody id="learned_tbody"></tbody></table>
         </div>
         <div id="syn_static" class="table-wrap" style="display:none">
-          <div style="font-size:12px;color:#6b7280;margin-bottom:8px">静态同义词硬编码在 search_utils.py 中，修改需重启服务。如需临时扩展，请在"LLM 学习词库"中手动添加。</div>
+          <div style="font-size:12px;color:#6b7280;margin-bottom:8px">静态同义词硬编码在 search_utils.py 中。可通过"全部生效词"面板添加覆盖或删除。</div>
           <table><thead><tr><th>变体</th><th>规范形式</th></tr></thead>
           <tbody id="static_tbody"></tbody></table>
+        </div>
+        <!-- 全部生效词 -->
+        <div id="syn_effective" class="table-wrap" style="display:none">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:8px">
+            展示合并后最终生效的全部同义词（静态 + 覆盖 + 学习）。可直接添加新词或覆盖/删除已有词。
+          </div>
+          <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+            <input id="eff_search" placeholder="搜索..." oninput="filterEffTable()" style="width:220px">
+            <select id="eff_filter_source" onchange="filterEffTable()" style="width:140px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              <option value="all">全部来源</option>
+              <option value="static">静态</option>
+              <option value="override">覆盖</option>
+              <option value="learned">学习</option>
+            </select>
+            <button class="btn-primary btn-sm" onclick="showEffAddForm()">+ 添加/覆盖</button>
+          </div>
+          <div id="eff-add-form" style="display:none;margin-bottom:14px;padding:14px;background:#f8f9fb;border-radius:8px;border:1px solid #e5e7eb">
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+              <div>
+                <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">原始词</label>
+                <input id="eff-form-original" placeholder="口语/变体" style="width:180px">
+              </div>
+              <div>
+                <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">映射到</label>
+                <input id="eff-form-mapped" placeholder="规范术语" style="width:180px">
+              </div>
+              <button class="btn-primary btn-sm" onclick="submitEffForm()">保存</button>
+              <button class="btn-ghost btn-sm" onclick="document.getElementById('eff-add-form').style.display='none'">取消</button>
+            </div>
+            <div id="eff-form-error" style="color:var(--danger);font-size:12px;margin-top:6px;display:none"></div>
+          </div>
+          <table><thead><tr><th>原始词</th><th>映射到</th><th>来源</th><th>操作</th></tr></thead>
+          <tbody id="effective_tbody"></tbody></table>
+        </div>
+        <!-- 消歧规则 -->
+        <div id="syn_clarify" class="table-wrap" style="display:none">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:8px">
+            消歧规则：当用户输入模糊查询时，系统根据触发词提供候选选项帮助用户精确提问。
+          </div>
+          <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+            <input id="clarify_search" placeholder="搜索触发词..." oninput="filterClarifyTable()" style="width:220px">
+            <select id="clarify_filter" onchange="filterClarifyTable()" style="width:140px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              <option value="all">全部</option>
+              <option value="static">静态规则</option>
+              <option value="custom">自定义规则</option>
+            </select>
+            <button class="btn-primary btn-sm" onclick="showClarifyAddForm()">+ 新建规则</button>
+          </div>
+          <div id="clarify-add-form" style="display:none;margin-bottom:14px;padding:14px;background:#f8f9fb;border-radius:8px;border:1px solid #e5e7eb">
+            <div style="margin-bottom:10px">
+              <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">触发词</label>
+              <input id="clarify-form-trigger" placeholder="如：硬块" style="width:200px">
+            </div>
+            <div id="clarify-form-options">
+              <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:6px">候选选项（2-4个）</label>
+            </div>
+            <button class="btn-ghost btn-sm" onclick="addClarifyOptionRow()" style="margin-bottom:10px">+ 添加选项</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn-primary btn-sm" onclick="submitClarifyForm()">保存</button>
+              <button class="btn-ghost btn-sm" onclick="document.getElementById('clarify-add-form').style.display='none'">取消</button>
+            </div>
+            <div id="clarify-form-error" style="color:var(--danger);font-size:12px;margin-top:6px;display:none"></div>
+          </div>
+          <div id="clarify_list"></div>
+        </div>
+        <!-- LLM 智能扩充 -->
+        <div id="syn_llm_expand" class="table-wrap" style="display:none">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:12px">
+            利用 LLM 基于已有词库智能生成新的同义词或消歧规则。生成的词条会自动添加到学习词库（需审核）。
+          </div>
+          <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px;padding:16px;background:#f8f9fb;border-radius:8px;border:1px solid #e5e7eb">
+            <div>
+              <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">扩充类型</label>
+              <select id="llm-expand-category" style="width:160px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+                <option value="synonym">同义词扩充</option>
+                <option value="clarification">消歧规则扩充</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">生成数量</label>
+              <input type="number" id="llm-expand-count" value="20" min="5" max="50" style="width:80px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+            </div>
+            <button class="btn-primary" id="llm-expand-btn" onclick="runLLMExpand()">
+              &#x2728; 开始扩充
+            </button>
+          </div>
+          <div id="llm-expand-result" style="display:none;margin-bottom:16px"></div>
+          <h3 style="font-size:14px;margin-bottom:10px;color:var(--text-secondary)">扩充历史</h3>
+          <div id="llm-expand-log"></div>
         </div>
       </div>
     </div>
@@ -1669,8 +1761,14 @@ function switchSynTab(tab) {
   currentSynTab = tab;
   document.getElementById('syn_learned').style.display = tab==='learned' ? '' : 'none';
   document.getElementById('syn_static').style.display = tab==='static' ? '' : 'none';
+  document.getElementById('syn_effective').style.display = tab==='effective' ? '' : 'none';
+  document.getElementById('syn_clarify').style.display = tab==='clarify' ? '' : 'none';
+  document.getElementById('syn_llm_expand').style.display = tab==='llm_expand' ? '' : 'none';
   document.querySelectorAll('#syn-tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === tab));
+  if (tab === 'effective') loadEffective();
+  if (tab === 'clarify') loadClarifyRules();
+  if (tab === 'llm_expand') loadLLMExpandLog();
 }
 
 function filterSynTable() {
@@ -1871,6 +1969,251 @@ function exportSynonyms() {
   a.click();
   URL.revokeObjectURL(a.href);
   toast('词库已导出', 'success');
+}
+
+// ===== 全部生效词管理 =====
+let _effectiveData = [];
+async function loadEffective() {
+  try {
+    const j = await api('/admin/keywords/effective');
+    _effectiveData = j.items || [];
+    renderEffTable(_effectiveData);
+  } catch(e) {}
+}
+function renderEffTable(items) {
+  const tbody = document.getElementById('effective_tbody');
+  if (!items.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:24px">暂无数据</td></tr>'; return; }
+  tbody.innerHTML = items.map(it => {
+    const srcBadge = it.source === 'override' ? '<span class="badge badge-warn">覆盖</span>'
+      : it.source === 'learned' ? '<span class="badge" style="background:#f3e8ff;color:#7c3aed">学习</span>'
+      : '<span class="badge badge-info">静态</span>';
+    return `<tr data-source="${esc(it.source)}">
+      <td><strong>${esc(it.original)}</strong></td>
+      <td>${esc(it.mapped_to)}</td>
+      <td>${srcBadge}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-ghost btn-sm" onclick="editEffSyn('${esc(it.original)}','${esc(it.mapped_to)}')">编辑</button>
+        <button class="btn-danger btn-sm" onclick="deleteEffSyn('${esc(it.original)}')">删除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+function filterEffTable() {
+  const q = document.getElementById('eff_search').value.trim().toLowerCase();
+  const src = document.getElementById('eff_filter_source').value;
+  document.querySelectorAll('#effective_tbody tr').forEach(tr => {
+    const matchQ = !q || tr.textContent.toLowerCase().includes(q);
+    const matchSrc = src === 'all' || tr.dataset.source === src;
+    tr.style.display = (matchQ && matchSrc) ? '' : 'none';
+  });
+}
+function showEffAddForm() {
+  document.getElementById('eff-form-original').value = '';
+  document.getElementById('eff-form-mapped').value = '';
+  document.getElementById('eff-form-original').disabled = false;
+  document.getElementById('eff-form-error').style.display = 'none';
+  document.getElementById('eff-add-form').style.display = '';
+  document.getElementById('eff-form-original').focus();
+}
+function editEffSyn(original, mapped) {
+  document.getElementById('eff-form-original').value = original;
+  document.getElementById('eff-form-mapped').value = mapped;
+  document.getElementById('eff-form-error').style.display = 'none';
+  document.getElementById('eff-add-form').style.display = '';
+  document.getElementById('eff-form-mapped').focus();
+}
+async function submitEffForm() {
+  const original = document.getElementById('eff-form-original').value.trim();
+  const mapped = document.getElementById('eff-form-mapped').value.trim();
+  const errEl = document.getElementById('eff-form-error');
+  if (!original || !mapped) { errEl.textContent = '不能为空'; errEl.style.display = ''; return; }
+  try {
+    await api('/admin/keywords/synonym/override', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({original, mapped_to: mapped})
+    });
+    toast('已保存', 'success');
+    document.getElementById('eff-add-form').style.display = 'none';
+    loadEffective();
+  } catch(e) { errEl.textContent = (e&&e.message)||'操作失败'; errEl.style.display = ''; }
+}
+async function deleteEffSyn(original) {
+  if (!confirm(`确定删除/屏蔽「${original}」？`)) return;
+  try {
+    await api('/admin/keywords/synonym/override?original='+encodeURIComponent(original),{method:'DELETE'});
+    toast('已删除', 'success');
+    loadEffective();
+  } catch(e) {}
+}
+
+// ===== 消歧规则管理 =====
+let _clarifyData = [];
+async function loadClarifyRules() {
+  try {
+    const j = await api('/admin/keywords/clarification');
+    _clarifyData = j.items || [];
+    renderClarifyList(_clarifyData);
+  } catch(e) {}
+}
+function renderClarifyList(items) {
+  const container = document.getElementById('clarify_list');
+  if (!items.length) { container.innerHTML = '<p style="text-align:center;color:var(--text-secondary);padding:24px">暂无消歧规则</p>'; return; }
+  container.innerHTML = items.map(it => {
+    const srcBadge = it.source === 'custom'
+      ? '<span class="badge badge-warn">自定义</span>'
+      : '<span class="badge badge-info">静态</span>';
+    const optsHtml = (it.options||[]).map(o =>
+      `<div style="padding:4px 0;font-size:12px"><span style="color:var(--primary);font-weight:500">${esc(o.label)}</span>
+       <span style="color:var(--text-light);margin-left:6px">${esc(o.route||'')}</span></div>`
+    ).join('');
+    const canDel = it.source === 'custom';
+    return `<div style="padding:12px;margin-bottom:8px;background:#f8f9fb;border-radius:8px;border:1px solid #e5e7eb" data-source="${esc(it.source)}" data-trigger="${esc(it.trigger)}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <strong style="font-size:14px">${esc(it.trigger)}</strong> ${srcBadge}
+        <span style="margin-left:auto;display:flex;gap:4px">
+          <button class="btn-ghost btn-sm" onclick="editClarifyRule('${esc(it.trigger)}')">编辑</button>
+          ${canDel?`<button class="btn-danger btn-sm" onclick="deleteClarifyRule('${esc(it.trigger)}')">删除</button>`:''}
+        </span>
+      </div>
+      ${optsHtml}
+    </div>`;
+  }).join('');
+}
+function filterClarifyTable() {
+  const q = document.getElementById('clarify_search').value.trim().toLowerCase();
+  const src = document.getElementById('clarify_filter').value;
+  document.querySelectorAll('#clarify_list > div').forEach(el => {
+    const matchQ = !q || el.textContent.toLowerCase().includes(q);
+    const matchSrc = src === 'all' || el.dataset.source === src;
+    el.style.display = (matchQ && matchSrc) ? '' : 'none';
+  });
+}
+function showClarifyAddForm() {
+  document.getElementById('clarify-form-trigger').value = '';
+  document.getElementById('clarify-form-trigger').disabled = false;
+  const optsDiv = document.getElementById('clarify-form-options');
+  optsDiv.innerHTML = '<label style="font-size:12px;color:#6b7280;display:block;margin-bottom:6px">候选选项（2-4个）</label>';
+  addClarifyOptionRow();
+  addClarifyOptionRow();
+  document.getElementById('clarify-form-error').style.display = 'none';
+  document.getElementById('clarify-add-form').style.display = '';
+  document.getElementById('clarify-form-trigger').focus();
+}
+function editClarifyRule(trigger) {
+  const rule = _clarifyData.find(r => r.trigger === trigger);
+  if (!rule) return;
+  document.getElementById('clarify-form-trigger').value = trigger;
+  document.getElementById('clarify-form-trigger').disabled = false;
+  const optsDiv = document.getElementById('clarify-form-options');
+  optsDiv.innerHTML = '<label style="font-size:12px;color:#6b7280;display:block;margin-bottom:6px">候选选项（2-4个）</label>';
+  for (const opt of (rule.options||[])) {
+    addClarifyOptionRow(opt.label, opt.query, opt.route);
+  }
+  document.getElementById('clarify-form-error').style.display = 'none';
+  document.getElementById('clarify-add-form').style.display = '';
+}
+function addClarifyOptionRow(label='', query='', route='') {
+  const optsDiv = document.getElementById('clarify-form-options');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+  row.innerHTML = `
+    <input class="cl-opt-label" placeholder="选项描述" value="${esc(label)}" style="width:160px;font-size:12px">
+    <input class="cl-opt-query" placeholder="精确查询" value="${esc(query)}" style="width:200px;font-size:12px">
+    <input class="cl-opt-route" placeholder="路由(可选)" value="${esc(route)}" style="width:100px;font-size:12px">
+    <button class="btn-ghost btn-sm" onclick="this.parentElement.remove()" style="color:var(--danger);padding:2px 6px">×</button>`;
+  optsDiv.appendChild(row);
+}
+async function submitClarifyForm() {
+  const trigger = document.getElementById('clarify-form-trigger').value.trim();
+  const errEl = document.getElementById('clarify-form-error');
+  if (!trigger) { errEl.textContent = '触发词不能为空'; errEl.style.display = ''; return; }
+  const options = [];
+  document.querySelectorAll('#clarify-form-options > div').forEach(row => {
+    const label = row.querySelector('.cl-opt-label').value.trim();
+    const query = row.querySelector('.cl-opt-query').value.trim();
+    const route = row.querySelector('.cl-opt-route').value.trim();
+    if (label && query) options.push({label, query, route});
+  });
+  if (options.length < 1) { errEl.textContent = '至少需要一个有效选项'; errEl.style.display = ''; return; }
+  try {
+    await api('/admin/keywords/clarification', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({trigger, options})
+    });
+    toast('消歧规则已保存', 'success');
+    document.getElementById('clarify-add-form').style.display = 'none';
+    loadClarifyRules();
+  } catch(e) { errEl.textContent = (e&&e.message)||'操作失败'; errEl.style.display = ''; }
+}
+async function deleteClarifyRule(trigger) {
+  if (!confirm(`确定删除消歧规则「${trigger}」？`)) return;
+  try {
+    await api('/admin/keywords/clarification?trigger='+encodeURIComponent(trigger),{method:'DELETE'});
+    toast('已删除', 'success');
+    loadClarifyRules();
+  } catch(e) {}
+}
+
+// ===== LLM 智能扩充 =====
+async function runLLMExpand() {
+  const category = document.getElementById('llm-expand-category').value;
+  const count = parseInt(document.getElementById('llm-expand-count').value) || 20;
+  const btn = document.getElementById('llm-expand-btn');
+  const resultDiv = document.getElementById('llm-expand-result');
+  btn.disabled = true;
+  btn.textContent = '正在扩充...';
+  resultDiv.style.display = '';
+  resultDiv.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-secondary)">LLM 正在分析已有词库并生成新词条，请稍候...</div>';
+  try {
+    const j = await api('/admin/keywords/llm-expand', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({category, count})
+    });
+    const items = j.items || [];
+    if (items.length === 0) {
+      resultDiv.innerHTML = '<div style="padding:16px;color:var(--warning)">LLM 未生成新词条（可能已有词库覆盖充分）</div>';
+    } else {
+      let html = `<div style="padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:8px">
+        <strong style="color:var(--success)">成功生成 ${items.length} 条新词条，已应用 ${j.applied||0} 条</strong></div>`;
+      if (category === 'synonym') {
+        html += '<table><thead><tr><th>口语/变体</th><th>规范术语</th></tr></thead><tbody>';
+        items.forEach(it => { html += `<tr><td>${esc(it.original||'')}</td><td>${esc(it.mapped_to||'')}</td></tr>`; });
+        html += '</tbody></table>';
+      } else {
+        items.forEach(it => {
+          html += `<div style="padding:8px;margin-bottom:6px;background:#f8f9fb;border-radius:6px;border:1px solid #e5e7eb">
+            <strong>${esc(it.trigger||'')}</strong>`;
+          (it.options||[]).forEach(o => { html += `<div style="font-size:12px;padding:2px 0;color:var(--text-secondary)">${esc(o.label||'')}</div>`; });
+          html += '</div>';
+        });
+      }
+      resultDiv.innerHTML = html;
+    }
+    loadLLMExpandLog();
+    // 刷新词库面板
+    loadSynonyms();
+  } catch(e) {
+    resultDiv.innerHTML = `<div style="padding:16px;color:var(--danger)">扩充失败: ${esc((e&&e.message)||'未知错误')}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '\u2728 开始扩充';
+  }
+}
+async function loadLLMExpandLog() {
+  try {
+    const j = await api('/admin/keywords/llm-expand/log?limit=10');
+    const items = j.items || [];
+    const container = document.getElementById('llm-expand-log');
+    if (!items.length) { container.innerHTML = '<p style="color:var(--text-secondary);font-size:13px">暂无扩充记录</p>'; return; }
+    container.innerHTML = items.map(it => {
+      const catLabel = it.category === 'synonym' ? '同义词' : '消歧规则';
+      return `<div style="padding:8px 12px;margin-bottom:6px;background:#f8f9fb;border-radius:6px;border:1px solid #e5e7eb;font-size:12px;display:flex;gap:10px;align-items:center">
+        <span style="color:var(--text-light)">${esc(it.ts||'')}</span>
+        <span class="badge badge-info">${catLabel}</span>
+        <span>生成 <strong>${it.count||0}</strong> 条</span>
+      </div>`;
+    }).join('');
+  } catch(e) {}
 }
 
 // ===== Logs =====

@@ -637,6 +637,129 @@ def admin_synonyms_batch_delete(req: SynonymBatchRequest):
     return result
 
 
+# ===== 关键词综合管理接口 =====
+
+
+@app.get("/admin/keywords/effective")
+def admin_keywords_effective():
+    """返回最终生效的所有同义词（静态+覆盖+学习 合并后）"""
+    from keyword_store import get_effective_synonyms
+    items = get_effective_synonyms()
+    sources = {"static": 0, "override": 0, "learned": 0}
+    for it in items:
+        s = it.get("source", "static")
+        sources[s] = sources.get(s, 0) + 1
+    return {"items": items, "total": len(items), "sources": sources}
+
+
+class SynonymOverrideRequest(BaseModel):
+    original: str
+    mapped_to: str
+
+
+@app.post("/admin/keywords/synonym/override")
+def admin_keyword_synonym_override(req: SynonymOverrideRequest):
+    """添加/编辑一条同义词（可覆盖静态表中的词条）"""
+    from keyword_store import add_synonym_override
+    result = add_synonym_override(req.original, req.mapped_to)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
+    _reload_synonym_runtime()
+    return result
+
+
+@app.delete("/admin/keywords/synonym/override")
+def admin_keyword_synonym_delete(original: str):
+    """删除一条同义词覆盖（对静态词标记为删除）"""
+    from keyword_store import delete_synonym_override
+    if not original or not original.strip():
+        raise HTTPException(status_code=400, detail="original 不能为空")
+    result = delete_synonym_override(original.strip())
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
+    _reload_synonym_runtime()
+    return result
+
+
+# ===== 消歧规则管理接口 =====
+
+
+@app.get("/admin/keywords/clarification")
+def admin_clarification_rules():
+    """获取所有消歧规则（静态 + 自定义合并）"""
+    from clarification_engine import _CLARIFICATION_RULES, _get_merged_rules
+    merged = _get_merged_rules()
+    from keyword_store import get_clarification_rules
+    custom_keys = set(get_clarification_rules().keys())
+    items = []
+    for trigger, options in merged.items():
+        items.append({
+            "trigger": trigger,
+            "options": options,
+            "source": "custom" if trigger in custom_keys else "static",
+        })
+    items.sort(key=lambda x: x["trigger"])
+    return {
+        "items": items,
+        "total": len(items),
+        "static_count": sum(1 for it in items if it["source"] == "static"),
+        "custom_count": sum(1 for it in items if it["source"] == "custom"),
+    }
+
+
+class ClarificationRuleRequest(BaseModel):
+    trigger: str
+    options: List[Dict[str, str]]
+
+
+@app.post("/admin/keywords/clarification")
+def admin_clarification_save(req: ClarificationRuleRequest):
+    """保存一条消歧规则"""
+    from keyword_store import save_clarification_rule
+    result = save_clarification_rule(req.trigger, req.options)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
+    return result
+
+
+@app.delete("/admin/keywords/clarification")
+def admin_clarification_delete(trigger: str):
+    """删除一条自定义消歧规则"""
+    from keyword_store import delete_clarification_rule
+    if not trigger or not trigger.strip():
+        raise HTTPException(status_code=400, detail="trigger 不能为空")
+    result = delete_clarification_rule(trigger.strip())
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
+    return result
+
+
+# ===== LLM 智能扩充接口 =====
+
+
+class LLMExpandRequest(BaseModel):
+    category: str = "synonym"  # synonym | clarification
+    count: int = Field(default=20, ge=5, le=50)
+
+
+@app.post("/admin/keywords/llm-expand")
+def admin_llm_expand(req: LLMExpandRequest):
+    """调用 LLM 基于已有词库智能生成新词条"""
+    from keyword_store import llm_expand_synonyms
+    result = llm_expand_synonyms(category=req.category, count=req.count)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "扩充失败"))
+    _reload_synonym_runtime()
+    return result
+
+
+@app.get("/admin/keywords/llm-expand/log")
+def admin_llm_expand_log(limit: int = 20):
+    """获取 LLM 扩充历史记录"""
+    from keyword_store import get_llm_expansion_log
+    return {"items": get_llm_expansion_log(limit=min(max(1, limit), 50))}
+
+
 @app.get("/admin/logs/qa")
 def admin_logs_qa(limit: int = 20):
     return {"items": get_recent_qa(limit=min(max(1, limit), 100))}
