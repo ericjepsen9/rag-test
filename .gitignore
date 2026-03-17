@@ -6,3 +6,4 @@ logs/
 *.zip
 answer.txt
 answer_*.txt
+data/
