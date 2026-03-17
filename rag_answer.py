@@ -2039,33 +2039,49 @@ def answer_question(question: str, mode: str, history: list = None,
 
     # 多子问题时并行执行 answer_one，单子问题时直接调用（避免额外开销）
     outputs = []
+    # 记录最后一个子问题的 route/product，供 api_server 读取
+    _last_route = ""
+    _last_product = ""
     if len(sub_tasks) > 1:
         futures = []
         for subq, sub_rewrite, route in sub_tasks:
             fut = _search_pool.submit(answer_one, subq, mode,
                                       sub_rewrite, route)
-            futures.append(fut)
-        for fut in futures:
+            futures.append((fut, route, sub_rewrite))
+        for fut, route, sub_rewrite in futures:
             try:
                 ans = fut.result(timeout=60)
                 if ans and ans.strip():
                     outputs.append(ans)
+                    _last_route = route
+                    _last_product = detect_product(sub_rewrite.get("original", ""))
             except Exception as e:
                 from rag_logger import log_error
                 log_error("answer_question", f"子问题并行执行异常: {e}",
                           meta={"question": q[:100]})
+        # 将最后成功的子问题 route/product 同步到调用线程的 thread-local，
+        # 确保 api_server 调用 get_last_route_product() 能读到正确值
+        if _last_route:
+            _thread_local.route = _last_route
+        if _last_product:
+            _thread_local.product = _last_product
     else:
         for subq, sub_rewrite, route in sub_tasks:
             ans = answer_one(subq, mode, rewrite=sub_rewrite, route_override=route)
             if ans and ans.strip():
                 outputs.append(ans)
 
-    if not outputs and len(sub_questions) > 1:
-        from rag_logger import log_error
-        log_error("answer_question", "所有子问题均未产生有效回答",
-                  meta={"question": q[:100],
-                        "sub_questions": [sq[:50] for sq in sub_questions]})
-    return "\n\n".join(outputs) if outputs else _NO_MATCH_REPLY
+    if not outputs:
+        if len(sub_questions) > 1:
+            from rag_logger import log_error
+            log_error("answer_question", "所有子问题均未产生有效回答",
+                      meta={"question": q[:100],
+                            "sub_questions": [sq[:50] for sq in sub_questions]})
+        log_qa(q, _NO_MATCH_REPLY, rewritten_query=rewrite.get("expanded", ""),
+               matched_sources=[], hit=False,
+               meta={"method": "no_match"})
+        return _NO_MATCH_REPLY
+    return "\n\n".join(outputs)
 
 
 def main():

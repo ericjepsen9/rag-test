@@ -1411,8 +1411,12 @@ class TestCreateFaissIndex:
 
     def test_small_data_uses_flat(self):
         """小规模数据应使用 flat 索引，不管配置如何"""
+        pytest = __import__("pytest")
+        try:
+            import faiss
+        except ImportError:
+            pytest.skip("faiss not installed")
         from build_faiss import _create_faiss_index
-        import faiss
         # n_vectors < 100 → 始终 flat
         index = _create_faiss_index(128, 50)
         assert isinstance(index, faiss.IndexFlatIP)

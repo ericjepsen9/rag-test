@@ -3,6 +3,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
@@ -27,38 +28,64 @@ BASE_DIR = Path(__file__).resolve().parent
 ADMIN_PAGE = BASE_DIR / "admin_page.html"
 CHAT_PAGE = BASE_DIR / "web" / "chat.html"
 
-app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0")
+@asynccontextmanager
+async def _lifespan(app):
+    """启动时预热嵌入模型并预构建共享知识索引，避免首次查询延迟"""
+    if not os.environ.get("SKIP_WARMUP"):
+        try:
+            from rag_answer import embed_query
+            embed_query("预热查询")
+            print("[INFO] 嵌入模型预热完成")
+        except Exception as e:
+            print(f"[WARN] 模型预热失败: {e}")
+        # 预构建共享知识索引（procedures/equipment/anatomy 等），
+        # 避免首次跨实体查询时 30s+ 的冷启动延迟
+        try:
+            from rag_answer import _ensure_shared_store
+            _ensure_shared_store()
+            print("[INFO] 共享知识库索引预检完成")
+        except Exception as e:
+            print(f"[WARN] 共享知识库预构建失败: {e}")
+    yield
+
+app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-def _warmup_models():
-    """启动时预热嵌入模型并预构建共享知识索引，避免首次查询延迟"""
-    if os.environ.get("SKIP_WARMUP"):
-        return
-    try:
-        from rag_answer import embed_query
-        embed_query("预热查询")
-        print("[INFO] 嵌入模型预热完成")
-    except Exception as e:
-        print(f"[WARN] 模型预热失败: {e}")
-    # 预构建共享知识索引（procedures/equipment/anatomy 等），
-    # 避免首次跨实体查询时 30s+ 的冷启动延迟
-    try:
-        from rag_answer import _ensure_shared_store
-        _ensure_shared_store()
-        print("[INFO] 共享知识库索引预检完成")
-    except Exception as e:
-        print(f"[WARN] 共享知识库预构建失败: {e}")
-
 MAX_QUESTION_LEN = 500
 MAX_HISTORY_TOTAL_CHARS = 3000  # 防止历史内容过大
+
+# ===== 管理接口鉴权 =====
+# 通过环境变量 ADMIN_API_KEY 设置管理密钥，未设置时管理接口不开放鉴权（向后兼容）
+_ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "").strip()
+
+# admin 页面本身（HTML）免鉴权，但所有 admin API 需要鉴权
+_ADMIN_AUTH_EXEMPT = frozenset({"/admin"})
+
+
+@app.middleware("http")
+async def admin_auth_middleware(request: Request, call_next):
+    """管理接口鉴权中间件：对 /admin/* API 路径校验密钥"""
+    path = request.url.path.rstrip("/")
+    if _ADMIN_API_KEY and path.startswith("/admin") and path not in _ADMIN_AUTH_EXEMPT:
+        auth = request.headers.get("authorization", "")
+        key_ok = (
+            (auth.startswith("Bearer ") and auth[7:].strip() == _ADMIN_API_KEY)
+            or request.query_params.get("admin_key") == _ADMIN_API_KEY
+        )
+        if not key_ok:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "管理接口需要鉴权：请设置 ADMIN_API_KEY 并在请求中携带 Authorization: Bearer <key>"},
+            )
+    return await call_next(request)
+
 
 # 输入清理：去除 HTML 标签和控制字符，防止注入
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
