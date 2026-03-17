@@ -1596,6 +1596,22 @@ def _static_fallback(hits: list) -> list:
     ]
 
 
+def _is_material_only_query(question: str, product: str) -> str:
+    """检测是否为纯材料/通用概念查询（不涉及具体产品）。
+
+    当用户问"胶原蛋白是什么"、"玻尿酸有什么作用"等通用材料问题时，
+    不应返回产品相关结果。返回材料 ID 或空字符串。
+    """
+    # 用户明确提及了产品名 → 不是纯材料查询
+    if detect_terms(question, PRODUCT_ALIASES):
+        return ""
+    # 检测是否提到已知材料
+    material_id = _detect_material(question)
+    if not material_id:
+        return ""
+    return material_id
+
+
 def answer_one(question: str, mode: str, rewrite: dict = None,
                route_override: str = "") -> str:
     product = detect_product(question)
@@ -1605,9 +1621,16 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     if rewrite is None:
         rewrite = rewrite_query(question)
 
+    # 检测纯材料查询（如"胶原蛋白是什么"）：这类通用概念不应返回产品相关结果
+    material_only_id = ""
+    if route == "ingredient":
+        material_only_id = _is_material_only_query(question, product)
+
     # 日志基础 meta：包含上下文补全信息便于生产调试
     raw_input = rewrite.get("raw_input", "")
     _log_meta = {"product": product, "route": route, "mode": mode}
+    if material_only_id:
+        _log_meta["material_only"] = material_only_id
     if raw_input and raw_input != rewrite.get("original", ""):
         _log_meta["raw_input"] = raw_input
         _log_meta["resolved_question"] = rewrite["original"]
@@ -1625,8 +1648,13 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     search_q = rewrite.get("search_query", rewrite["original"])
 
     # 决定搜索哪些 store
-    search_product = route not in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
-    search_shared = route in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
+    # 纯材料查询：只搜共享库，不搜产品库（避免产品 chunk 干扰）
+    if material_only_id:
+        search_product = False
+        search_shared = True
+    else:
+        search_product = route not in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
+        search_shared = route in _SHARED_ROUTES or route in _HYBRID_ENTITY_ROUTES
 
     # 并行执行向量检索和关键词检索（IO/计算密集混合，线程级并行有收益）
 
@@ -1692,6 +1720,23 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             return faq_answer
 
     # ---- 策略1: LLM RAG（优先）——检索结果作为 context 让 LLM 生成答案 ----
+    # 纯材料查询：优先使用材料专属知识文件作为 LLM context（更完整准确）
+    if material_only_id and USE_OPENAI:
+        mat_text = _read_material_knowledge(material_only_id)
+        if mat_text:
+            # 材料知识文件是完整的百科式内容，直接作为 context 比检索 chunk 更好
+            context = mat_text[:4000]
+            history_summary = rewrite.get("history_summary", "") if rewrite else ""
+            history_pairs = rewrite.get("history_pairs", []) if rewrite else []
+            llm_answer = llm_generate_answer(question, context, route, mode,
+                                             history_summary=history_summary,
+                                             history_pairs=history_pairs)
+            if llm_answer:
+                log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
+                       matched_sources=build_evidence(hits), hit=True,
+                       meta={**_log_meta, "method": "llm_material_direct"})
+                return llm_answer
+
     if hits and USE_OPENAI:
         context = _build_context(hits)
         if context:
