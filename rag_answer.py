@@ -1057,8 +1057,12 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
 
 @lru_cache(maxsize=256)
 def _detect_material(question: str) -> str:
-    """检测用户问题中是否提到了特定材料，返回材料 ID 或空字符串。"""
+    """检测用户问题中是否提到了特定材料，返回材料 ID 或空字符串。
+    支持模糊匹配：如"蛋白"可匹配"胶原蛋白"，"玻尿"可匹配"玻尿酸"。"""
     found = detect_terms(question, MATERIAL_ALIASES)
+    if not found:
+        # 反向子串匹配：用户输入的部分词可能是某个材料名的子串
+        found = detect_terms(question, MATERIAL_ALIASES, allow_reverse=True)
     return found[0] if found else ""
 
 

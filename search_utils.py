@@ -86,7 +86,7 @@ _SYNONYM_MAP = {
     # === 医生 ===
     "大夫": "医生", "主治": "医生", "主任": "医生",
     # === 玻尿酸 / 透明质酸 ===
-    "玻尿酸": "透明质酸", "HA": "透明质酸",
+    "玻尿酸": "透明质酸", "HA": "透明质酸", "玻尿": "玻尿酸",
     # === 禁忌 ===
     "不适合": "禁忌", "不能做": "禁忌", "不能打": "禁忌",
     # === 效果 ===
@@ -102,7 +102,7 @@ _SYNONYM_MAP = {
     # === 紧致 ===
     "拉紧": "紧致", "提拉": "紧致", "提升": "紧致",
     # === 胶原蛋白 ===
-    "胶原蛋白": "胶原",
+    "胶原蛋白": "胶原", "蛋白": "胶原蛋白",
 
     # === 医美项目俗称 → 规范名 ===
     "瘦脸针": "肉毒素注射", "瘦咬肌": "肉毒素注射", "botox": "肉毒素注射",
@@ -734,9 +734,15 @@ def split_multi_question(question: str, separators: List[str] = None) -> List[st
 _detect_terms_cache: Dict[int, Dict[str, List[str]]] = {}  # id(term_map) -> lowered map
 
 
-def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
+def detect_terms(question: str, term_map: Dict[str, List[str]],
+                  allow_reverse: bool = False) -> List[str]:
     """检测问题中提到的实体（产品/项目等），返回匹配的 key 列表。
-    每个 key 最多匹配一次（内部 break），结果天然唯一，无需 uniq。"""
+    每个 key 最多匹配一次（内部 break），结果天然唯一，无需 uniq。
+
+    allow_reverse=True 时，额外做反向子串匹配（query_term in alias），
+    用于处理用户输入部分词的情况（如"蛋白"匹配"胶原蛋白"）。
+    反向匹配要求查询词 >= 2 字符且别名 >= 3 字符，避免过短词误匹配。
+    """
     # 缓存小写别名映射（term_map 通常是模块级常量，id 稳定）
     map_id = id(term_map)
     lowered = _detect_terms_cache.get(map_id)
@@ -746,10 +752,20 @@ def detect_terms(question: str, term_map: Dict[str, List[str]]) -> List[str]:
     q = question.lower()
     found = []
     for key, aliases in lowered.items():
+        matched = False
         for a in aliases:
             if a in q:
                 found.append(key)
+                matched = True
                 break
+        # 反向子串匹配：查询中的词是某个别名的子串
+        # 例如 "蛋白" in "胶原蛋白"，"玻尿" in "玻尿酸"
+        if not matched and allow_reverse and len(q) >= 2:
+            # 提取查询中的中文连续片段作为候选子串
+            for a in aliases:
+                if len(a) >= 3 and q in a:
+                    found.append(key)
+                    break
     return found
 
 
