@@ -121,10 +121,10 @@ def update_llm_config(purpose: str, *,
         # 重置 client 缓存
         _clients[purpose] = None
         _clients_checked[purpose] = False
+        # 同步到旧版全局变量（在锁内执行，防止并发更新竞争）
+        _sync_to_legacy(purpose)
 
-    # 同步到旧版全局变量（保持向后兼容）
-    _sync_to_legacy(purpose)
-    # 持久化
+    # 持久化（锁外执行，避免 I/O 阻塞其他配置读取）
     _persist_llm_configs()
 
     return {

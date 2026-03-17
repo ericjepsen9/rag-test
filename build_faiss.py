@@ -425,12 +425,18 @@ def build_for_product(product: str):
     # 原子写入：先写临时文件，再 rename，防止进程中断导致文件损坏
     tmp_docs = out_dir / "docs.jsonl.tmp"
     tmp_index = out_dir / "index.faiss.tmp"
-    with tmp_docs.open("w", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    _get_faiss().write_index(index, str(tmp_index))
-    os.replace(str(tmp_docs), str(docs_path))
-    os.replace(str(tmp_index), str(index_path))
+    try:
+        with tmp_docs.open("w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        _get_faiss().write_index(index, str(tmp_index))
+        os.replace(str(tmp_docs), str(docs_path))
+        os.replace(str(tmp_index), str(index_path))
+    except Exception:
+        # 清理残留临时文件，防止下次构建读到损坏数据
+        tmp_docs.unlink(missing_ok=True)
+        tmp_index.unlink(missing_ok=True)
+        raise
 
     print(f"[DONE] Built store")
     print(f"       product: {product}")

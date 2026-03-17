@@ -634,7 +634,7 @@ def _validate_product_name(name: str) -> str:
         raise HTTPException(status_code=400, detail="非法产品名称")
     # 路径遍历防护
     product_dir = (KNOWLEDGE_DIR / name).resolve()
-    if not str(product_dir).startswith(str(KNOWLEDGE_DIR.resolve()) + "/"):
+    if not product_dir.is_relative_to(KNOWLEDGE_DIR.resolve()):
         raise HTTPException(status_code=400, detail="非法产品名称")
     return name
 
@@ -669,7 +669,7 @@ def admin_knowledge_read(product: str, filename: str):
     if not fpath.exists():
         raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
     # 路径遍历二次防护
-    if not str(fpath.resolve()).startswith(str(KNOWLEDGE_DIR.resolve()) + "/"):
+    if not fpath.resolve().is_relative_to(KNOWLEDGE_DIR.resolve()):
         raise HTTPException(status_code=400, detail="非法路径")
     try:
         content = fpath.read_text(encoding="utf-8")
@@ -696,7 +696,7 @@ def admin_knowledge_write(product: str, filename: str, req: KnowledgeWriteReques
     pdir.mkdir(parents=True, exist_ok=True)
     fpath = pdir / filename
     # 路径遍历防护
-    if not str(fpath.resolve()).startswith(str((KNOWLEDGE_DIR / product).resolve())):
+    if not fpath.resolve().is_relative_to((KNOWLEDGE_DIR / product).resolve()):
         raise HTTPException(status_code=400, detail="非法路径")
     # 原子写入
     tmp = fpath.with_suffix(fpath.suffix + ".tmp")
@@ -719,7 +719,7 @@ def admin_knowledge_delete(product: str, filename: str):
     fpath = KNOWLEDGE_DIR / product / filename
     if not fpath.exists():
         raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
-    if not str(fpath.resolve()).startswith(str(KNOWLEDGE_DIR.resolve()) + "/"):
+    if not fpath.resolve().is_relative_to(KNOWLEDGE_DIR.resolve()):
         raise HTTPException(status_code=400, detail="非法路径")
     fpath.unlink()
     return {"ok": True, "deleted": filename}

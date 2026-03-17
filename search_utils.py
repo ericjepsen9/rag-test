@@ -197,14 +197,20 @@ def reload_learned_synonyms() -> int:
     return count
 
 
+def _ensure_learned_loaded():
+    """确保已学习同义词已加载（只在首次调用时触发）。"""
+    if not _learned_loaded:
+        reload_learned_synonyms()
+
+
 def lookup_learned_synonym(term: str) -> str:
     """查找已学习的同义词映射。返回映射结果或空字符串。
 
     供 query_rewrite 在调用 LLM 前先查已学习词库，避免重复消耗 token。
     """
-    if not _learned_loaded:
-        reload_learned_synonyms()
-    return _LEARNED_SYNONYM_DIRECT.get(term.strip(), "")
+    _ensure_learned_loaded()
+    with _learned_lock:
+        return _LEARNED_SYNONYM_DIRECT.get(term.strip(), "")
 
 
 def expand_synonyms(query: str) -> str:
@@ -214,13 +220,15 @@ def expand_synonyms(query: str) -> str:
 
     同时包含静态同义词（_SYNONYM_MAP）和已审核的学习同义词。
     """
-    # 确保已学习同义词已加载
-    if not _learned_loaded:
-        reload_learned_synonyms()
+    _ensure_learned_loaded()
+
+    # 在锁内取快照，防止 reload 并发修改 dict 导致 RuntimeError
+    with _learned_lock:
+        expand_snapshot = list(_SYNONYM_EXPAND.items())
 
     extra = set()
     q_lower = query.lower()
-    for term, synonyms in _SYNONYM_EXPAND.items():
+    for term, synonyms in expand_snapshot:
         if term in q_lower:
             for syn in synonyms:
                 if syn not in q_lower:

@@ -148,7 +148,7 @@ def _llm_rewrite_query(question: str) -> str:
         except Exception:
             client = None
     if client is None:
-        _llm_rewrite_cache.put(question, "")
+        # 不缓存：client 可能稍后变为可用（如用户配置了 API key）
         return ""
 
     system_prompt = (
@@ -188,7 +188,7 @@ def _llm_rewrite_query(question: str) -> str:
                       meta={"question": question[:100]})
         except Exception:
             pass
-        _llm_rewrite_cache.put(question, "")
+        # 不缓存 API 异常结果，允许后续重试（仅缓存 LLM 明确返回"无需改写"的情况）
         return ""
 
 

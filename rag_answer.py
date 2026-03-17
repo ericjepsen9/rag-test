@@ -1567,7 +1567,7 @@ def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.4,
+            temperature=ROUTE_LLM_TEMPERATURE.get(route, LLM_TEMPERATURE),
             max_tokens=800,
         )
         if not resp.choices:
