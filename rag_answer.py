@@ -1553,12 +1553,14 @@ def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
             )
 
     system_prompt = (
-        "你是一位专业、亲切的医美顾问助手。用户问了一个知识库中尚未完全覆盖的问题。\n"
+        "你是一位专业、亲切的医美顾问助手。用户问了一个知识库未能精确匹配的问题。\n"
+        "可能的原因：用户用词口语化/缩写/错别字，或确实超出知识库范围。\n"
         "你的任务是：\n"
-        "1. 坦诚但友好地告知该话题目前知识库覆盖不足，不要编造任何事实\n"
-        "2. 如果提供了部分相关片段，可以简要提及相关信息（注明仅供参考）\n"
-        "3. 根据用户问题，推荐1-2个知识库能详细回答的相关话题\n"
-        "4. 语气自然亲切，不要生硬\n"
+        "1. 如果能理解用户意图且知识库有相关内容，尝试用提供的片段回答（注明仅供参考）\n"
+        "2. 如果确实超出范围，坦诚但友好地说明，不要编造事实\n"
+        "3. 推荐1-2个知识库能详细回答的相关话题，帮助用户换一种方式提问\n"
+        "4. 如果用户可能是用了口语化表达，提示更规范的问法\n"
+        "5. 语气自然亲切，不要生硬\n"
         f"\n当前知识库覆盖的主题包括：\n{_KNOWLEDGE_TOPICS}\n"
     )
 
@@ -1585,17 +1587,29 @@ def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
         return ""
 
 
-def _static_fallback(hits: list) -> list:
-    """无 LLM 时的静态兜底文案"""
+def _static_fallback(hits: list, question: str = "") -> list:
+    """无 LLM 时的静态兜底文案。根据是否有检索结果提供不同的引导。"""
     if hits:
-        return [
-            "知识库中可能存在相关信息，但置信度不足以生成准确结论。",
-            "建议换一种表述重新提问，或咨询专业医师。",
+        # 有检索结果但置信度不足——可能是用词不精确
+        lines = [
+            "抱歉，未能精确匹配到您的问题。可能是表述方式与知识库不同。",
+            "您可以尝试：",
+            "- 使用更具体的术语，如\u201c菲罗奥术后护理\u201d而非简单说\u201c做完注意啥\u201d",
+            "- 指明产品名称（菲罗奥/赛洛菲）",
+            "- 分开提问，每次问一个具体问题",
         ]
+        # 如果有低分命中，提示相关主题
+        top_text = (hits[0].get("text", "")[:100] if hits else "")
+        if top_text:
+            lines.append(f"- 知识库中可能相关的内容：\u201c{top_text.strip()[:50]}...\u201d")
+        return lines
     return [
-        "该问题目前知识库尚未覆盖。",
-        "您可以尝试问我以下方面的问题：产品成分与功效、术后护理、"
-        "禁忌人群、操作方法、效果维持时间、联合方案等。",
+        "该问题超出了当前知识库的覆盖范围。",
+        "我可以回答以下方面的问题：",
+        "- 菲罗奥产品：成分、功效、操作方法、术后护理、禁忌人群、防伪鉴别",
+        "- 医美项目：水光针、微针、光电（射频/皮秒/IPL）等的原理和流程",
+        "- 皮肤问题：松弛、干燥、毛孔、色斑、痘坑、皱纹等改善建议",
+        "- 术后管理：并发症处理、疗程规划、联合方案",
         "如需专业建议，建议咨询医师。",
     ]
 
@@ -1797,7 +1811,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 method = "no_hit"
             _log_knowledge_gap(question, route, rewrite, hits, _log_meta)
             evidence = build_evidence(hits)
-            text = format_structured_answer(route, _static_fallback(hits), evidence,
+            text = format_structured_answer(route, _static_fallback(hits, question), evidence,
                                             add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=evidence, hit=False,

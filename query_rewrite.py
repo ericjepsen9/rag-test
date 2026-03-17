@@ -91,7 +91,11 @@ def _should_trigger_llm_rewrite(question: str, products: list, projects: list,
                                  detected_routes: list, is_chitchat: bool,
                                  is_offtopic: bool) -> bool:
     """判断是否需要触发 LLM 查询改写。
-    只在静态手段完全失效时触发，避免不必要的 LLM 调用。
+
+    改进策略：不仅在静态手段完全失效时触发，还在以下「边界情况」触发：
+    1. 未识别到任何产品/项目且路由为 basic（最弱命中）
+    2. 问题含有模糊/口语化表达，但只命中了一个通用路由关键词
+    这样可以让更多「用词不精确」的查询被 LLM 纠正到规范术语。
     """
     if not _LLM_REWRITE_ENABLED:
         return False
@@ -101,17 +105,25 @@ def _should_trigger_llm_rewrite(question: str, products: list, projects: list,
     q = question.strip()
     if len(q) <= 2 or len(q) > 50:
         return False
-    # 已识别到产品或项目 → 静态手段有效，不需要 LLM
-    if products or projects:
+    # 已识别到产品 + 明确路由 → 静态手段工作良好，不需要 LLM
+    if products and detected_routes and not (len(detected_routes) == 1 and detected_routes[0] == "basic"):
         return False
-    # 已匹配到明确路由（非 basic）→ 关键词命中，不需要 LLM
-    if detected_routes and not (len(detected_routes) == 1 and detected_routes[0] == "basic"):
+    # 已识别到项目 + 明确路由 → 不需要 LLM
+    if projects and detected_routes and not (len(detected_routes) == 1 and detected_routes[0] == "basic"):
         return False
-    # 检查是否包含已知路由关键词（即使 _detect_route_for_expansion 没返回）
+    # 如果只命中了 basic 路由或没命中任何路由 → 触发 LLM 改写
+    # 即使识别到了产品/项目，路由不明确也值得让 LLM 帮助理解用户意图
+    if not detected_routes or (len(detected_routes) == 1 and detected_routes[0] == "basic"):
+        return True
+    # 检查是否包含足够的已知路由关键词（命中数 >= 2 才认为静态手段可靠）
     q_lower = q.lower()
-    if any(kw in q_lower for kw in _ALL_ROUTE_KEYWORDS):
+    route_kw_hits = sum(1 for kw in _ALL_ROUTE_KEYWORDS if kw in q_lower)
+    if route_kw_hits >= 2:
         return False
-    return True
+    # 只命中一个路由关键词且没有产品/项目 → 边界情况，触发 LLM
+    if not products and not projects:
+        return True
+    return False
 
 
 def _llm_rewrite_query(question: str) -> str:
