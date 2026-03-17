@@ -3,6 +3,7 @@ import math
 import re
 import threading
 import unicodedata
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Any, List, Dict, Tuple
 
@@ -332,6 +333,9 @@ def reload_learned_synonyms() -> int:
             count += 1
 
         _learned_loaded = True
+        # 刷新快照供 expand_synonyms 使用（避免每次调用都持锁遍历）
+        global _SYNONYM_EXPAND_SNAPSHOT
+        _SYNONYM_EXPAND_SNAPSHOT = list(_SYNONYM_EXPAND.items())
     return count
 
 
@@ -363,7 +367,9 @@ def expand_synonyms(query: str) -> str:
 
     # 在锁内取快照，防止 reload 并发修改 dict 导致 RuntimeError
     with _learned_lock:
-        expand_snapshot = list(_SYNONYM_EXPAND.items())
+        expand_snapshot = _SYNONYM_EXPAND_SNAPSHOT
+        if expand_snapshot is None:
+            expand_snapshot = list(_SYNONYM_EXPAND.items())
 
     extra = set()
     q_lower = query.lower()
@@ -393,6 +399,11 @@ def expand_synonyms(query: str) -> str:
         expanded = query + " " + " ".join(sorted(extra))
         return expanded[:2000]  # 防止同义词膨胀过长
     return query
+
+
+# 同义词扩展表快照：在 reload_learned_synonyms 后刷新，
+# 避免每次 expand_synonyms 调用都持锁遍历 dict
+_SYNONYM_EXPAND_SNAPSHOT = None  # type: list | None
 
 
 # 预编译：提取连续中文字符片段
@@ -549,20 +560,27 @@ def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
 
 
 _CACHE_MAX_SIZE = CACHE_MAX_PRODUCTS
-_bm25_cache: Dict[Any, Tuple[List[str], int, float]] = {}
+_bm25_cache: OrderedDict = OrderedDict()
 
 
-def _cache_put(cache: dict, key: Any, value: Any, max_size: int = 0) -> None:
-    """写入缓存，超过上限时清除最早的条目。已有 key 时直接覆盖不淘汰。"""
+def _cache_put(cache, key: Any, value: Any, max_size: int = 0) -> None:
+    """写入缓存，LRU 淘汰。OrderedDict 时使用 move_to_end/popitem(last=False)，
+    普通 dict 时回退到 next(iter()) 淘汰。"""
     limit = max_size if max_size > 0 else _CACHE_MAX_SIZE
+    _is_ordered = isinstance(cache, OrderedDict)
     if key in cache:
         cache[key] = value
+        if _is_ordered:
+            cache.move_to_end(key)
         return
     while len(cache) >= limit:
         try:
-            oldest = next(iter(cache))
-            cache.pop(oldest, None)
-        except (StopIteration, RuntimeError):
+            if _is_ordered:
+                cache.popitem(last=False)
+            else:
+                oldest = next(iter(cache))
+                cache.pop(oldest, None)
+        except (KeyError, StopIteration, RuntimeError):
             break
     cache[key] = value
 
@@ -586,6 +604,7 @@ def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float, Tuple]:
     key = _corpus_cache_key(docs)
     cached = _bm25_cache.get(key)
     if cached:
+        _bm25_cache.move_to_end(key)  # LRU: 标记最近使用
         return cached[0], cached[1], cached[2], key
     texts = [(d.get("text") or "").lower() for d in docs]
     n_docs = len(texts)
@@ -594,7 +613,7 @@ def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float, Tuple]:
     return texts, n_docs, avg_dl, key
 
 
-_df_cache: Dict[Any, Dict[str, int]] = {}  # corpus_key -> {term: df}
+_df_cache: OrderedDict = OrderedDict()  # corpus_key -> {term: df}
 
 
 def _get_doc_freq(term: str, texts: List[str], corpus_key: Any) -> int:
@@ -634,7 +653,7 @@ def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dic
 # 倒排索引：加速 BM25 检索，跳过不包含任何查询词的文档
 # ============================================================
 
-_inverted_index_cache: Dict[Any, Dict[str, List[int]]] = {}  # corpus_key -> {term: [doc_ids]}
+_inverted_index_cache: OrderedDict = OrderedDict()  # corpus_key -> {term: [doc_ids]}
 
 
 def _get_inverted_index(texts: List[str], corpus_key: Any) -> Dict[str, List[int]]:
@@ -642,6 +661,7 @@ def _get_inverted_index(texts: List[str], corpus_key: Any) -> Dict[str, List[int
     惰性构建，缓存复用。索引粒度为 2-gram 以匹配 _extract_terms 的输出。"""
     cached = _inverted_index_cache.get(corpus_key)
     if cached is not None:
+        _inverted_index_cache.move_to_end(corpus_key)  # LRU
         return cached
     inv: Dict[str, List[int]] = {}
     for i, text in enumerate(texts):
@@ -656,11 +676,33 @@ def _get_inverted_index(texts: List[str], corpus_key: Any) -> Dict[str, List[int
     return inv
 
 
+_char_index_cache: OrderedDict = OrderedDict()  # corpus_key -> {char: set(doc_ids)}
+
+
+def _get_char_index(inv_index: Dict[str, List[int]], corpus_key: Any) -> Dict[str, set]:
+    """构建/获取字符级索引：{单字符: 包含该字符的文档集合}。
+    从 bigram 索引反推，缓存复用。"""
+    cached = _char_index_cache.get(corpus_key)
+    if cached is not None:
+        _char_index_cache.move_to_end(corpus_key)
+        return cached
+    char_idx: Dict[str, set] = {}
+    for bg, doc_ids in inv_index.items():
+        for ch in bg:
+            if ch not in char_idx:
+                char_idx[ch] = set(doc_ids)
+            else:
+                char_idx[ch].update(doc_ids)
+    _cache_put(_char_index_cache, corpus_key, char_idx)
+    return char_idx
+
+
 def _get_candidate_docs(terms: List[str], inv_index: Dict[str, List[int]],
-                         n_docs: int) -> List[int]:
+                         n_docs: int, corpus_key: Any = None) -> List[int]:
     """用倒排索引找出包含至少一个查询词的文档集合。
     返回排序后的文档索引列表。"""
     candidate_set: set = set()
+    need_char_idx = False
     for term in terms:
         # 对每个查询词，查找包含它的文档
         if len(term) >= 2:
@@ -680,10 +722,17 @@ def _get_candidate_docs(terms: List[str], inv_index: Dict[str, List[int]],
                 else:
                     candidate_set.update(sets[0].intersection(*sets[1:]))
         elif len(term) == 1:
-            # 单字符 term：遍历所有包含该字符的 bigram
-            for bg_key, doc_ids in inv_index.items():
-                if term in bg_key:
-                    candidate_set.update(doc_ids)
+            need_char_idx = True
+
+    # 批量处理单字符 term：用预构建的字符索引替代遍历所有 bigram
+    if need_char_idx:
+        char_index = _get_char_index(inv_index, corpus_key)
+        for term in terms:
+            if len(term) == 1:
+                docs = char_index.get(term)
+                if docs is not None:
+                    candidate_set.update(docs)
+
     return sorted(candidate_set)
 
 
@@ -705,7 +754,7 @@ def keyword_search(query: str, docs: List[Dict], top_k: int = 8,
 
     # 倒排索引加速：只对包含查询词的文档计算 BM25，跳过无关文档
     inv_index = _get_inverted_index(texts, corpus_key)
-    candidates = _get_candidate_docs(q_terms, inv_index, n_docs)
+    candidates = _get_candidate_docs(q_terms, inv_index, n_docs, corpus_key=corpus_key)
 
     scored = []
     for i in candidates:
@@ -934,7 +983,7 @@ def detect_terms(question: str, term_map: Dict[str, List[str]],
 # ============================================================
 
 # Rerank 结果缓存：避免相同 query + 相同候选集重复调用 compute_score
-_rerank_cache: Dict[str, List[Tuple[str, float]]] = {}  # cache_key -> [(hit_key, score), ...]
+_rerank_cache: OrderedDict = OrderedDict()  # cache_key -> [(hit_key, score), ...]
 _RERANK_CACHE_MAX = 512
 
 
@@ -961,6 +1010,7 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
     cache_key = _rerank_cache_key(query, hits)
     cached = _rerank_cache.get(cache_key)
     if cached is not None:
+        _rerank_cache.move_to_end(cache_key)  # LRU
         # 用缓存的分数重建排序
         score_map = dict(cached)
         for h in hits:

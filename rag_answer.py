@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import threading
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Dict
@@ -219,15 +220,18 @@ def get_model():
     return _model
 
 
-_embed_cache: Dict[str, np.ndarray] = {}  # query text -> normalized embedding
+_embed_cache: OrderedDict = OrderedDict()  # query text -> normalized embedding
 _EMBED_CACHE_MAX = 1024  # 最多缓存 1024 条查询向量（每条 ~4KB，总占用 ~4MB）
+_embed_cache_lock = threading.Lock()
 
 
 def embed_query(text: str) -> np.ndarray:
     # LRU 缓存：相同查询直接返回已计算的向量，避免重复编码（节省 2-5s/次）
-    cached = _embed_cache.get(text)
-    if cached is not None:
-        return cached.copy()  # 返回副本防止外部修改
+    with _embed_cache_lock:
+        cached = _embed_cache.get(text)
+        if cached is not None:
+            _embed_cache.move_to_end(text)  # LRU: 标记最近使用
+            return cached.copy()  # 返回副本防止外部修改
 
     model = get_model()
     out = model.encode([text], batch_size=EMBED_BATCH_SIZE_QUERY, max_length=EMBED_MAX_LENGTH_QUERY)
@@ -245,14 +249,18 @@ def embed_query(text: str) -> np.ndarray:
     vec = np.asarray(vec, dtype="float32")
     get_faiss().normalize_L2(vec)
 
-    # 写入缓存（超限时淘汰最早条目）
-    if len(_embed_cache) >= _EMBED_CACHE_MAX:
-        try:
-            oldest = next(iter(_embed_cache))
-            _embed_cache.pop(oldest, None)
-        except StopIteration:
-            pass
-    _embed_cache[text] = vec.copy()
+    # 写入缓存（LRU 淘汰最久未使用条目）
+    with _embed_cache_lock:
+        if text in _embed_cache:
+            _embed_cache[text] = vec.copy()
+            _embed_cache.move_to_end(text)
+        else:
+            while len(_embed_cache) >= _EMBED_CACHE_MAX:
+                try:
+                    _embed_cache.popitem(last=False)
+                except KeyError:
+                    break
+            _embed_cache[text] = vec.copy()
     return vec
 
 
@@ -421,7 +429,7 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
     return hits
 
 
-_knowledge_file_cache: Dict[str, tuple] = {}  # path -> (mtime, content)
+_knowledge_file_cache: OrderedDict = OrderedDict()  # path -> (mtime, content)
 _KNOWLEDGE_CACHE_MAX = 128  # 防止无限增长（每条缓存 ~几十KB 文本）
 
 def read_knowledge_file(product: str, fname: str) -> str:
@@ -432,6 +440,7 @@ def read_knowledge_file(product: str, fname: str) -> str:
     mtime = p.stat().st_mtime
     cached = _knowledge_file_cache.get(key)
     if cached and cached[0] == mtime:
+        _knowledge_file_cache.move_to_end(key)  # LRU
         return cached[1]
     content = p.read_text(encoding="utf-8")
     _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
@@ -510,20 +519,22 @@ def detect_route(question: str) -> str:
     q = (question or "").lower()
 
     # 收集每个 route 的匹配关键词（使用预计算小写版本避免循环内 .lower()）
+    # 按关键词长度降序排列的全局映射加速匹配
     matched = {}
+    scores = {}
     for route in _ROUTE_ORDER:
-        hits = [kw for kw in _QUESTION_ROUTES_LOWER.get(route, []) if kw in q]
-        if hits:
-            matched[route] = hits
+        route_score = 0.0
+        route_hits = []
+        for kw in _QUESTION_ROUTES_LOWER.get(route, []):
+            if kw in q:
+                route_hits.append(kw)
+                route_score += max(1.0, len(kw) / 2)
+        if route_hits:
+            matched[route] = route_hits
+            scores[route] = route_score
 
     if not matched:
         return "basic"
-
-    # ---- 置信度评分：多路由歧义时用加权分数决定 ----
-    scores = {}
-    for route, hits in matched.items():
-        score = sum(max(1.0, len(kw) / 2) for kw in hits)
-        scores[route] = score
 
     # 消歧加分规则（使用模块级常量，避免每次调用重建列表）
     if "contraindication" in scores and any(s in q for s in _CONTRA_SIGNALS):
@@ -967,16 +978,21 @@ _SHARED_ROUTE_DIR = {
 }
 
 
-_shared_knowledge_cache: Dict[str, tuple] = {}  # dir_name -> (max_mtime, content)
+_shared_knowledge_cache: OrderedDict = OrderedDict()  # dir_name -> (max_mtime, content)
 _SHARED_CACHE_MAX = 32  # 共享知识目录数量有限，设保守上限
 
-def _evict_cache(cache: dict, max_size: int) -> None:
-    """通用缓存淘汰：超过上限时移除最早条目"""
+def _evict_cache(cache, max_size: int) -> None:
+    """通用 LRU 缓存淘汰：超过上限时移除最久未使用条目。
+    支持 OrderedDict（LRU）和普通 dict（FIFO 近似）。"""
+    _is_ordered = isinstance(cache, OrderedDict)
     while len(cache) >= max_size:
         try:
-            oldest = next(iter(cache))
-            cache.pop(oldest, None)
-        except (StopIteration, RuntimeError):
+            if _is_ordered:
+                cache.popitem(last=False)
+            else:
+                oldest = next(iter(cache))
+                cache.pop(oldest, None)
+        except (KeyError, StopIteration, RuntimeError):
             break
 
 
@@ -1018,6 +1034,7 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
             mtime = main_file.stat().st_mtime
             cached = _shared_knowledge_cache.get(dir_name)
             if cached and cached[0] == mtime:
+                _shared_knowledge_cache.move_to_end(dir_name)  # LRU
                 return cached[1]
             content = main_file.read_text(encoding="utf-8")
             _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
@@ -1033,6 +1050,7 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
                 mtime = target.stat().st_mtime
                 cached = _shared_knowledge_cache.get(cache_key_sub)
                 if cached and cached[0] == mtime:
+                    _shared_knowledge_cache.move_to_end(cache_key_sub)  # LRU
                     return cached[1]
                 content = target.read_text(encoding="utf-8")
                 _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
@@ -1054,6 +1072,7 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
         cache_key = (max_mtime, len(inst_files))
         cached = _shared_knowledge_cache.get(dir_name)
         if cached and cached[0] == cache_key and inst_files:
+            _shared_knowledge_cache.move_to_end(dir_name)  # LRU
             return cached[1]
         # 缓存未命中，读取文件内容
         parts = [fp.read_text(encoding="utf-8") for fp in inst_files]
@@ -1092,6 +1111,7 @@ def _read_material_knowledge(material_id: str) -> str:
     mtime = main_file.stat().st_mtime
     cached = _knowledge_file_cache.get(key)
     if cached and cached[0] == mtime:
+        _knowledge_file_cache.move_to_end(key)  # LRU
         return cached[1]
     content = main_file.read_text(encoding="utf-8")
     _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
@@ -1476,6 +1496,7 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
                    if t and (len(t) >= 2 or _RE_CJK_SINGLE.fullmatch(t))]
     scored_lines = []
     seen_lines = set()
+    sep_chars = _SEPARATOR_CHARS
     for h in hits:
         text = (h.get("text") or "").strip()
         if not text:
@@ -1485,16 +1506,22 @@ def _fallback_from_hits(hits: List[Dict], max_lines: int = 8,
             if not ln or len(ln) <= 6:
                 continue
             # 跳过纯标题行和分隔线
-            if _RE_CN_SECTION_TITLE.match(ln) or not (set(ln) - _SEPARATOR_CHARS):
+            if _RE_CN_SECTION_TITLE.match(ln) or not (set(ln) - sep_chars):
                 continue
             # 早期去重，避免大量重复行进入排序
             ln_key = " ".join(ln.split())
             if ln_key in seen_lines:
                 continue
             seen_lines.add(ln_key)
-            ln_lower = ln.lower()
-            match_count = sum(1 for t in query_terms if t in ln_lower) if query_terms else 0
+            if query_terms:
+                ln_lower = ln.lower()
+                match_count = sum(1 for t in query_terms if t in ln_lower)
+            else:
+                match_count = 0
             scored_lines.append((match_count, ln))
+        # 提前退出：如果已收集足够多的高质量行
+        if len(scored_lines) >= max_lines * 4:
+            break
     # 按匹配数降序排列
     scored_lines.sort(key=lambda x: x[0], reverse=True)
     return [ln for _, ln in scored_lines[:max_lines]]
