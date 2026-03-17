@@ -631,6 +631,12 @@
             启用此用途的 LLM
           </label>
         </div>
+        <div class="form-group">
+          <label class="inline-label">
+            <span class="switch"><input type="checkbox" id="model-format"><span class="slider"></span></span>
+            LiteLLM 代理模式 <small style="color:#888">（使用 provider:model_id 格式，适用于 LiteLLM 代理等中转服务）</small>
+          </label>
+        </div>
         <div style="margin-top:16px">
           <button class="btn-primary" onclick="saveModelConfig()">保存并应用</button>
           <button class="btn-ghost" onclick="testModelConnection()" style="margin-left:8px">测试连接</button>
@@ -1377,6 +1383,9 @@ function selectProvider(provider) {
     document.getElementById('model-api-base').value = '';
   }
   document.getElementById('model-enabled').checked = cfg.enabled ?? true;
+  // model_format: LiteLLM proxy support
+  const fmtEl = document.getElementById('model-format');
+  if (fmtEl) fmtEl.checked = (cfg.model_format === 'litellm');
   document.getElementById('model-test-result').innerHTML = '';
 }
 
@@ -1393,6 +1402,7 @@ async function saveModelConfig() {
     ? document.getElementById('model-name-custom').value.trim()
     : modelSel;
   if (!model) { toast('请输入模型名称', 'error'); return; }
+  const fmtEl = document.getElementById('model-format');
   const payload = {
     purpose: currentLLMPurpose,
     provider: selectedProvider,
@@ -1400,6 +1410,7 @@ async function saveModelConfig() {
     api_base: document.getElementById('model-api-base').value.trim(),
     api_key: document.getElementById('model-api-key').value.trim(),
     enabled: document.getElementById('model-enabled').checked,
+    model_format: (fmtEl && fmtEl.checked) ? 'litellm' : 'standard',
   };
   try {
     await api('/admin/llm/configs', {method:'POST', headers:{'Content-Type':'application/json'},

@@ -20,6 +20,7 @@ _llm_configs: Dict[str, Dict[str, Any]] = {
         "model": "",
         "api_base": "",
         "api_key": "",      # 运行时存储，不持久化
+        "model_format": "standard",  # "standard" or "litellm" (provider:model_id)
     },
     "knowledge": {
         "enabled": False,
@@ -27,6 +28,7 @@ _llm_configs: Dict[str, Dict[str, Any]] = {
         "model": "",
         "api_base": "",
         "api_key": "",
+        "model_format": "standard",  # "standard" or "litellm" (provider:model_id)
     },
 }
 
@@ -68,6 +70,7 @@ def get_llm_config(purpose: str = "chat") -> Dict[str, Any]:
         "model": cfg["model"],
         "api_base": cfg["api_base"],
         "api_key_set": bool(cfg["api_key"]),
+        "model_format": cfg.get("model_format", "standard"),
     }
 
 
@@ -84,7 +87,8 @@ def update_llm_config(purpose: str, *,
                        model: str = "",
                        api_base: Optional[str] = None,
                        api_key: str = "",
-                       enabled: Optional[bool] = None) -> Dict[str, Any]:
+                       enabled: Optional[bool] = None,
+                       model_format: str = "") -> Dict[str, Any]:
     """更新指定用途的 LLM 配置，并重置对应的 client 缓存。
 
     api_base: None 表示不更新，"" 表示清空（恢复默认）。
@@ -112,6 +116,8 @@ def update_llm_config(purpose: str, *,
             cfg["api_key"] = api_key
         if enabled is not None:
             cfg["enabled"] = bool(enabled)
+        if model_format and model_format in ("standard", "litellm"):
+            cfg["model_format"] = model_format
         # 重置 client 缓存
         _clients[purpose] = None
         _clients_checked[purpose] = False
@@ -128,6 +134,7 @@ def update_llm_config(purpose: str, *,
         "model": cfg["model"],
         "api_base": cfg["api_base"],
         "enabled": cfg["enabled"],
+        "model_format": cfg.get("model_format", "standard"),
     }
 
 
@@ -171,8 +178,19 @@ def get_client(purpose: str = "chat"):
 
 
 def get_model(purpose: str = "chat") -> str:
-    """获取指定用途的模型名称"""
-    return _llm_configs.get(purpose, _llm_configs["chat"])["model"]
+    """获取指定用途的模型名称。
+
+    当 model_format 为 "litellm" 时，返回 "provider:model" 格式
+    （适用于 LiteLLM 代理等需要 provider:model_id 格式的 API 端点）。
+    """
+    cfg = _llm_configs.get(purpose, _llm_configs["chat"])
+    model = cfg["model"]
+    if (cfg.get("model_format") == "litellm"
+            and cfg["provider"]
+            and model
+            and ":" not in model):
+        return f"{cfg['provider']}:{model}"
+    return model
 
 
 def is_enabled(purpose: str = "chat") -> bool:
@@ -244,6 +262,7 @@ def _persist_llm_configs():
             "api_base": cfg["api_base"],
             # api_key 不持久化到文件（安全考虑），仅持久化是否设置过
             "api_key_set": bool(cfg["api_key"]),
+            "model_format": cfg.get("model_format", "standard"),
         }
     with _lock:
         tmp = config_file.with_suffix(".tmp")
@@ -269,6 +288,7 @@ def load_persisted_llm_configs():
                 cfg["provider"] = saved.get("provider", "")
                 cfg["model"] = saved.get("model", "")
                 cfg["api_base"] = saved.get("api_base", "")
+                cfg["model_format"] = saved.get("model_format", "standard")
                 # api_key 从环境变量恢复
                 if purpose == "chat":
                     cfg["api_key"] = os.environ.get("OPENAI_API_KEY", "").strip()

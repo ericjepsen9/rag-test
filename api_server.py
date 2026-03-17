@@ -887,6 +887,7 @@ class MultiLLMUpdateRequest(BaseModel):
     api_base: Optional[str] = None   # None=不更新, ""=清空
     api_key: str = ""
     enabled: Optional[bool] = None
+    model_format: str = ""           # "standard" or "litellm" (provider:model_id)
 
 
 @app.post("/admin/llm/configs")
@@ -900,6 +901,7 @@ def admin_update_llm_config(req: MultiLLMUpdateRequest):
         api_base=req.api_base,
         api_key=req.api_key,
         enabled=req.enabled,
+        model_format=req.model_format,
     )
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
