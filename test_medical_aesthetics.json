@@ -1,0 +1,940 @@
+[
+  {"_comment": "========== 分类一：产品基础信息 =========="},
+  {
+    "q": "菲罗奥是什么",
+    "expect_any": ["PCL", "提升", "水光", "精华", "产品"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "FILLOUP是什么牌子",
+    "expect_any": ["菲罗奥", "FILLOUP", "品牌"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "菲罗奥规格是什么",
+    "expect_any": ["3ml", "6瓶", "西林瓶"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "菲罗奥保质期多长",
+    "expect_any": ["2年", "保质期", "常温"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "赛罗菲是什么",
+    "expect_any": ["菲罗奥", "赛罗菲", "CELLOFILL", "产品"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "菲罗奥备案号是多少",
+    "expect_any": ["备案", "国妆", "2012500274"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "菲罗奥适合哪些人",
+    "expect_any": ["松弛", "暗哑", "缺水", "细纹"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+  {
+    "q": "菲罗奥能用在哪些部位",
+    "expect_any": ["脸", "脖子", "手部", "胸前"],
+    "route": "basic",
+    "category": "产品基础"
+  },
+
+  {"_comment": "========== 分类二：核心成分 =========="},
+  {
+    "q": "菲罗奥有什么成分",
+    "expect_any": ["PCL", "聚己内酯", "透明质酸", "谷胱甘肽"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "PCL是什么东西",
+    "expect_any": ["聚己内酯", "胶原蛋白", "再生"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "菲罗奥里的玻尿酸有什么作用",
+    "expect_any": ["透明质酸", "补水", "保湿", "轮廓"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "谷胱甘肽的作用是什么",
+    "expect_any": ["抗氧化", "自由基", "提亮"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "IntoCell是什么",
+    "expect_any": ["修护因子", "生长因子", "细胞"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "菲罗奥含有哪些肽",
+    "expect_any": ["肽", "胶原", "弹性蛋白", "合成"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "聚乙二醇有什么用",
+    "expect_any": ["渗透", "水分", "质地"],
+    "route": "ingredient",
+    "category": "成分"
+  },
+  {
+    "q": "玻尿酸和PCL有什么区别",
+    "expect_any": ["透明质酸", "PCL", "填充", "胶原", "区别"],
+    "route": null,
+    "category": "成分",
+    "_note": "对比类问题走特殊意图"
+  },
+
+  {"_comment": "========== 分类三：操作方法与注射参数 =========="},
+  {
+    "q": "菲罗奥怎么操作",
+    "expect_any": ["涂抹", "微针", "MTS", "水光", "注射"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "菲罗奥注射深度多少",
+    "expect_any": ["0.8mm", "1.0mm", "深度"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "菲罗奥每次用几支",
+    "expect_any": ["2", "3", "支", "面积"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "菲罗奥注射间距是多少",
+    "expect_any": ["2cm", "间距"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "水光仪打菲罗奥用什么针头",
+    "expect_any": ["9针", "针头", "可调节"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "菲罗奥能用单针打吗",
+    "expect_any": ["不建议", "单针"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "每个点注射多少ml",
+    "expect_any": ["0.3ml", "注射量"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "菲罗奥可以涂抹使用吗",
+    "expect_any": ["涂抹", "清洁后", "直接"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+  {
+    "q": "打菲罗奥需要敷麻药吗",
+    "expect_any": ["麻醉", "敷麻", "30分钟"],
+    "route": "operation",
+    "category": "操作参数"
+  },
+
+  {"_comment": "========== 分类四：防伪鉴别 =========="},
+  {
+    "q": "菲罗奥怎么验真假",
+    "expect_any": ["HiddenTag", "APP", "防伪"],
+    "route": "anti_fake",
+    "category": "防伪"
+  },
+  {
+    "q": "HiddenTag怎么用",
+    "expect_any": ["下载", "APP", "正品认证", "扫描"],
+    "route": "anti_fake",
+    "category": "防伪"
+  },
+  {
+    "q": "微信扫码能验证菲罗奥真伪吗",
+    "expect_any": ["HiddenTag", "其他扫码", "无效"],
+    "route": "anti_fake",
+    "category": "防伪"
+  },
+  {
+    "q": "菲罗奥防伪标签在哪",
+    "expect_any": ["标签", "HiddenTag", "扫描"],
+    "route": "anti_fake",
+    "category": "防伪"
+  },
+  {
+    "q": "赛罗菲的生产厂家是哪里的",
+    "expect_any": ["韩国", "G-international"],
+    "route": "anti_fake",
+    "category": "防伪"
+  },
+
+  {"_comment": "========== 分类五：术后护理（详细场景覆盖） =========="},
+  {
+    "q": "打完菲罗奥多久能洗脸",
+    "expect_any": ["24小时", "洗脸"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "术后要敷面膜吗",
+    "expect_any": ["面膜", "医用面膜", "连续一周"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "做完菲罗奥能吃火锅吗",
+    "expect_any": ["辛辣", "一周", "避免"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "术后能用洁面仪吗",
+    "expect_any": ["洁面仪", "一周", "不要"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "打完菲罗奥能做瑜伽吗",
+    "expect_any": ["出汗", "运动", "一周", "避免"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "做完可以泡温泉吗",
+    "expect_any": ["温泉", "汗蒸", "一周", "避免"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "术后多久可以用果酸产品",
+    "expect_any": ["酸类", "果酸", "一周", "避免"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "术后能抽烟吗",
+    "expect_any": ["术后", "避免"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "做完需要请假吗",
+    "expect_any": ["上班", "工作", "正常", "无需"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "术后能趴着睡吗",
+    "expect_any": ["低头", "趴", "1-3天", "避免"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+  {
+    "q": "做完菲罗奥需要补充什么营养",
+    "expect_any": ["维生素", "胶原蛋白", "水果蔬菜"],
+    "route": "aftercare",
+    "category": "术后护理"
+  },
+
+  {"_comment": "========== 分类六：禁忌人群 =========="},
+  {
+    "q": "哪些人不能打菲罗奥",
+    "expect_any": ["禁忌", "妊娠", "过敏", "免疫"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "怀孕能做菲罗奥吗",
+    "expect_any": ["妊娠", "禁忌", "哺乳"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "喂奶期间可以注射吗",
+    "expect_any": ["哺乳", "禁忌", "妊娠"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "16岁能打吗",
+    "expect_any": ["18岁", "未成年", "禁忌"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "有红斑狼疮能做吗",
+    "expect_any": ["自身免疫", "免疫", "禁忌", "不适合"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "脸上正在长痘能打菲罗奥吗",
+    "expect_any": ["感染", "炎症", "皮肤疾病", "禁忌"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "做完双眼皮手术多久能打菲罗奥",
+    "expect_any": ["间隔", "恢复", "医生", "评估"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+  {
+    "q": "有风湿病能做菲罗奥吗",
+    "expect_any": ["关节风湿", "心脏", "禁忌"],
+    "route": "contraindication",
+    "category": "禁忌"
+  },
+
+  {"_comment": "========== 分类七：风险与不良反应 =========="},
+  {
+    "q": "打菲罗奥有什么副作用",
+    "expect_any": ["红肿", "淤青", "结节", "反应"],
+    "route": "risk",
+    "category": "风险"
+  },
+  {
+    "q": "术后出现硬块怎么处理",
+    "expect_any": ["硬块", "结节", "医生", "评估"],
+    "route": "risk",
+    "category": "风险"
+  },
+  {
+    "q": "注射部位发炎了怎么办",
+    "expect_any": ["感染", "就医", "红肿", "发热"],
+    "route": "risk",
+    "category": "风险"
+  },
+  {
+    "q": "打完菲罗奥过敏了怎么办",
+    "expect_any": ["过敏", "停止", "就医"],
+    "route": "risk",
+    "category": "风险"
+  },
+  {
+    "q": "术后一直疼正常吗",
+    "expect_any": ["疼痛", "正常", "1-3天", "缓解"],
+    "route": "risk",
+    "category": "风险"
+  },
+  {
+    "q": "做完两周还有红肿正常吗",
+    "expect_any": ["就医", "异常", "医生"],
+    "route": "risk",
+    "category": "风险",
+    "_note": "两周仍红肿属长期异常→risk"
+  },
+  {
+    "q": "打完脸紫了一片",
+    "expect_any": ["淤青", "消退", "天"],
+    "route": "risk",
+    "category": "风险"
+  },
+  {
+    "q": "术后注射部位化脓了",
+    "expect_any": ["感染", "就医", "化脓"],
+    "route": "risk",
+    "category": "风险"
+  },
+
+  {"_comment": "========== 分类八：效果与维持时间 =========="},
+  {
+    "q": "菲罗奥打一次能维持多久",
+    "expect_any": ["3-6个月", "维持", "胶原"],
+    "route": "effect",
+    "category": "效果"
+  },
+  {
+    "q": "打完菲罗奥什么时候能看到效果",
+    "expect_any": ["即刻", "2-4周", "胶原", "显现"],
+    "route": "effect",
+    "category": "效果"
+  },
+  {
+    "q": "菲罗奥真的能提拉紧致吗",
+    "expect_any": ["紧致", "胶原", "PCL", "效果"],
+    "route": "effect",
+    "category": "效果"
+  },
+  {
+    "q": "做完一个疗程效果能持续多久",
+    "expect_any": ["6-12个月", "疗程", "维持"],
+    "route": "effect",
+    "category": "效果"
+  },
+  {
+    "q": "什么因素影响菲罗奥效果",
+    "expect_any": ["肤质", "年龄", "护理", "防晒"],
+    "route": "effect",
+    "category": "效果"
+  },
+  {
+    "q": "菲罗奥能去皱纹吗",
+    "expect_any": ["皱纹", "紧致", "胶原", "效果"],
+    "route": "effect",
+    "category": "效果"
+  },
+
+  {"_comment": "========== 分类九：联合方案 =========="},
+  {
+    "q": "菲罗奥可以和热玛吉一起做吗",
+    "expect_any": ["联合", "间隔", "光电", "搭配"],
+    "route": "combo",
+    "category": "联合方案"
+  },
+  {
+    "q": "做完水光多久可以打菲罗奥",
+    "expect_any": ["间隔", "周", "联合"],
+    "route": "combo",
+    "category": "联合方案"
+  },
+  {
+    "q": "玻尿酸填充和菲罗奥能同天做吗",
+    "expect_any": ["间隔", "不建议", "同一部位"],
+    "route": "combo",
+    "category": "联合方案"
+  },
+  {
+    "q": "菲罗奥和光子嫩肤哪个先做",
+    "expect_any": ["先", "光电", "菲罗奥", "顺序"],
+    "route": "combo",
+    "category": "联合方案"
+  },
+  {
+    "q": "微针打完菲罗奥还能做射频吗",
+    "expect_any": ["联合", "间隔", "2-4周"],
+    "route": "combo",
+    "category": "联合方案"
+  },
+
+  {"_comment": "========== 分类十：术前准备 =========="},
+  {
+    "q": "做菲罗奥之前要做什么",
+    "expect_any": ["术前", "检查", "病史", "过敏"],
+    "route": "pre_care",
+    "category": "术前"
+  },
+  {
+    "q": "打菲罗奥当天需要素颜吗",
+    "expect_any": ["素颜", "不要化浓妆"],
+    "route": "pre_care",
+    "category": "术前"
+  },
+  {
+    "q": "术前要停用什么护肤品",
+    "expect_any": ["A酸", "果酸", "1周", "停用"],
+    "route": "pre_care",
+    "category": "术前"
+  },
+  {
+    "q": "做之前能喝酒吗",
+    "expect_any": ["术前", "饮酒", "3天", "避免"],
+    "route": "pre_care",
+    "category": "术前"
+  },
+
+  {"_comment": "========== 分类十一：方案设计 =========="},
+  {
+    "q": "轻度松弛打菲罗奥怎么设计方案",
+    "expect_any": ["轻度", "MTS", "1-2支", "方案"],
+    "route": "design",
+    "category": "方案设计"
+  },
+  {
+    "q": "重度松弛用菲罗奥怎么打",
+    "expect_any": ["重度", "3支", "全面部", "线状注射"],
+    "route": "design",
+    "category": "方案设计"
+  },
+  {
+    "q": "下颌线松弛怎么设计方案",
+    "expect_any": ["下颌", "方案", "注射"],
+    "route": "design",
+    "category": "方案设计"
+  },
+  {
+    "q": "菲罗奥面部评估要看哪些方面",
+    "expect_any": ["松弛", "皱纹", "轮廓", "评估"],
+    "route": "design",
+    "category": "方案设计"
+  },
+
+  {"_comment": "========== 分类十二：修复补救 =========="},
+  {
+    "q": "菲罗奥打完不均匀怎么办",
+    "expect_any": ["不均匀", "修复", "下次", "医生"],
+    "route": "repair",
+    "category": "修复"
+  },
+  {
+    "q": "之前做的水光效果不好能换菲罗奥吗",
+    "expect_any": ["间隔", "评估", "医生"],
+    "route": "repair",
+    "category": "修复"
+  },
+  {
+    "q": "做完菲罗奥觉得没效果怎么回事",
+    "expect_any": ["不理想", "用量", "医生", "沟通"],
+    "route": "repair",
+    "category": "修复"
+  },
+  {
+    "q": "术后面部不对称能矫正吗",
+    "expect_any": ["不对称", "矫正", "修复", "医生"],
+    "route": "repair",
+    "category": "修复"
+  },
+
+  {"_comment": "========== 分类十三：并发症处理（时间线消歧） =========="},
+  {
+    "q": "做完当天脸特别红正常吗",
+    "expect_any": ["正常", "红", "当天", "消退"],
+    "route": "complication",
+    "category": "并发症"
+  },
+  {
+    "q": "术后第二天还肿着正常吗",
+    "expect_any": ["正常", "肿", "消退", "冰敷"],
+    "route": "complication",
+    "category": "并发症"
+  },
+  {
+    "q": "打完菲罗奥出现针眼正常吗",
+    "expect_any": ["正常", "针", "消退"],
+    "route": "complication",
+    "category": "并发症"
+  },
+  {
+    "q": "水光针术后脸红了3天正常吗",
+    "expect_any": ["红", "正常", "消退"],
+    "route": "complication",
+    "category": "并发症"
+  },
+  {
+    "q": "微针做完脱皮正常吗",
+    "expect_any": ["脱皮", "正常", "消退"],
+    "route": "complication",
+    "category": "并发症"
+  },
+
+  {"_comment": "========== 分类十四：疗程规划 =========="},
+  {
+    "q": "菲罗奥做几次算一个疗程",
+    "expect_any": ["3", "5", "疗程", "次"],
+    "route": "course",
+    "category": "疗程"
+  },
+  {
+    "q": "两次菲罗奥之间间隔多久",
+    "expect_any": ["3-4周", "间隔"],
+    "route": "course",
+    "category": "疗程"
+  },
+  {
+    "q": "做完一个疗程后怎么维持",
+    "expect_any": ["维持", "疗程", "月"],
+    "route": "course",
+    "category": "疗程"
+  },
+  {
+    "q": "菲罗奥疗程总共需要多少时间",
+    "expect_any": ["月", "疗程", "周"],
+    "route": "course",
+    "category": "疗程"
+  },
+
+  {"_comment": "========== 分类十五：部位咨询 =========="},
+  {
+    "q": "苹果肌凹陷打什么好",
+    "expect_any": ["苹果肌", "填充", "菲罗奥"],
+    "route": "anatomy_q",
+    "category": "部位"
+  },
+  {
+    "q": "法令纹深可以打菲罗奥吗",
+    "expect_any": ["法令纹", "菲罗奥", "注射"],
+    "route": "anatomy_q",
+    "category": "部位"
+  },
+  {
+    "q": "脖子上的颈纹怎么改善",
+    "expect_any": ["颈", "水光", "菲罗奥"],
+    "route": "anatomy_q",
+    "category": "部位"
+  },
+  {
+    "q": "眼周细纹用菲罗奥可以吗",
+    "expect_any": ["眼周", "细纹"],
+    "route": "anatomy_q",
+    "category": "部位"
+  },
+  {
+    "q": "手部皮肤松弛怎么改善",
+    "expect_any": ["手", "水光", "菲罗奥"],
+    "route": "anatomy_q",
+    "category": "部位"
+  },
+
+  {"_comment": "========== 分类十六：适应症推荐 =========="},
+  {
+    "q": "皮肤松弛该做什么项目",
+    "expect_any": ["松弛", "胶原", "菲罗奥", "射频"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+  {
+    "q": "脸上毛孔粗大怎么解决",
+    "expect_any": ["毛孔", "微针", "光电"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+  {
+    "q": "皮肤干燥缺水做什么好",
+    "expect_any": ["干燥", "水光", "补水"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+  {
+    "q": "脸上有色斑怎么去除",
+    "expect_any": ["色斑", "光电", "IPL", "防晒"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+  {
+    "q": "痘坑能通过医美改善吗",
+    "expect_any": ["痘坑", "微针", "激光"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+  {
+    "q": "30岁皮肤开始松弛怎么办",
+    "expect_any": ["松弛", "胶原", "菲罗奥", "水光"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+  {
+    "q": "皮肤暗黄无光泽做什么项目",
+    "expect_any": ["暗", "改善", "水光", "光电"],
+    "route": "indication_q",
+    "category": "适应症"
+  },
+
+  {"_comment": "========== 分类十七：项目咨询 =========="},
+  {
+    "q": "水光针和微针有什么不同",
+    "expect_any": ["水光", "微针", "区别", "导入"],
+    "route": "procedure_q",
+    "category": "项目咨询"
+  },
+  {
+    "q": "光电项目包括哪些",
+    "expect_any": ["光电", "射频", "激光", "IPL"],
+    "route": "procedure_q",
+    "category": "项目咨询"
+  },
+  {
+    "q": "注射填充是什么原理",
+    "expect_any": ["填充", "注射", "玻尿酸"],
+    "route": "procedure_q",
+    "category": "项目咨询"
+  },
+  {
+    "q": "MTS微针是怎么操作的",
+    "expect_any": ["微针", "MTS", "导入", "微通道"],
+    "route": "procedure_q",
+    "category": "项目咨询"
+  },
+  {
+    "q": "水光针多久做一次",
+    "expect_any": ["水光", "间隔", "周"],
+    "route": "procedure_q",
+    "category": "项目咨询"
+  },
+
+  {"_comment": "========== 分类十八：设备咨询 =========="},
+  {
+    "q": "水光仪深度怎么设置",
+    "expect_any": ["深度", "0.8mm", "水光", "参数"],
+    "route": "equipment_q",
+    "category": "设备"
+  },
+  {
+    "q": "微针笔和滚轮微针有什么区别",
+    "expect_any": ["微针", "电动", "滚轮"],
+    "route": "equipment_q",
+    "category": "设备"
+  },
+  {
+    "q": "射频仪有哪些种类",
+    "expect_any": ["单极", "双极", "射频"],
+    "route": "equipment_q",
+    "category": "设备"
+  },
+  {
+    "q": "菲罗奥可以用德玛莎打吗",
+    "expect_any": ["德玛莎", "水光", "仪器"],
+    "route": "equipment_q",
+    "category": "设备"
+  },
+
+  {"_comment": "========== 分类十九：话术指导 =========="},
+  {
+    "q": "客户怕疼怎么安慰",
+    "expect_any": ["麻醉", "敷麻", "疼", "耐受"],
+    "route": "script",
+    "category": "话术"
+  },
+  {
+    "q": "客户问做一次有没有效果怎么回答",
+    "expect_any": ["效果", "疗程", "累积"],
+    "route": "script",
+    "category": "话术"
+  },
+  {
+    "q": "怎么跟客户解释恢复期",
+    "expect_any": ["恢复", "红肿", "天"],
+    "route": "script",
+    "category": "话术"
+  },
+  {
+    "q": "客户问菲罗奥安不安全怎么说",
+    "expect_any": ["安全", "正规", "医师"],
+    "route": "script",
+    "category": "话术"
+  },
+  {
+    "q": "怎么向客户推荐菲罗奥",
+    "expect_any": ["PCL", "胶原", "优势", "菲罗奥"],
+    "route": "script",
+    "category": "话术"
+  },
+
+  {"_comment": "========== 分类二十：特殊意图兜底 =========="},
+  {
+    "q": "菲罗奥一支多少钱",
+    "expect_any": ["价格", "差异", "咨询"],
+    "route": null,
+    "category": "特殊意图",
+    "_note": "价格问题走模板回复"
+  },
+  {
+    "q": "上海哪里能打菲罗奥",
+    "expect_any": ["官方", "渠道", "机构"],
+    "route": null,
+    "category": "特殊意图",
+    "_note": "地点问题走模板回复"
+  },
+  {
+    "q": "菲罗奥和少女针哪个好",
+    "expect_any": ["不同", "各有", "区别"],
+    "route": null,
+    "category": "特殊意图",
+    "_note": "品牌对比走模板回复"
+  },
+  {
+    "q": "今天股市怎么样",
+    "expect_any": ["不在", "服务范围", "医美"],
+    "route": null,
+    "category": "特殊意图",
+    "_note": "超出范围应拒绝"
+  },
+  {
+    "q": "你是谁",
+    "expect_any": ["助手", "顾问", "医美"],
+    "route": null,
+    "category": "特殊意图",
+    "_note": "闲聊问题"
+  },
+
+  {"_comment": "========== 分类二十一：口语化/错别字/模糊表达 =========="},
+  {
+    "q": "飞罗奥是啥玩意",
+    "expect_any": ["菲罗奥", "产品", "PCL"],
+    "route": "basic",
+    "category": "口语化",
+    "_note": "错别字'飞'→'菲'"
+  },
+  {
+    "q": "打完针脸肿得跟猪头似的",
+    "expect_any": ["肿", "正常", "消退", "冰敷"],
+    "route": "complication",
+    "category": "口语化"
+  },
+  {
+    "q": "脸上摸着有疙瘩",
+    "expect_any": ["硬块", "结节", "医生"],
+    "route": "risk",
+    "category": "口语化",
+    "_note": "'疙瘩'='硬块/结节'"
+  },
+  {
+    "q": "做完脸特别干",
+    "expect_any": ["保湿", "面膜", "护理"],
+    "route": "aftercare",
+    "category": "口语化"
+  },
+  {
+    "q": "这玩意打了能年轻几岁",
+    "expect_any": ["效果", "胶原", "因人而异"],
+    "route": "effect",
+    "category": "口语化"
+  },
+  {
+    "q": "扎完好几天了还疼咋整",
+    "expect_any": ["疼痛", "就医", "医生"],
+    "route": "risk",
+    "category": "口语化",
+    "_note": "'好几天还疼'属于长期症状"
+  },
+  {
+    "q": "非罗欧是正规产品吗",
+    "expect_any": ["菲罗奥", "备案", "产品"],
+    "route": "basic",
+    "category": "口语化",
+    "_note": "多重错别字"
+  },
+  {
+    "q": "这个东西安全不",
+    "expect_any": ["安全", "正规", "风险"],
+    "route": "risk",
+    "category": "口语化"
+  },
+
+  {"_comment": "========== 分类二十二：复合问题 =========="},
+  {
+    "q": "菲罗奥成分是什么，有什么禁忌",
+    "expect_any": ["PCL", "禁忌", "成分"],
+    "route": "contraindication",
+    "category": "复合问题"
+  },
+  {
+    "q": "术后怎么护理，多久能化妆",
+    "expect_any": ["术后", "护理", "化妆", "24"],
+    "route": "aftercare",
+    "category": "复合问题"
+  },
+  {
+    "q": "效果能维持多久，做几次最好",
+    "expect_any": ["维持", "疗程", "次"],
+    "route": "effect",
+    "category": "复合问题"
+  },
+
+  {"_comment": "========== 分类二十三：材料知识（共享知识库） =========="},
+  {
+    "q": "玻尿酸有哪些类型",
+    "expect_any": ["交联", "非交联", "玻尿酸"],
+    "route": "ingredient",
+    "category": "材料知识"
+  },
+  {
+    "q": "胶原蛋白流失的原因是什么",
+    "expect_any": ["胶原", "紫外线", "年龄", "流失"],
+    "route": "ingredient",
+    "category": "材料知识"
+  },
+  {
+    "q": "25岁以后胶原蛋白会减少吗",
+    "expect_any": ["25", "胶原", "流失", "年"],
+    "route": "ingredient",
+    "category": "材料知识"
+  },
+  {
+    "q": "吃胶原蛋白有用吗",
+    "expect_any": ["口服", "胶原", "无效"],
+    "route": "ingredient",
+    "category": "材料知识"
+  },
+
+  {"_comment": "========== 分类二十四：年龄段推荐 =========="},
+  {
+    "q": "20岁需要做医美吗",
+    "expect_any": ["防晒", "基础", "护肤"],
+    "route": "indication_q",
+    "category": "年龄推荐"
+  },
+  {
+    "q": "40岁抗衰做什么项目",
+    "expect_any": ["菲罗奥", "射频", "填充", "综合"],
+    "route": "indication_q",
+    "category": "年龄推荐"
+  },
+  {
+    "q": "50岁以上还能做医美吗",
+    "expect_any": ["可以", "个性化", "评估"],
+    "route": "indication_q",
+    "category": "年龄推荐"
+  },
+
+  {"_comment": "========== 分类二十五：敏感肌/特殊人群 =========="},
+  {
+    "q": "敏感肌能做水光吗",
+    "expect_any": ["敏感", "评估", "医生"],
+    "route": "contraindication",
+    "category": "特殊人群"
+  },
+  {
+    "q": "油性皮肤适合做微针吗",
+    "expect_any": ["油性", "微针", "改善"],
+    "route": "indication_q",
+    "category": "特殊人群"
+  },
+  {
+    "q": "疤痕体质能打菲罗奥吗",
+    "expect_any": ["评估", "医生", "体质"],
+    "route": "contraindication",
+    "category": "特殊人群"
+  },
+
+  {"_comment": "========== 分类二十六：极短/单词查询 =========="},
+  {
+    "q": "防伪",
+    "expect_any": ["HiddenTag", "防伪", "APP"],
+    "route": "anti_fake",
+    "category": "极短查询"
+  },
+  {
+    "q": "禁忌",
+    "expect_any": ["妊娠", "过敏", "免疫"],
+    "route": "contraindication",
+    "category": "极短查询"
+  },
+  {
+    "q": "效果",
+    "expect_any": ["效果", "维持", "胶原"],
+    "route": "effect",
+    "category": "极短查询"
+  },
+  {
+    "q": "术后",
+    "expect_any": ["护理", "术后", "注意"],
+    "route": "aftercare",
+    "category": "极短查询"
+  },
+  {
+    "q": "微针",
+    "expect_any": ["微针", "MTS", "导入"],
+    "route": "procedure_q",
+    "category": "极短查询"
+  }
+]
