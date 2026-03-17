@@ -217,6 +217,7 @@ INDICATION_KEYWORDS = {
 
 MATERIAL_ALIASES = {
     "hyaluronic_acid": ["玻尿酸", "透明质酸", "HA", "hyaluronic acid"],
+    "collagen": ["胶原蛋白", "胶原", "骨胶原", "collagen"],
 }
 
 ANATOMY_KEYWORDS = {
