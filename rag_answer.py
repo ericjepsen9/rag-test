@@ -105,7 +105,7 @@ _NON_PROC_STRONG = frozenset({"aftercare", "risk", "combo", "complication",
 _CONTRA_SIGNALS = ("体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
                    "能做", "可以做", "能不能", "能打吗", "可以吗")
 _COMBO_SIGNALS = ("一起做", "联合", "搭配", "同做", "配合", "间隔多久")
-_REPAIR_SIGNALS = ("修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差")
+_REPAIR_SIGNALS = ("修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差", "垮了", "脸垮")
 _SYMPTOM_KWS = ("红肿", "肿胀", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
                 "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
                 "越来越")
@@ -132,7 +132,7 @@ _INGREDIENT_CONTEXT_SIGNALS = ("成分", "PCL", "聚己内酯", "谷胱甘肽", 
                                 "材料", "HA", "胶原蛋白")
 _RE_TEMPORAL_SHORT = re.compile(r"术后(第?\d+天|当天|1-3天|一周|1周)")
 _RE_TEMPORAL_LONG = re.compile(r"(术后\d+个月|半年|一年|长期)")
-_RE_PAIN_INQUIRY = re.compile(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛)")
+_RE_PAIN_INQUIRY = re.compile(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛|好痛|很痛|不疼|怕痛|怕疼)")
 _RE_PRE_PAIN = re.compile(r"(打的时候|注射时|术中|操作中).{0,4}(疼|痛)")
 # _fallback_from_hits 预编译
 _RE_FALLBACK_SPLIT = re.compile(r"[\s,，;；、？?！!。【】]+")
