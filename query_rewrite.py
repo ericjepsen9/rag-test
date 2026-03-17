@@ -9,6 +9,7 @@ from rag_runtime_config import (
     LLM_REWRITE_ENABLED,
 )
 from search_utils import detect_terms, uniq, split_multi_question, lookup_learned_synonym
+from clarification_engine import should_clarify, generate_clarification
 
 # 路由专属检索扩展词：当检测到某路由时，补充高区分度关键词帮助 BM25 命中正确 chunk
 _ROUTE_EXPANSION = {
@@ -612,6 +613,28 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         history_summary, history_pairs = _build_history_summary_and_pairs(history)
         last_user_q = history_ctx.get("last_user_q", "")
 
+    # ---- 消歧引导：查询模糊且缺乏上下文时生成候选选项 ----
+    clarification = None
+    needs_clarification = False
+    if not is_chitchat and not is_offtopic:
+        history_product = history_ctx.get("product", "")
+        history_route = history_ctx.get("route", "")
+        if should_clarify(
+            raw, products, projects, detected_routes,
+            history_product=history_product,
+            history_route=history_route,
+            is_chitchat=is_chitchat,
+            is_offtopic=is_offtopic,
+        ):
+            clarification = generate_clarification(
+                raw,
+                products=products,
+                projects=projects,
+                history_product=history_product,
+            )
+            if clarification:
+                needs_clarification = True
+
     return {
         "original": q,
         "raw_input": raw,
@@ -631,4 +654,6 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         "history_pairs": history_pairs,       # 完整 Q&A 对，供 LLM 深度理解
         "last_user_q": last_user_q,           # 上一轮用户问题
         "last_routed_q": history_ctx.get("last_routed_q", ""),  # 最近含路由的问题，供路由继承
+        "needs_clarification": needs_clarification,  # 是否需要消歧引导
+        "clarification": clarification,              # 消歧选项（None 表示不需要）
     }

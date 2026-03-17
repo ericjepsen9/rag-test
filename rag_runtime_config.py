@@ -239,7 +239,8 @@ ANATOMY_KEYWORDS = {
 
 TIME_TERMS = ["当天", "术后当天", "术后1天", "术后1-3天", "术后3天", "术后1周", "一周", "术后1个月"]
 SYMPTOM_TERMS = ["红肿", "结节", "疼痛", "过敏", "硬块", "发热", "感染", "刺痛",
-                 "肿", "淤青", "瘀青", "发紫", "红疹", "疹子", "痒", "化脓"]
+                 "肿", "淤青", "瘀青", "发紫", "红疹", "疹子", "痒", "化脓",
+                 "硬结", "肉芽肿", "血管栓塞", "表情不自然", "填充物移位"]
 
 # ===== 无知识兜底回复（价格、对比等无法回答的问题） =====
 PRICE_REPLY = ("菲罗奥的具体价格因医院、区域和疗程方案不同而有差异，"
@@ -344,6 +345,14 @@ DYNAMIC_THRESHOLD_ENABLED = _os.environ.get("RAG_DYN_THRESHOLD", "1").strip().lo
 # 动态阈值 = max(route_threshold * DYN_FLOOR_RATIO, top1_score * DYN_RATIO)
 DYNAMIC_THRESHOLD_RATIO = _safe_float("RAG_DYN_RATIO", "0.40")
 DYNAMIC_THRESHOLD_FLOOR_RATIO = _safe_float("RAG_DYN_FLOOR_RATIO", "0.70")
+
+# ===== 消歧引导配置 =====
+# 启用后，当用户查询模糊且缺乏上下文时，系统会在回答同时提供候选选项
+CLARIFICATION_ENABLED = _os.environ.get("RAG_CLARIFICATION", "1").strip().lower() in ("1", "true", "yes")
+# 触发消歧的最短查询长度（字符数，低于此值且无上下文时触发）
+CLARIFICATION_MIN_QUERY_LEN = _safe_int("RAG_CLARIFY_MIN_LEN", "6")
+# 触发消歧的最长查询长度（超过此值认为描述已足够详细）
+CLARIFICATION_MAX_QUERY_LEN = _safe_int("RAG_CLARIFY_MAX_LEN", "15")
 
 # ===== 中文分词 =====
 # 启用 jieba 分词替代纯 bigram 切分，提升 BM25 精度
@@ -482,6 +491,10 @@ TUNABLE_PARAMS = {
     "use_openai":       ("USE_OPENAI",       bool, None, None, "启用 LLM（OpenAI 兼容）"),
     "openai_model":     ("OPENAI_MODEL",     str,  None, None, "LLM 模型名称"),
     "openai_api_base":  ("OPENAI_API_BASE",  str,  None, None, "LLM API 地址"),
+    # 消歧引导
+    "clarification_enabled": ("CLARIFICATION_ENABLED", bool, None, None, "启用模糊查询消歧引导"),
+    "clarify_min_len":  ("CLARIFICATION_MIN_QUERY_LEN", int, 2, 20, "消歧触发最短查询长度"),
+    "clarify_max_len":  ("CLARIFICATION_MAX_QUERY_LEN", int, 5, 50, "消歧触发最长查询长度"),
 }
 
 

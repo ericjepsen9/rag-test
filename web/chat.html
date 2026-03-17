@@ -95,6 +95,17 @@
     .bubble a { color: var(--primary); }
     .msg-row.user .bubble code { background: rgba(255,255,255,.2); }
 
+    /* Clarification options */
+    .clarify-group { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .clarify-hint { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 500; }
+    .clarify-options { display: flex; flex-wrap: wrap; gap: 6px; }
+    .clarify-chip { padding: 6px 14px; background: var(--primary-light); border: 1px solid var(--primary);
+                    border-radius: 20px; font-size: 12px; color: var(--primary); cursor: pointer;
+                    transition: all .15s; white-space: nowrap; line-height: 1.4; }
+    .clarify-chip:hover { background: var(--primary); color: #fff; }
+    .clarify-chip.fallback { background: transparent; border-color: var(--border); color: var(--text-secondary); }
+    .clarify-chip.fallback:hover { border-color: var(--text-secondary); color: var(--text); background: #f9fafb; }
+
     /* Bubble actions */
     .bubble-actions { display: flex; gap: 4px; margin-top: 8px; opacity: 0; transition: opacity .15s; }
     .msg-row:hover .bubble-actions { opacity: 1; }
@@ -468,7 +479,7 @@ function addMessage(text, role, opts = {}) {
   const welcome = $('welcomeBlock');
   if (welcome) welcome.style.display = 'none';
 
-  const { media, debug, latency } = opts;
+  const { media, debug, latency, clarification } = opts;
   const row = document.createElement('div');
   row.className = 'msg-row ' + role;
 
@@ -554,6 +565,45 @@ function addMessage(text, role, opts = {}) {
     content.textContent = debugLines.join('\n') || JSON.stringify(debug, null, 2);
     details.appendChild(content);
     bubble.appendChild(details);
+  }
+
+  // Clarification options (bot only)
+  if (role === 'bot' && clarification) {
+    const group = document.createElement('div');
+    group.className = 'clarify-group';
+    const hint = document.createElement('div');
+    hint.className = 'clarify-hint';
+    hint.textContent = clarification.message || '您是否想了解以下内容？';
+    group.appendChild(hint);
+    const chips = document.createElement('div');
+    chips.className = 'clarify-options';
+    for (const opt of (clarification.options || [])) {
+      const chip = document.createElement('span');
+      chip.className = 'clarify-chip';
+      chip.textContent = opt.label;
+      chip.onclick = () => {
+        $('questionInput').value = opt.query;
+        autoResize($('questionInput'));
+        // Remove clarification chips after selection
+        group.remove();
+        ask();
+      };
+      chips.appendChild(chip);
+    }
+    if (clarification.fallback_option) {
+      const fb = document.createElement('span');
+      fb.className = 'clarify-chip fallback';
+      fb.textContent = clarification.fallback_option.label;
+      fb.onclick = () => {
+        $('questionInput').value = clarification.fallback_option.query;
+        autoResize($('questionInput'));
+        group.remove();
+        ask();
+      };
+      chips.appendChild(fb);
+    }
+    group.appendChild(chips);
+    bubble.appendChild(group);
   }
 
   // Copy action (bot only)
@@ -670,6 +720,7 @@ async function ask() {
       media: data.media || [],
       debug: data.debug || null,
       latency: data.latency_ms,
+      clarification: data.needs_clarification ? data.clarification : null,
     });
 
     // Update history

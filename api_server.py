@@ -92,12 +92,26 @@ class MediaItem(BaseModel):
     url: str = ""
 
 
+class ClarificationOption(BaseModel):
+    label: str
+    query: str
+    route: str = ""
+
+
+class ClarificationData(BaseModel):
+    message: str
+    options: List[ClarificationOption]
+    fallback_option: Optional[ClarificationOption] = None
+
+
 class AskResponse(BaseModel):
     ok: bool
     answer: str
     media: List[MediaItem] = []
     latency_ms: Optional[int] = None
     debug: Optional[Dict[str, Any]] = None
+    needs_clarification: bool = False
+    clarification: Optional[ClarificationData] = None
 
 
 class RebuildRequest(BaseModel):
@@ -227,12 +241,28 @@ def ask(req: AskRequest):
                 "history_pairs_count": len(rw.get("history_pairs", [])),
                 "latency_ms": latency_ms,
             }
+        # 消歧引导：当查询模糊时，在回答同时提供候选选项
+        needs_clarification = rw.get("needs_clarification", False)
+        clarification_data = None
+        if needs_clarification and rw.get("clarification"):
+            cl = rw["clarification"]
+            cl_options = [ClarificationOption(**o) for o in cl.get("options", [])]
+            fb = cl.get("fallback_option")
+            cl_fb = ClarificationOption(**fb) if fb else None
+            clarification_data = ClarificationData(
+                message=cl["message"],
+                options=cl_options,
+                fallback_option=cl_fb,
+            )
+
         return AskResponse(
             ok=True,
             answer=answer,
             media=media,
             latency_ms=latency_ms,
             debug=debug,
+            needs_clarification=needs_clarification,
+            clarification=clarification_data,
         )
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -354,6 +384,11 @@ def oai_chat_completions(req: OAIChatRequest):
         from query_rewrite import rewrite_query
         rw = rewrite_query(question, history=history)
         answer = answer_question(question, "brief", history=history, rewrite=rw)
+        # OAI 格式无自定义字段，将消歧选项追加到回答末尾
+        if rw.get("needs_clarification") and rw.get("clarification"):
+            from clarification_engine import format_clarification_text
+            clarify_text = format_clarification_text(rw["clarification"])
+            answer = answer + "\n\n---\n" + clarify_text
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
         log_error("oai_chat", repr(e), meta={"question": question[:200], "latency_ms": latency_ms})
