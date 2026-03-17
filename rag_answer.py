@@ -103,23 +103,27 @@ _NON_PROC_STRONG = frozenset({"aftercare", "risk", "combo", "complication",
                                "contraindication", "operation", "ingredient"})
 
 _CONTRA_SIGNALS = ("体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
-                   "能做", "可以做", "能不能", "能打吗", "可以吗")
+                   "能做", "可以做", "能不能", "能打吗", "可以吗", "可以注射")
 _COMBO_SIGNALS = ("一起做", "联合", "搭配", "同做", "配合", "间隔多久")
 _REPAIR_SIGNALS = ("修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差", "垮了", "脸垮")
 _SYMPTOM_KWS = ("红肿", "肿胀", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
                 "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
-                "越来越")
+                "越来越", "发炎", "过敏", "疙瘩")
 _LIFESTYLE_KWS = ("运动", "健身", "游泳", "桑拿", "化妆", "上妆", "防晒", "晒太阳",
                   "洗澡", "喝酒", "饮酒", "上班", "出汗", "泡澡", "汗蒸")
 _COURSE_SIGNALS = ("安排", "规划", "几次", "间隔多久", "总共", "多长时间",
-                   "时间表", "多少钱", "费用", "预算")
+                   "时间表", "多少钱", "费用", "预算", "疗程后")
 _DESIGN_SIGNALS = ("怎么打", "打哪里", "几支", "怎么设计", "方案", "用量")
 _BODY_PARTS = ("苹果肌", "法令纹", "下颌", "额头", "额部", "眼周", "颈部",
-               "鼻部", "手部", "手背")
+               "鼻部", "手部", "手背", "脖子", "颈纹")
+# 皮肤状况关键词：当伴随 indication_q 出现时，表明用户在咨询适应症而非具体项目
+_INDICATION_CONDITION_SIGNALS = ("油性", "干性", "敏感", "松弛", "暗黄", "暗沉",
+                                 "粗糙", "痘坑", "皱纹", "毛孔", "缺水", "老了",
+                                 "抗衰", "衰老", "医美")
 _EQUIPMENT_WORDS = ("仪器", "设备", "机器", "仪", "水光仪", "微针仪", "品牌", "适配",
                     "微针笔", "飞针仪", "射频美容仪", "热玛吉仪", "德玛莎",
                     "水光机", "水光枪", "水光注射仪")
-_PROC_SIGNALS = ("操作流程", "流程", "项目有哪些", "有什么区别", "什么项目")
+_PROC_SIGNALS = ("操作流程", "流程", "项目有哪些", "有什么区别", "什么项目", "怎么操作")
 _SCRIPT_SIGNALS = ("客户", "怎么介绍", "怎么解释", "怎么回答", "怎么说", "话术")
 _RECOMMENDATION_WORDS = ("适合", "推荐", "用什么好", "选什么")
 # 操作参数上下文信号：用户在讨论具体操作参数时，operation 路由更合理
@@ -132,6 +136,8 @@ _INGREDIENT_CONTEXT_SIGNALS = ("成分", "PCL", "聚己内酯", "谷胱甘肽", 
                                 "材料", "HA", "胶原蛋白")
 _RE_TEMPORAL_SHORT = re.compile(r"术后(第?\d+天|当天|1-3天|一周|1周)")
 _RE_TEMPORAL_LONG = re.compile(r"(术后\d+个月|半年|一年|长期)")
+# 扩展短期时间线：覆盖"做完/打完第X天"等非"术后"前缀
+_RE_DONE_TEMPORAL_SHORT = re.compile(r"(做完|打完)(第?\d+天|当天|第二天)")
 _RE_PAIN_INQUIRY = re.compile(r"(疼不疼|痛不痛|疼吗|痛吗|会不会疼|会不会痛|好痛|很痛|不疼|怕痛|怕疼)")
 _RE_PRE_PAIN = re.compile(r"(打的时候|注射时|术中|操作中).{0,4}(疼|痛)")
 # _fallback_from_hits 预编译
@@ -558,10 +564,15 @@ def detect_route(question: str) -> str:
         scores["operation"] += 4.0
 
     # 术后症状 → risk 优先于 aftercare/operation
+    # 但当 complication 同时命中且有短期时间线（第X天/当天）时，不提升 risk，
+    # 交由 complication vs risk 的时间线消歧来决定
     symptom_count = sum(1 for s in _SYMPTOM_KWS if s in q)
     if "risk" in scores and ("aftercare" in scores or "operation" in scores):
         if symptom_count >= 1:
-            scores["risk"] += 4.0
+            has_short_temporal = bool(_RE_TEMPORAL_SHORT.search(q) or
+                                     _RE_DONE_TEMPORAL_SHORT.search(q))
+            if not ("complication" in scores and has_short_temporal):
+                scores["risk"] += 4.0
     if "complication" in scores and symptom_count >= 2:
         scores["complication"] += 3.0
 
@@ -585,26 +596,37 @@ def detect_route(question: str) -> str:
     # 方案设计信号 → design
     if "design" in scores and any(s in q for s in _DESIGN_SIGNALS):
         scores["design"] += 4.0
+    # "每次" 表示单次操作参数（如每次用几支），属于 operation 而非 design
+    if "operation" in scores and "design" in scores and "每次" in q:
+        scores["operation"] += 5.0
 
     # 部位名 → anatomy_q 优先于 indication_q
     if "anatomy_q" in scores and "indication_q" in scores:
         if any(bp in q for bp in _BODY_PARTS):
-            scores["anatomy_q"] += 3.0
+            # 有明确 design 意图时不过度提升 anatomy_q
+            boost = 3.0 if ("design" in scores and any(s in q for s in _DESIGN_SIGNALS)) else 6.0
+            scores["anatomy_q"] += boost
 
     # 设备/仪器关键词 → equipment_q 优先于 operation
+    # 但当 "针头" + 产品名出现时，用户在问操作用什么针头，偏向 operation
     if "equipment_q" in scores and "operation" in scores:
-        if any(ew in q for ew in _EQUIPMENT_WORDS):
+        if "针头" in q and detect_terms(q, PRODUCT_ALIASES):
+            scores["operation"] += 5.0
+        elif any(ew in q for ew in _EQUIPMENT_WORDS):
             scores["equipment_q"] += 4.0
 
     # 设备实体名 → equipment_q 优先于 procedure_q
     if "equipment_q" in scores and "procedure_q" in scores:
         if any(ew in q for ew in _EQUIPMENT_WORDS):
             scores["equipment_q"] += 4.0
+        # 设备对比（"微针笔和滚轮有什么区别"）→ equipment_q
+        if ("区别" in q or "对比" in q) and sum(1 for ew in _EQUIPMENT_WORDS if ew in q) >= 1:
+            scores["equipment_q"] += 6.0
 
     # 项目流程/对比 → procedure_q 优先于 operation
     if "procedure_q" in scores and "operation" in scores:
         if any(ps in q for ps in _PROC_SIGNALS):
-            scores["procedure_q"] += 4.0
+            scores["procedure_q"] += 6.0
         # 实体名消歧：当用户提到项目实体名（水光、微针等）但没有操作参数上下文时，
         # 说明用户在问项目本身而非具体操作参数 → procedure_q 优先
         elif not any(s in q for s in _OPERATION_CONTEXT_SIGNALS):
@@ -640,10 +662,10 @@ def detect_route(question: str) -> str:
                 if rival_own_hits:
                     scores[rival] += 5.0
 
-    # 客户沟通场景 → script 优先于 ingredient/basic
+    # 客户沟通场景 → script 优先于 ingredient/basic/operation
     if "script" in scores:
         if any(ss in q for ss in _SCRIPT_SIGNALS):
-            for rival in ("ingredient", "basic", "effect"):
+            for rival in ("ingredient", "basic", "effect", "operation"):
                 if rival in scores:
                     scores["script"] += 4.0
                     break
@@ -665,6 +687,30 @@ def detect_route(question: str) -> str:
     if "indication_q" in scores and "contraindication" in scores:
         if any(w in q for w in _RECOMMENDATION_WORDS):
             scores["indication_q"] += 4.0
+
+    # "之前" → pre_care 优先于 aftercare（术前 vs 术后）
+    if "pre_care" in scores and "aftercare" in scores and "之前" in q:
+        scores["pre_care"] += 5.0
+
+    # "一直" + risk vs complication → 持续性症状更偏 risk
+    if "risk" in scores and "complication" in scores and "一直" in q:
+        scores["risk"] += 3.0
+
+    # indication_q vs procedure_q：有皮肤状况词时偏向 indication_q
+    if "indication_q" in scores and "procedure_q" in scores:
+        if any(c in q for c in _INDICATION_CONDITION_SIGNALS):
+            scores["indication_q"] += 5.0
+
+    # "没效果"/"没有效果" → repair 优先于 effect
+    if "repair" in scores and "effect" in scores:
+        if "没效果" in q or "没有效果" in q:
+            scores["repair"] += 5.0
+
+    # "疗程" + effect 关键词（效果/持续/多久）→ 不让 operation 通过 "疗程" 抢走 effect
+    if "effect" in scores and "operation" in scores:
+        effect_kw_count = sum(1 for kw in ("效果", "持续", "多久", "见效", "维持") if kw in q)
+        if effect_kw_count >= 2:
+            scores["effect"] += 3.0
 
     if not scores:
         return "basic"
