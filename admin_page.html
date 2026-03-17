@@ -679,12 +679,50 @@
           <button class="active" data-tab="learned" onclick="switchSynTab('learned')">LLM 学习词库</button>
           <button data-tab="static" onclick="switchSynTab('static')">静态同义词</button>
         </div>
-        <div style="margin-bottom:10px;display:flex;gap:8px">
-          <input id="syn_search" placeholder="搜索词条..." oninput="filterSynTable()" style="width:260px">
+        <!-- 搜索 + 操作栏 -->
+        <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="syn_search" placeholder="搜索词条..." oninput="filterSynTable()" style="width:220px">
+          <select id="syn_filter_status" onchange="filterSynTable()" style="width:120px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+            <option value="all">全部状态</option>
+            <option value="pending">待审核</option>
+            <option value="approved">已审核</option>
+          </select>
+          <select id="syn_filter_source" onchange="filterSynTable()" style="width:120px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+            <option value="all">全部来源</option>
+            <option value="llm_rewrite">机器学习</option>
+            <option value="manual">手动添加</option>
+          </select>
           <button class="btn-secondary btn-sm" onclick="loadSynonyms()">刷新</button>
+          <button class="btn-primary btn-sm" onclick="showSynAddForm()">+ 新建词条</button>
+          <span id="syn-batch-bar" style="display:none;margin-left:auto;display:none;gap:6px;align-items:center">
+            <span id="syn-selected-count" style="font-size:12px;color:#6b7280"></span>
+            <button class="btn-success btn-sm" onclick="batchApproveSyn()">批量通过</button>
+            <button class="btn-danger btn-sm" onclick="batchDeleteSyn()">批量删除</button>
+            <button class="btn-ghost btn-sm" onclick="clearSynSelection()">取消选择</button>
+          </span>
         </div>
+        <!-- 新建/编辑表单 -->
+        <div id="syn-add-form" style="display:none;margin-bottom:14px;padding:14px;background:#f8f9fb;border-radius:8px;border:1px solid #e5e7eb">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+              <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px" id="syn-form-orig-label">原始词（变体/口语）</label>
+              <input id="syn-form-original" placeholder="如：瘦脸针" style="width:180px">
+            </div>
+            <div>
+              <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">映射到（规范形式）</label>
+              <input id="syn-form-mapped" placeholder="如：肉毒素注射" style="width:180px">
+            </div>
+            <button class="btn-primary btn-sm" id="syn-form-submit" onclick="submitSynForm()">添加</button>
+            <button class="btn-ghost btn-sm" onclick="hideSynAddForm()">取消</button>
+          </div>
+          <div id="syn-form-error" style="color:var(--danger);font-size:12px;margin-top:6px;display:none"></div>
+        </div>
+        <!-- 学习词库表格 -->
         <div id="syn_learned" class="table-wrap">
-          <table><thead><tr><th>原始词</th><th>映射到</th><th>命中</th><th>首次</th><th>最近</th><th>状态</th><th>操作</th></tr></thead>
+          <table><thead><tr>
+            <th style="width:36px"><input type="checkbox" id="syn-select-all" onchange="toggleSynSelectAll(this.checked)"></th>
+            <th>原始词</th><th>映射到</th><th>来源</th><th>命中</th><th>首次学习</th><th>最近使用</th><th>状态</th><th>操作</th>
+          </tr></thead>
           <tbody id="learned_tbody"></tbody></table>
         </div>
         <div id="syn_static" class="table-wrap" style="display:none">
@@ -1524,14 +1562,46 @@ async function saveAllConfig() {
 }
 
 // ===== Synonyms =====
+let _synLearnedData = [];   // 缓存学习词条列表
+let _synSelectedSet = new Set(); // 已选中的词条 original
+let _synEditingOriginal = null;  // 当前正在编辑的原始词（null = 新建模式）
+
+function _fmtRelativeTime(ts) {
+  if (!ts) return '-';
+  try {
+    const d = new Date(ts.replace(' ', 'T'));
+    const now = new Date();
+    const diffMs = now - d;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return '刚刚';
+    if (diffMin < 60) return diffMin + ' 分钟前';
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return diffH + ' 小时前';
+    const diffD = Math.floor(diffH / 24);
+    if (diffD < 30) return diffD + ' 天前';
+    const diffM = Math.floor(diffD / 30);
+    if (diffM < 12) return diffM + ' 个月前';
+    return Math.floor(diffM / 12) + ' 年前';
+  } catch(e) { return ts ? ts.replace('T', ' ') : '-'; }
+}
+
 async function loadSynonyms() {
+  _synSelectedSet.clear();
+  _updateBatchBar();
   try {
     const j = await api('/admin/synonyms/all');
+    _synLearnedData = j.learned || [];
+    const pendingCount = _synLearnedData.filter(it => !it.approved).length;
+    const llmCount = _synLearnedData.filter(it => it.source === 'llm_rewrite').length;
+    const manualCount = _synLearnedData.filter(it => it.source === 'manual').length;
     document.getElementById('syn-stats').innerHTML = `
       <div class="stat-card"><div class="num">${j.static_count||0}</div><div class="lbl">静态词条</div></div>
       <div class="stat-card"><div class="num">${j.learned_count||0}</div><div class="lbl">学习词条</div></div>
+      <div class="stat-card"><div class="num">${llmCount}</div><div class="lbl">机器学习</div></div>
+      <div class="stat-card"><div class="num">${manualCount}</div><div class="lbl">手动添加</div></div>
+      <div class="stat-card"><div class="num" style="${pendingCount>0?'color:var(--danger)':''}">${pendingCount}</div><div class="lbl">待审核</div></div>
       <div class="stat-card"><div class="num">${j.total_count||0}</div><div class="lbl">总计</div></div>`;
-    renderLearnedTable(j.learned || []);
+    renderLearnedTable(_synLearnedData);
     renderStaticTable(j.static || []);
   } catch(e) {}
 }
@@ -1539,16 +1609,33 @@ async function loadSynonyms() {
 function renderLearnedTable(items) {
   const tbody = document.getElementById('learned_tbody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);padding:24px">暂无学习到的词条</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:24px">暂无学习到的词条。点击"+ 新建词条"手动添加，或启用 LLM 改写后系统将自动沉淀学习到的词汇。</td></tr>';
     return;
   }
-  tbody.innerHTML = items.map(it => `<tr>
-    <td><strong>${esc(it.original)}</strong></td><td>${esc(it.mapped_to)}</td>
-    <td style="text-align:center">${it.count}</td><td>${fmtTime(it.first_seen)}</td><td>${fmtTime(it.last_seen)}</td>
-    <td>${it.approved ? '<span class="badge badge-ok">已审核</span>' : '<span class="badge badge-warn">待审核</span>'}</td>
-    <td>${!it.approved?`<button class="btn-success btn-sm" onclick="approveSyn('${esc(it.original)}')">通过</button> `:''}
-      <button class="btn-danger btn-sm" onclick="deleteSyn('${esc(it.original)}')">删除</button></td>
-  </tr>`).join('');
+  tbody.innerHTML = items.map(it => {
+    const srcBadge = it.source === 'manual'
+      ? '<span class="badge badge-info">手动</span>'
+      : '<span class="badge" style="background:#f3e8ff;color:#7c3aed">机器</span>';
+    const statusBadge = it.approved
+      ? '<span class="badge badge-ok">已审核</span>'
+      : '<span class="badge badge-warn">待审核</span>';
+    const checked = _synSelectedSet.has(it.original) ? 'checked' : '';
+    return `<tr data-original="${esc(it.original)}" data-approved="${it.approved?1:0}" data-source="${esc(it.source||'')}">
+      <td><input type="checkbox" class="syn-row-cb" value="${esc(it.original)}" ${checked} onchange="onSynRowCheck(this)"></td>
+      <td><strong>${esc(it.original)}</strong></td>
+      <td>${esc(it.mapped_to)}</td>
+      <td>${srcBadge}</td>
+      <td style="text-align:center">${it.count}</td>
+      <td title="${esc(it.first_seen||'')}">${_fmtRelativeTime(it.first_seen)}</td>
+      <td title="${esc(it.last_seen||'')}">${_fmtRelativeTime(it.last_seen)}</td>
+      <td>${statusBadge}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-ghost btn-sm" onclick="editSyn('${esc(it.original)}','${esc(it.mapped_to)}')">编辑</button>
+        ${!it.approved?`<button class="btn-success btn-sm" onclick="approveSyn('${esc(it.original)}')">通过</button> `:''}
+        <button class="btn-danger btn-sm" onclick="deleteSyn('${esc(it.original)}')">删除</button>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 function renderStaticTable(items) {
@@ -1566,19 +1653,170 @@ function switchSynTab(tab) {
 
 function filterSynTable() {
   const q = document.getElementById('syn_search').value.trim().toLowerCase();
-  const tbodyId = currentSynTab === 'learned' ? 'learned_tbody' : 'static_tbody';
-  document.querySelectorAll(`#${tbodyId} tr`).forEach(tr =>
-    tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none');
+  if (currentSynTab === 'static') {
+    document.querySelectorAll('#static_tbody tr').forEach(tr =>
+      tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none');
+    return;
+  }
+  const statusFilter = document.getElementById('syn_filter_status').value;
+  const sourceFilter = document.getElementById('syn_filter_source').value;
+  document.querySelectorAll('#learned_tbody tr').forEach(tr => {
+    const text = tr.textContent.toLowerCase();
+    const matchQ = !q || text.includes(q);
+    const matchStatus = statusFilter === 'all'
+      || (statusFilter === 'pending' && tr.dataset.approved === '0')
+      || (statusFilter === 'approved' && tr.dataset.approved === '1');
+    const matchSource = sourceFilter === 'all' || tr.dataset.source === sourceFilter;
+    tr.style.display = (matchQ && matchStatus && matchSource) ? '' : 'none';
+  });
 }
 
-async function approveSyn(orig) {
-  try { await api('/admin/synonyms/learned/approve?original='+encodeURIComponent(orig),{method:'POST'}); loadSynonyms(); }
-  catch(e) {}
+// --- 新建/编辑表单 ---
+function showSynAddForm() {
+  _synEditingOriginal = null;
+  document.getElementById('syn-form-original').value = '';
+  document.getElementById('syn-form-mapped').value = '';
+  document.getElementById('syn-form-original').disabled = false;
+  document.getElementById('syn-form-orig-label').textContent = '原始词（变体/口语）';
+  document.getElementById('syn-form-submit').textContent = '添加';
+  document.getElementById('syn-form-error').style.display = 'none';
+  document.getElementById('syn-add-form').style.display = '';
+  document.getElementById('syn-form-original').focus();
 }
+
+function editSyn(original, mappedTo) {
+  _synEditingOriginal = original;
+  document.getElementById('syn-form-original').value = original;
+  document.getElementById('syn-form-mapped').value = mappedTo;
+  document.getElementById('syn-form-original').disabled = true;
+  document.getElementById('syn-form-orig-label').textContent = '原始词（不可修改）';
+  document.getElementById('syn-form-submit').textContent = '保存修改';
+  document.getElementById('syn-form-error').style.display = 'none';
+  document.getElementById('syn-add-form').style.display = '';
+  document.getElementById('syn-form-mapped').focus();
+}
+
+function hideSynAddForm() {
+  document.getElementById('syn-add-form').style.display = 'none';
+  _synEditingOriginal = null;
+}
+
+async function submitSynForm() {
+  const original = document.getElementById('syn-form-original').value.trim();
+  const mapped = document.getElementById('syn-form-mapped').value.trim();
+  const errEl = document.getElementById('syn-form-error');
+  if (!original || !mapped) {
+    errEl.textContent = '原始词和映射词都不能为空';
+    errEl.style.display = '';
+    return;
+  }
+  errEl.style.display = 'none';
+  try {
+    if (_synEditingOriginal) {
+      // 编辑模式
+      await api('/admin/synonyms/learned', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({original: _synEditingOriginal, mapped_to: mapped})
+      });
+      toast('词条已更新', 'success');
+    } else {
+      // 新建模式
+      await api('/admin/synonyms/learned/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({original, mapped_to: mapped})
+      });
+      toast('词条已添加', 'success');
+    }
+    hideSynAddForm();
+    loadSynonyms();
+  } catch(e) {
+    errEl.textContent = (e && e.message) || '操作失败';
+    errEl.style.display = '';
+  }
+}
+
+// --- 单条操作 ---
+async function approveSyn(orig) {
+  try {
+    await api('/admin/synonyms/learned/approve?original='+encodeURIComponent(orig),{method:'POST'});
+    toast('已审核通过', 'success');
+    loadSynonyms();
+  } catch(e) {}
+}
+
 async function deleteSyn(orig) {
   if (!confirm(`确定删除「${orig}」？`)) return;
-  try { await api('/admin/synonyms/learned?original='+encodeURIComponent(orig),{method:'DELETE'}); loadSynonyms(); }
-  catch(e) {}
+  try {
+    await api('/admin/synonyms/learned?original='+encodeURIComponent(orig),{method:'DELETE'});
+    toast('已删除', 'success');
+    loadSynonyms();
+  } catch(e) {}
+}
+
+// --- 批量选择 ---
+function onSynRowCheck(cb) {
+  if (cb.checked) _synSelectedSet.add(cb.value);
+  else _synSelectedSet.delete(cb.value);
+  _updateBatchBar();
+}
+
+function toggleSynSelectAll(checked) {
+  _synSelectedSet.clear();
+  document.querySelectorAll('.syn-row-cb').forEach(cb => {
+    // 仅选择当前可见行
+    if (cb.closest('tr').style.display !== 'none') {
+      cb.checked = checked;
+      if (checked) _synSelectedSet.add(cb.value);
+    }
+  });
+  _updateBatchBar();
+}
+
+function clearSynSelection() {
+  _synSelectedSet.clear();
+  document.querySelectorAll('.syn-row-cb').forEach(cb => cb.checked = false);
+  document.getElementById('syn-select-all').checked = false;
+  _updateBatchBar();
+}
+
+function _updateBatchBar() {
+  const bar = document.getElementById('syn-batch-bar');
+  const cnt = _synSelectedSet.size;
+  if (cnt > 0) {
+    bar.style.display = 'flex';
+    document.getElementById('syn-selected-count').textContent = `已选 ${cnt} 条`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+async function batchApproveSyn() {
+  const terms = Array.from(_synSelectedSet);
+  if (!terms.length) return;
+  try {
+    const r = await api('/admin/synonyms/learned/batch-approve', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({terms})
+    });
+    toast(`已批量审核 ${r.approved_count||0} 条`, 'success');
+    loadSynonyms();
+  } catch(e) {}
+}
+
+async function batchDeleteSyn() {
+  const terms = Array.from(_synSelectedSet);
+  if (!terms.length) return;
+  if (!confirm(`确定批量删除 ${terms.length} 条词条？`)) return;
+  try {
+    const r = await api('/admin/synonyms/learned/batch-delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({terms})
+    });
+    toast(`已批量删除 ${r.deleted_count||0} 条`, 'success');
+    loadSynonyms();
+  } catch(e) {}
 }
 
 // ===== Logs =====

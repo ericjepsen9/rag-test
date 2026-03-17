@@ -510,6 +510,54 @@ def admin_synonyms_delete(original: str):
     return {"ok": True, "deleted": original.strip()}
 
 
+class SynonymAddRequest(BaseModel):
+    original: str
+    mapped_to: str
+
+
+@app.post("/admin/synonyms/learned/add")
+def admin_synonyms_add(req: SynonymAddRequest):
+    """手动添加一条同义词映射"""
+    from synonym_store import add_manual
+    result = add_manual(req.original, req.mapped_to)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "添加失败"))
+    return result
+
+
+class SynonymEditRequest(BaseModel):
+    original: str
+    mapped_to: str
+
+
+@app.put("/admin/synonyms/learned")
+def admin_synonyms_edit(req: SynonymEditRequest):
+    """编辑已有同义词的映射目标"""
+    from synonym_store import update_learned
+    result = update_learned(req.original, req.mapped_to)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "编辑失败"))
+    return result
+
+
+class SynonymBatchRequest(BaseModel):
+    terms: List[str]
+
+
+@app.post("/admin/synonyms/learned/batch-approve")
+def admin_synonyms_batch_approve(req: SynonymBatchRequest):
+    """批量审核通过多条同义词"""
+    from synonym_store import batch_approve
+    return batch_approve(req.terms)
+
+
+@app.post("/admin/synonyms/learned/batch-delete")
+def admin_synonyms_batch_delete(req: SynonymBatchRequest):
+    """批量删除多条同义词"""
+    from synonym_store import batch_delete
+    return batch_delete(req.terms)
+
+
 @app.get("/admin/logs/qa")
 def admin_logs_qa(limit: int = 20):
     return {"items": get_recent_qa(limit=min(max(1, limit), 100))}
