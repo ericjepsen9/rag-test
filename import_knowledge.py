@@ -528,6 +528,8 @@ def main():
                     help="导入后自动构建 FAISS 索引")
     ap.add_argument("--dry-run", action="store_true",
                     help="仅预览 LLM 整理结果，不写入文件")
+    ap.add_argument("--no-keywords", action="store_true",
+                    help="跳过 LLM 关键词提取（同义词/分词/路由关键词）")
     args = ap.parse_args()
 
     entity_type = args.type
@@ -569,6 +571,49 @@ def main():
     # 注册提示
     if not args.dry_run:
         _print_registration_hint(result, entity_type, entity_id)
+
+    # ============================================================
+    # 关键词提取：在导入时自动从原始文档中提取同义词、分词词典、路由关键词
+    # ============================================================
+    if not args.dry_run and not args.no_keywords:
+        print(f"\n[INFO] 正在提取关键词（同义词/分词词典/路由关键词）...")
+        try:
+            from keyword_extractor import extract_keywords_from_document, save_extraction_result
+            # 获取已有同义词用于去重
+            existing_synonyms = {}
+            try:
+                from search_utils import _SYNONYM_MAP
+                existing_synonyms = dict(_SYNONYM_MAP)
+            except ImportError:
+                pass
+            try:
+                from synonym_store import get_all_learned
+                for item in get_all_learned():
+                    existing_synonyms[item["original"]] = item["mapped_to"]
+            except ImportError:
+                pass
+
+            kw_result = extract_keywords_from_document(
+                client, _get_knowledge_model(), raw_text,
+                entity_type, entity_id, existing_synonyms,
+            )
+
+            # 保存提取结果
+            stats = save_extraction_result(kw_result)
+            print(f"[OK] 关键词提取完成:")
+            print(f"  - 同义词新增: {stats['synonyms_added']} 条（待审核）")
+            print(f"  - jieba 自定义词新增: {stats['jieba_words_added']} 条")
+            print(f"  - 路由关键词新增: {stats['route_keywords_added']} 条")
+
+            if stats["synonyms_added"] > 0:
+                print(f"[提示] 新增同义词需要审核，请在管理后台查看或运行：")
+                print(f"  python -c \"from keyword_extractor import get_pending_review; "
+                      f"import json; print(json.dumps(get_pending_review(), ensure_ascii=False, indent=2))\"")
+        except Exception as e:
+            print(f"[WARN] 关键词提取失败（不影响知识库导入）: {e}")
+
+    elif args.no_keywords:
+        print(f"[INFO] 跳过关键词提取（--no-keywords）")
 
     # 构建索引
     if args.build and not args.dry_run:

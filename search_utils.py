@@ -43,6 +43,14 @@ def _get_jieba():
             ]
             for w in _CUSTOM_WORDS:
                 _jieba_mod.add_word(w)
+            # 加载导入时提取的自定义词（data/jieba_user_dict.txt）
+            try:
+                from keyword_extractor import load_jieba_user_dict
+                user_dict_count = load_jieba_user_dict(_jieba_mod)
+                if user_dict_count > 0:
+                    print(f"[INFO] 加载 jieba 用户词典: {user_dict_count} 条")
+            except ImportError:
+                pass
             _jieba = _jieba_mod
         except ImportError:
             print("[WARN] jieba 未安装，回退到 bigram 分词")

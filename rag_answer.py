@@ -49,6 +49,22 @@ _QUESTION_ROUTES_LOWER: Dict[str, List[str]] = {
     for route, keywords in QUESTION_ROUTES.items()
 }
 
+# 合并导入时提取的路由关键词（来自 data/extracted_route_keywords.json）
+try:
+    from keyword_extractor import load_route_keywords as _load_extracted_routes
+    _extracted_routes = _load_extracted_routes()
+    for _route, _kws in _extracted_routes.items():
+        if _route in _QUESTION_ROUTES_LOWER:
+            _existing = set(_QUESTION_ROUTES_LOWER[_route])
+            _QUESTION_ROUTES_LOWER[_route].extend(
+                kw.lower() for kw in _kws if kw.lower() not in _existing
+            )
+        else:
+            _QUESTION_ROUTES_LOWER[_route] = [kw.lower() for kw in _kws]
+    del _extracted_routes, _load_extracted_routes
+except ImportError:
+    pass
+
 _model = None
 _faiss = None
 _BGEM3 = None
