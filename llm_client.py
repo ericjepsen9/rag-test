@@ -4,6 +4,7 @@
 支持为「对话」和「知识库整理」分别配置不同的 LLM 提供商 / 模型 / API Key。
 所有 LLM 调用统一通过本模块获取 client，不再直接使用 rag_runtime_config 中的全局变量。
 """
+import base64
 import os
 import threading
 from typing import Optional, Dict, Any
@@ -19,7 +20,7 @@ _llm_configs: Dict[str, Dict[str, Any]] = {
         "provider": "",
         "model": "",
         "api_base": "",
-        "api_key": "",      # 运行时存储，不持久化
+        "api_key": "",
         "model_format": "standard",  # "standard" or "litellm" (provider:model_id)
     },
     "knowledge": {
@@ -260,13 +261,16 @@ def _persist_llm_configs():
     config_file.parent.mkdir(parents=True, exist_ok=True)
     data = {}
     for purpose, cfg in _llm_configs.items():
+        # api_key 使用 base64 编码持久化（本地文件，基本混淆即可）
+        raw_key = cfg["api_key"] or ""
+        encoded_key = base64.b64encode(raw_key.encode()).decode() if raw_key else ""
         data[purpose] = {
             "enabled": cfg["enabled"],
             "provider": cfg["provider"],
             "model": cfg["model"],
             "api_base": cfg["api_base"],
-            # api_key 不持久化到文件（安全考虑），仅持久化是否设置过
             "api_key_set": bool(cfg["api_key"]),
+            "api_key_enc": encoded_key,
             "model_format": cfg.get("model_format", "standard"),
         }
     with _lock:
@@ -294,14 +298,21 @@ def load_persisted_llm_configs():
                 cfg["model"] = saved.get("model", "")
                 cfg["api_base"] = saved.get("api_base", "")
                 cfg["model_format"] = saved.get("model_format", "standard")
-                # api_key 从环境变量恢复
-                if purpose == "chat":
-                    cfg["api_key"] = os.environ.get("OPENAI_API_KEY", "").strip()
-                elif purpose == "knowledge":
-                    cfg["api_key"] = os.environ.get(
-                        "KNOWLEDGE_LLM_API_KEY",
-                        os.environ.get("OPENAI_API_KEY", "")
-                    ).strip()
+                # api_key: 优先从持久化文件恢复，其次从环境变量
+                enc_key = saved.get("api_key_enc", "")
+                if enc_key:
+                    try:
+                        cfg["api_key"] = base64.b64decode(enc_key).decode()
+                    except Exception:
+                        cfg["api_key"] = ""
+                if not cfg["api_key"]:
+                    if purpose == "chat":
+                        cfg["api_key"] = os.environ.get("OPENAI_API_KEY", "").strip()
+                    elif purpose == "knowledge":
+                        cfg["api_key"] = os.environ.get(
+                            "KNOWLEDGE_LLM_API_KEY",
+                            os.environ.get("OPENAI_API_KEY", "")
+                        ).strip()
                 loaded = True
         if loaded:
             # 同步 chat 到旧版全局变量

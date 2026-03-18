@@ -635,6 +635,7 @@
         <div class="form-group">
           <label>API Key</label>
           <input id="model-api-key" type="password" style="width:400px" placeholder="输入 API Key（留空保持不变）">
+          <span id="model-api-key-status" style="margin-left:8px;font-size:12px"></span>
           <div class="form-hint">API Key 不会回显，留空表示不更改当前 Key</div>
         </div>
         <div class="form-group">
@@ -1560,6 +1561,8 @@ function selectProvider(provider) {
   if (!_multiLLMCache) return;  // Guard against null cache
   document.getElementById('model-config-panel').style.display = 'block';
   document.getElementById('model-api-key').value = '';  // Clear API key on provider change
+  // Show API key status indicator
+  const keyStatusEl = document.getElementById('model-api-key-status');
 
   const presets = _multiLLMCache?.presets || {};
   const preset = presets[provider];
@@ -1592,6 +1595,14 @@ function selectProvider(provider) {
     document.getElementById('model-api-base').value = '';
   }
   document.getElementById('model-enabled').checked = cfg.enabled ?? true;
+  // API key status indicator
+  if (keyStatusEl) {
+    if (cfg.provider === provider && cfg.api_key_set) {
+      keyStatusEl.innerHTML = '<span style="color:var(--success,#22c55e)">Key 已设置</span>';
+    } else {
+      keyStatusEl.innerHTML = '<span style="color:var(--text-secondary,#999)">未设置 Key</span>';
+    }
+  }
   // model_format: LiteLLM proxy support
   const fmtEl = document.getElementById('model-format');
   if (fmtEl) fmtEl.checked = (cfg.model_format === 'litellm');
@@ -1633,8 +1644,28 @@ async function saveModelConfig() {
 
 async function testModelConnection() {
   const out = document.getElementById('model-test-result');
-  out.innerHTML = '<span style="color:var(--primary)">测试连接中...</span>';
+  out.innerHTML = '<span style="color:var(--primary)">保存配置并测试连接中...</span>';
   try {
+    // 先保存当前表单配置，确保测试使用最新值
+    const modelSel = document.getElementById('model-name').value;
+    const model = modelSel === '__custom__'
+      ? document.getElementById('model-name-custom').value.trim()
+      : modelSel;
+    if (!model) { out.innerHTML = '<span class="badge badge-danger">请输入模型名称</span>'; return; }
+    const fmtEl = document.getElementById('model-format');
+    const payload = {
+      purpose: currentLLMPurpose,
+      provider: selectedProvider,
+      model,
+      api_base: document.getElementById('model-api-base').value.trim(),
+      api_key: document.getElementById('model-api-key').value.trim(),
+      enabled: document.getElementById('model-enabled').checked,
+      model_format: (fmtEl && fmtEl.checked) ? 'litellm' : 'standard',
+    };
+    await api('/admin/llm/configs', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)});
+    document.getElementById('model-api-key').value = '';
+    // 然后测试连接
     const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
     if (r.ok) {
       out.innerHTML = `<span class="badge badge-ok">连接成功</span>
@@ -1644,6 +1675,7 @@ async function testModelConnection() {
       out.innerHTML = `<span class="badge badge-danger">连接失败</span>
         <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
     }
+    loadModelConfig();
   } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
 }
 
