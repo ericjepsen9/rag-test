@@ -338,6 +338,7 @@
             <h2 id="kb-editor-title">编辑文件</h2>
             <div>
               <button class="btn-primary btn-sm" onclick="saveKBFile()">保存</button>
+              <button class="btn-warning btn-sm" id="kb-editor-rebuild" style="display:none" onclick="rebuildAfterEdit()">重建索引</button>
               <button class="btn-secondary btn-sm" onclick="closeEditor()">关闭</button>
             </div>
           </div>
@@ -1233,7 +1234,8 @@ async function saveKBFile() {
       body: JSON.stringify({content, expected_mtime: _kbEditMtime}),
     });
     _kbEditMtime = result.mtime || null;  // 更新 mtime 以支持连续编辑
-    toast('文件保存成功', 'success');
+    toast('文件保存成功，索引需重建后生效', 'success');
+    document.getElementById('kb-editor-rebuild').style.display = '';
     loadKBFiles();
   } catch(e) {
     const msg = (e && e.message && e.message.includes('409')) ? '文件已被其他人修改，请刷新后重试' : '文件保存失败';
@@ -1243,8 +1245,28 @@ async function saveKBFile() {
 
 function closeEditor() {
   document.getElementById('kb-editor').style.display = 'none';
+  document.getElementById('kb-editor-rebuild').style.display = 'none';
   kbEditingFile = ''; kbEditingProduct = '';
   _kbEditMtime = null;
+}
+
+async function rebuildAfterEdit() {
+  if (!kbEditingProduct) return;
+  const btn = document.getElementById('kb-editor-rebuild');
+  const product = kbEditingProduct;
+  btn.disabled = true;
+  btn.textContent = '正在重建...';
+  try {
+    await api('/admin/rebuild', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({product, timeout_sec: 300})});
+    toast(`${product} 索引重建完成`, 'success');
+    btn.style.display = 'none';
+  } catch(e) {
+    toast(`索引重建失败: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '重建索引';
+  }
 }
 
 async function deleteKBFile(product, filename) {
