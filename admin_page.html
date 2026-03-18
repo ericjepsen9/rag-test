@@ -718,7 +718,7 @@
           </select>
           <button class="btn-secondary btn-sm" onclick="loadSynonyms()">刷新</button>
           <button class="btn-primary btn-sm" onclick="showSynAddForm()">+ 新建词条</button>
-          <span id="syn-batch-bar" style="display:none;margin-left:auto;display:none;gap:6px;align-items:center">
+          <span id="syn-batch-bar" style="display:none;margin-left:auto;gap:6px;align-items:center">
             <span id="syn-selected-count" style="font-size:12px;color:#6b7280"></span>
             <button class="btn-success btn-sm" onclick="batchApproveSyn()">批量通过</button>
             <button class="btn-danger btn-sm" onclick="batchDeleteSyn()">批量删除</button>
@@ -1068,7 +1068,7 @@ function toast(msg, type = 'info') {
 }
 
 // ===== Utilities =====
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;'); }
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML.replace(/\\/g, '&#92;').replace(/'/g, '&#39;').replace(/"/g, '&quot;'); }
 function fmtTime(ts) { return ts ? ts.replace('T', ' ') : '-'; }
 function fmtSize(b) {
   if (b < 1024) return b + ' B';
@@ -1244,6 +1244,7 @@ async function saveKBFile() {
 function closeEditor() {
   document.getElementById('kb-editor').style.display = 'none';
   kbEditingFile = ''; kbEditingProduct = '';
+  _kbEditMtime = null;
 }
 
 async function deleteKBFile(product, filename) {
@@ -1264,7 +1265,11 @@ async function promptCreateProduct() {
       body: JSON.stringify({product: name.trim()}),
     });
     toast('产品创建成功', 'success');
-    loadKBProductList();
+    await loadKBProductList();
+    // 自动选中新创建的产品
+    const sel = document.getElementById('kb-product-select');
+    sel.value = name.trim();
+    loadKBFiles();
   } catch(e) { toast('产品创建失败', 'error'); }
 }
 
@@ -1290,6 +1295,7 @@ function createNewFile() {
   if (!fname) return;
   kbEditingProduct = product;
   kbEditingFile = fname;
+  _kbEditMtime = null;  // 新文件无 mtime，避免发送旧文件的 mtime 导致 409
   document.getElementById('kb-editor').style.display = 'block';
   document.getElementById('kb-editor-title').textContent = `新建: ${product}/${fname}`;
   document.getElementById('kb-editor-content').value = '';
@@ -1346,7 +1352,8 @@ async function doUpload() {
   const out = document.getElementById('upload-result');
   out.innerHTML = '<span style="color:var(--primary)">上传中...</span>';
   try {
-    const r = await fetch(_authUrl('/admin/upload'), {method:'POST', body: fd, headers: _authHeaders()});
+    const r = await fetch('/admin/upload', {method:'POST', body: fd, headers: _authHeaders()});
+    if (r.status === 403) { _showAuthPrompt(); throw new Error('鉴权失败'); }
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || 'upload failed');
     const ok = (j.uploaded||[]).length;
@@ -1378,7 +1385,8 @@ async function handleZipUpload(e) {
   const out = document.getElementById('zip-result');
   out.innerHTML = '<span style="color:var(--primary)">解压上传中...</span>';
   try {
-    const r = await fetch(_authUrl('/admin/upload_zip'), {method:'POST', body: fd, headers: _authHeaders()});
+    const r = await fetch('/admin/upload_zip', {method:'POST', body: fd, headers: _authHeaders()});
+    if (r.status === 403) { _showAuthPrompt(); throw new Error('鉴权失败'); }
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || 'upload failed');
     const results = j.results || [];
@@ -1403,7 +1411,12 @@ async function createTemplate() {
   try {
     await api('/admin/knowledge/create_product', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({product: pid})});
-  } catch(e) { /* may already exist */ }
+  } catch(e) {
+    // 409 表示产品已存在，可以继续写入模板文件；其他错误则中止
+    if (e && e.message && !e.message.includes('409')) {
+      toast('产品创建失败: ' + e.message, 'error'); return;
+    }
+  }
   // Write template files
   const mainTpl = `一、产品基础信息\n- 产品名称：${cnName||pid}\n- 规格：\n- 适用人群：\n\n二、核心成分与作用\n\n三、适用范围\n\n四、操作方法与注射指南\n\n五、防伪鉴别方法\n\n六、术后护理与注意事项\n\n七、禁忌人群\n\n八、风险与不良反应\n\n九、联合方案与项目搭配\n\n十、效果与维持时间\n\n十一、术前准备\n\n十二、方案设计与面部评估\n\n十三、修复与补救方案`;
   const faqTpl = `【Q】${cnName||pid}是什么？\n【A】\n\n【Q】${cnName||pid}的主要成分是什么？\n【A】\n\n【Q】${cnName||pid}术后注意什么？\n【A】`;
@@ -1468,15 +1481,32 @@ async function rebuildAllIndexes() {
   const out = document.getElementById('index-status');
   try {
     const stats = await api('/admin/stats');
+    let failed = 0, succeeded = 0;
     for (const p of stats.products) {
-      out.innerHTML = `<span style="color:var(--primary)">正在重建 ${esc(p.name)}...</span>`;
-      await api('/admin/rebuild', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({product: p.name, timeout_sec:300})});
+      out.innerHTML = `<span style="color:var(--primary)">正在重建 ${esc(p.name)}... (${succeeded + failed + 1}/${stats.products.length})</span>`;
+      try {
+        await api('/admin/rebuild', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({product: p.name, timeout_sec:300})});
+        succeeded++;
+      } catch(e) {
+        failed++;
+        out.innerHTML += `<br><span class="badge badge-danger">${esc(p.name)} 失败: ${esc(e.message)}</span>`;
+      }
     }
     out.innerHTML += '<br><span style="color:var(--primary)">正在重建共享索引...</span>';
-    await api('/admin/rebuild_shared', {method:'POST'});
-    out.innerHTML = '<span class="badge badge-ok">全部索引重建完成</span>';
-    toast('全部索引重建完成', 'success');
+    try {
+      await api('/admin/rebuild_shared', {method:'POST'});
+    } catch(e) {
+      failed++;
+      out.innerHTML += `<br><span class="badge badge-danger">共享索引失败: ${esc(e.message)}</span>`;
+    }
+    if (failed === 0) {
+      out.innerHTML = '<span class="badge badge-ok">全部索引重建完成</span>';
+      toast('全部索引重建完成', 'success');
+    } else {
+      out.innerHTML += `<br><span class="badge badge-warn">完成：${succeeded} 成功，${failed} 失败</span>`;
+      toast(`索引重建完成：${succeeded} 成功，${failed} 失败`, 'error');
+    }
     loadIndexStatus();
   } catch(e) { out.innerHTML += `<br><span class="badge badge-danger">失败: ${esc(e.message)}</span>`; }
 }
@@ -2159,6 +2189,7 @@ function showEffAddForm() {
 }
 function editEffSyn(original, mapped) {
   document.getElementById('eff-form-original').value = original;
+  document.getElementById('eff-form-original').disabled = true;  // 编辑时禁止修改原词
   document.getElementById('eff-form-mapped').value = mapped;
   document.getElementById('eff-form-error').style.display = 'none';
   document.getElementById('eff-add-form').style.display = '';
@@ -2836,7 +2867,8 @@ async function doImport(dryRun) {
       fd.append('build', '0');
       fd.append('dry_run', '1');
       fd.append('file', importFile);
-      const resp = await fetch(_authUrl('/admin/import_knowledge_file'), {method:'POST', body: fd, headers: _authHeaders()});
+      const resp = await fetch('/admin/import_knowledge_file', {method:'POST', body: fd, headers: _authHeaders()});
+      if (resp.status === 403) { _showAuthPrompt(); throw new Error('管理接口鉴权失败，请输入正确的 Admin Key'); }
       result = await resp.json();
       if (!resp.ok) throw new Error(result.detail || `HTTP ${resp.status}`);
     } else {
