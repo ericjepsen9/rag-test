@@ -1717,6 +1717,8 @@ async function saveModelConfig() {
     if (connEl) connEl.innerHTML = '<span style="color:var(--primary);font-size:12px">验证连接中...</span>';
     try {
       const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
+      // 先刷新配置，再根据测试结果覆盖状态
+      await loadModelConfig();
       if (r.ok) {
         if (connEl) connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
         document.getElementById('model-test-result').innerHTML =
@@ -1738,7 +1740,6 @@ async function saveModelConfig() {
          <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(te.message)}</span>`;
       toast(`${purposeLabel} LLM 配置已保存，但连接测试失败`, 'warn');
     }
-    loadModelConfig();
   } catch(e) { toast('LLM 配置保存失败', 'error'); }
 }
 
@@ -1769,6 +1770,8 @@ async function testModelConnection() {
     document.getElementById('model-api-key').value = '';
     // 然后测试连接
     const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
+    // 先刷新配置（会重置状态标签），再根据测试结果覆盖
+    await loadModelConfig();
     if (r.ok) {
       out.innerHTML = `<span class="badge badge-ok">连接成功</span>
         <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
@@ -1779,7 +1782,6 @@ async function testModelConnection() {
         <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
       if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
     }
-    loadModelConfig();
   } catch(e) {
     out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`;
     if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
