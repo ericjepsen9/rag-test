@@ -238,7 +238,7 @@ _SYNONYM_MAP = {
     "打多了": "过量注射", "打过量": "过量注射", "打太多": "过量注射",
     "移位": "填充物移位", "跑了": "填充物移位", "跑偏了": "填充物移位",
     "歪了": "不对称", "两边不一样": "不对称", "不对称": "左右不对称",
-    "凹凸不平": "不均匀", "坑坑洼洼": "不均匀", "不平整": "不均匀",
+    "凹凸不平": "不均匀", "不平整": "不均匀",
     "发硬": "硬结", "硬了": "硬结", "摸起来硬": "硬结",
     "有硬块": "硬结", "硬疙瘩": "硬结",
     "鼓包": "凸起", "鼓起来": "凸起", "凸出来": "凸起",
@@ -1057,13 +1057,18 @@ def detect_terms(question: str, term_map: Dict[str, List[str]],
                 found.append(key)
                 matched = True
                 break
-        # 反向子串匹配：查询中的词是某个别名的子串
+        # 反向子串匹配：查询中的中文片段是某个别名的子串
         # 例如 "蛋白" in "胶原蛋白"，"玻尿" in "玻尿酸"
-        if not matched and allow_reverse and len(q) >= 2:
-            # 提取查询中的中文连续片段作为候选子串
-            for a in aliases:
-                if len(a) >= 3 and q in a:
-                    found.append(key)
+        if not matched and allow_reverse:
+            for seg in _extract_cjk_segments(q):
+                if len(seg) < 2:
+                    continue
+                for a in aliases:
+                    if len(a) >= 3 and seg in a:
+                        found.append(key)
+                        matched = True
+                        break
+                if matched:
                     break
     return found
 

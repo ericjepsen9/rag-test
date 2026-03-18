@@ -161,7 +161,7 @@ _CLARIFICATION_RULES: Dict[str, List[Dict[str, str]]] = {
     ],
     "贵": [
         {"label": "产品价格及性价比", "query": "产品价格 性价比 一次多少钱", "route": "basic"},
-        {"label": "不同产品价格对比", "query": "不同产品价格对比 怎么选择", "route": "comparison"},
+        {"label": "不同产品价格对比", "query": "不同产品价格对比 怎么选择", "route": "basic"},
     ],
 
     # === 搭配类模糊查询 ===

@@ -278,7 +278,16 @@ def _persist_llm_configs():
     with _lock:
         tmp = config_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 限制文件权限：仅 owner 可读写（防止其他用户读取 API key）
+        try:
+            os.chmod(str(tmp), 0o600)
+        except OSError:
+            pass
         tmp.replace(config_file)
+        try:
+            os.chmod(str(config_file), 0o600)
+        except OSError:
+            pass
 
 
 def load_persisted_llm_configs():

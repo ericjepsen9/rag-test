@@ -960,6 +960,9 @@ _BASIC_KEYWORDS = ("产品", "品牌", "备案", "规格", "形态", "保质期"
                    "ml", "瓶", "液体", "常温")
 
 
+_RE_SUBSECTION = re.compile(r'(?:^|\n)(\d+）)')
+
+
 def _extract_subsection(block: str, question: str) -> str:
     """从大章节中提取与问题相关的子节。
     anatomy 的子节格式如 '1）额部（额头）'，indication 如 '1）皮肤松弛'，
@@ -967,9 +970,7 @@ def _extract_subsection(block: str, question: str) -> str:
     找到问题关键词匹配的子节标题后，提取到下一个同级子节为止。"""
     if not question or not block:
         return ""
-    import re
-    # 子节标题模式：数字+）开头
-    subsection_re = re.compile(r'(?:^|\n)(\d+）)')
+    subsection_re = _RE_SUBSECTION
     splits = list(subsection_re.finditer(block))
     if len(splits) < 2:
         return ""  # 没有子节结构，返回空让调用方用全文
@@ -1082,6 +1083,7 @@ _SHARED_ROUTE_DIR = {
 
 
 _shared_knowledge_cache: OrderedDict = OrderedDict()  # dir_name -> (max_mtime, content)
+_shared_knowledge_cache_lock = threading.Lock()
 _SHARED_CACHE_MAX = int(os.environ.get("RAG_SHARED_CACHE_MAX", "32"))
 
 def _evict_cache(cache, max_size: int) -> None:
@@ -1135,13 +1137,15 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
         main_file = shared_dir / "main.txt"
         if main_file.exists():
             mtime = main_file.stat().st_mtime
-            cached = _shared_knowledge_cache.get(dir_name)
-            if cached and cached[0] == mtime:
-                _shared_knowledge_cache.move_to_end(dir_name)  # LRU
-                return cached[1]
+            with _shared_knowledge_cache_lock:
+                cached = _shared_knowledge_cache.get(dir_name)
+                if cached and cached[0] == mtime:
+                    _shared_knowledge_cache.move_to_end(dir_name)
+                    return cached[1]
             content = main_file.read_text(encoding="utf-8")
-            _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
-            _shared_knowledge_cache[dir_name] = (mtime, content)
+            with _shared_knowledge_cache_lock:
+                _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
+                _shared_knowledge_cache[dir_name] = (mtime, content)
             return content
 
         # 多实例目录：先尝试匹配用户提到的具体子实体
@@ -1151,17 +1155,18 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
             if target.exists():
                 cache_key_sub = f"{dir_name}/{matched_sub}"
                 mtime = target.stat().st_mtime
-                cached = _shared_knowledge_cache.get(cache_key_sub)
-                if cached and cached[0] == mtime:
-                    _shared_knowledge_cache.move_to_end(cache_key_sub)  # LRU
-                    return cached[1]
+                with _shared_knowledge_cache_lock:
+                    cached = _shared_knowledge_cache.get(cache_key_sub)
+                    if cached and cached[0] == mtime:
+                        _shared_knowledge_cache.move_to_end(cache_key_sub)
+                        return cached[1]
                 content = target.read_text(encoding="utf-8")
-                _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
-                _shared_knowledge_cache[cache_key_sub] = (mtime, content)
+                with _shared_knowledge_cache_lock:
+                    _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
+                    _shared_knowledge_cache[cache_key_sub] = (mtime, content)
                 return content
 
         # 无匹配子实体或匹配失败：拼接所有子目录的 main.txt
-        # 先收集 mtime 判断缓存是否有效，避免无谓的文件读取
         inst_files = []
         max_mtime = 0.0
         for inst in sorted(shared_dir.iterdir()):
@@ -1171,25 +1176,25 @@ def _read_shared_knowledge(dir_name: str, question: str = "") -> str:
                 if mt > max_mtime:
                     max_mtime = mt
                 inst_files.append(f)
-        # 用 (max_mtime, file_count) 作为缓存键：文件删除时 count 变化可感知
         cache_key = (max_mtime, len(inst_files))
-        cached = _shared_knowledge_cache.get(dir_name)
-        if cached and cached[0] == cache_key and inst_files:
-            _shared_knowledge_cache.move_to_end(dir_name)  # LRU
-            return cached[1]
-        # 缓存未命中，读取文件内容
+        with _shared_knowledge_cache_lock:
+            cached = _shared_knowledge_cache.get(dir_name)
+            if cached and cached[0] == cache_key and inst_files:
+                _shared_knowledge_cache.move_to_end(dir_name)
+                return cached[1]
         parts = [fp.read_text(encoding="utf-8") for fp in inst_files]
         content = "\n\n".join(parts)
         if max_mtime > 0:
-            _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
-            _shared_knowledge_cache[dir_name] = (cache_key, content)
+            with _shared_knowledge_cache_lock:
+                _evict_cache(_shared_knowledge_cache, _SHARED_CACHE_MAX)
+                _shared_knowledge_cache[dir_name] = (cache_key, content)
         return content
     except OSError as e:
         from rag_logger import log_error
         log_error("_read_shared_knowledge", f"共享知识读取失败: {e}",
                   meta={"dir_name": dir_name})
-        # 返回缓存旧数据（如有），否则返回空
-        cached = _shared_knowledge_cache.get(dir_name)
+        with _shared_knowledge_cache_lock:
+            cached = _shared_knowledge_cache.get(dir_name)
         return cached[1] if cached else ""
 
 
@@ -1212,13 +1217,15 @@ def _read_material_knowledge(material_id: str) -> str:
         return ""
     key = str(main_file)
     mtime = main_file.stat().st_mtime
-    cached = _knowledge_file_cache.get(key)
-    if cached and cached[0] == mtime:
-        _knowledge_file_cache.move_to_end(key)  # LRU
-        return cached[1]
+    with _knowledge_file_cache_lock:
+        cached = _knowledge_file_cache.get(key)
+        if cached and cached[0] == mtime:
+            _knowledge_file_cache.move_to_end(key)
+            return cached[1]
     content = main_file.read_text(encoding="utf-8")
-    _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
-    _knowledge_file_cache[key] = (mtime, content)
+    with _knowledge_file_cache_lock:
+        _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
+        _knowledge_file_cache[key] = (mtime, content)
     return content
 
 
@@ -1431,6 +1438,7 @@ def _build_context(hits: List[Dict], max_chars: int = 5000) -> str:
 
 _openai_client = None
 _openai_client_checked = False
+_openai_client_lock = threading.Lock()
 
 
 def _get_chat_model() -> str:
@@ -1458,26 +1466,29 @@ def _get_openai_client():
                 return client
     except ImportError:
         pass
-    # 回退到旧版逻辑
+    # 回退到旧版逻辑（双重检查锁保护并发安全）
     if _openai_client_checked:
         return _openai_client
-    if not USE_OPENAI:
+    with _openai_client_lock:
+        if _openai_client_checked:
+            return _openai_client
+        if not USE_OPENAI:
+            _openai_client_checked = True
+            return None
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not key:
+            _openai_client_checked = True
+            return None
+        try:
+            from openai import OpenAI
+            client_kwargs = {"api_key": key}
+            if OPENAI_API_BASE:
+                client_kwargs["base_url"] = OPENAI_API_BASE
+            _openai_client = OpenAI(**client_kwargs)
+        except Exception:
+            _openai_client = None
         _openai_client_checked = True
-        return None
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not key:
-        _openai_client_checked = True
-        return None
-    try:
-        from openai import OpenAI
-        client_kwargs = {"api_key": key}
-        if OPENAI_API_BASE:
-            client_kwargs["base_url"] = OPENAI_API_BASE
-        _openai_client = OpenAI(**client_kwargs)
-    except Exception:
-        _openai_client = None
-    _openai_client_checked = True
-    return _openai_client
+        return _openai_client
 
 
 def llm_generate_answer(question: str, context: str, route: str, mode: str,
@@ -2174,29 +2185,40 @@ def answer_question(question: str, mode: str, history: list = None,
     # 记录最后一个子问题的 route/product，供 api_server 读取
     _last_route = ""
     _last_product = ""
+    _last_method = ""
+
+    def _answer_one_with_method(subq, mode, sub_rewrite, route):
+        """在 worker 线程中执行 answer_one 并捕获 thread-local method"""
+        ans = answer_one(subq, mode, rewrite=sub_rewrite, route_override=route)
+        method = getattr(_thread_local, "method", "")
+        return ans, method
+
     if len(sub_tasks) > 1:
         futures = []
         for subq, sub_rewrite, route in sub_tasks:
-            fut = _search_pool.submit(answer_one, subq, mode,
+            fut = _search_pool.submit(_answer_one_with_method, subq, mode,
                                       sub_rewrite, route)
             futures.append((fut, route, sub_rewrite))
         for fut, route, sub_rewrite in futures:
             try:
-                ans = fut.result(timeout=60)
+                ans, method = fut.result(timeout=60)
                 if ans and ans.strip():
                     outputs.append(ans)
                     _last_route = route
                     _last_product = detect_product(sub_rewrite.get("original", ""))
+                    _last_method = method
             except Exception as e:
                 from rag_logger import log_error
                 log_error("answer_question", f"子问题并行执行异常: {e}",
                           meta={"question": q[:100]})
-        # 将最后成功的子问题 route/product 同步到调用线程的 thread-local，
-        # 确保 api_server 调用 get_last_route_product() 能读到正确值
+        # 将最后成功的子问题 route/product/method 同步到调用线程的 thread-local，
+        # 确保 api_server 调用 get_last_route_product()/get_last_method() 能读到正确值
         if _last_route:
             _thread_local.route = _last_route
         if _last_product:
             _thread_local.product = _last_product
+        if _last_method:
+            _thread_local.method = _last_method
     else:
         for subq, sub_rewrite, route in sub_tasks:
             ans = answer_one(subq, mode, rewrite=sub_rewrite, route_override=route)

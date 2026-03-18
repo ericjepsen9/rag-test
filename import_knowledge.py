@@ -558,6 +558,10 @@ def main():
     entity_id = args.id.strip()
     _, is_single = _ENTITY_TYPES[entity_type]
 
+    # 校验：entity_id 不允许路径遍历字符
+    if entity_id and (".." in entity_id or "/" in entity_id or "\\" in entity_id):
+        ap.error(f"--id 不允许包含路径分隔符或 '..'：{entity_id}")
+
     # 校验：非单文件类型必须提供 --id
     if not is_single and not entity_id:
         ap.error(f"--type {entity_type} 需要提供 --id 参数（作为目录名）")

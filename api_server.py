@@ -159,7 +159,14 @@ _ADMIN_AUTH_EXEMPT = frozenset({"/admin"})
 async def admin_auth_middleware(request: Request, call_next):
     """管理接口鉴权中间件：对 /admin/* API 路径校验密钥"""
     path = request.url.path.rstrip("/")
-    if _ADMIN_API_KEY and path.startswith("/admin") and path not in _ADMIN_AUTH_EXEMPT:
+    if path.startswith("/admin") and path not in _ADMIN_AUTH_EXEMPT:
+        if not _ADMIN_API_KEY:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "管理接口未配置鉴权密钥。请设置环境变量 ADMIN_API_KEY 后重启服务。"},
+            )
+    if path.startswith("/admin") and path not in _ADMIN_AUTH_EXEMPT and _ADMIN_API_KEY:
         auth = request.headers.get("authorization", "")
         key_ok = (
             (auth.startswith("Bearer ") and auth[7:].strip() == _ADMIN_API_KEY)
@@ -1303,7 +1310,7 @@ def admin_delete_product(product: str):
     invalidate_bm25_cache(product)
     invalidate_media_cache(product)
     with _health_lock:
-        _health_cache = {}
+        _health_cache.clear()
     return {"ok": True, "deleted": product}
 
 
