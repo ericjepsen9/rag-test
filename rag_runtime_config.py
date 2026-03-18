@@ -421,11 +421,11 @@ QUESTION_TYPE_CONFIG = {
 # ratio: bigram 重叠率门槛（低于此值不走 FAQ 快速路径）
 # 安全相关路由要求更高的置信度
 FAQ_FAST_PATH_THRESHOLDS = {
-    "aftercare":        {"score": 0.35, "ratio": 0.40},
-    "effect":           {"score": 0.35, "ratio": 0.45},
-    "basic":            {"score": 0.38, "ratio": 0.45},
-    "operation":        {"score": 0.38, "ratio": 0.45},
-    "ingredient":       {"score": 0.38, "ratio": 0.45},
+    "aftercare":        {"score": 0.40, "ratio": 0.50},
+    "effect":           {"score": 0.40, "ratio": 0.50},
+    "basic":            {"score": 0.40, "ratio": 0.50},
+    "operation":        {"score": 0.40, "ratio": 0.50},
+    "ingredient":       {"score": 0.40, "ratio": 0.50},
     "risk":             {"score": 0.45, "ratio": 0.55},
     "contraindication": {"score": 0.45, "ratio": 0.55},
     "complication":     {"score": 0.45, "ratio": 0.55},

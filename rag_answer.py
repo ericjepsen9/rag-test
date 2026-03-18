@@ -105,7 +105,7 @@ _NON_PROC_STRONG = frozenset({"aftercare", "risk", "combo", "complication",
 
 _CONTRA_SIGNALS = ("体质", "人群", "可以用", "可以打", "适合", "能用", "能打",
                    "能做", "可以做", "能不能", "能打吗", "可以吗", "可以注射")
-_COMBO_SIGNALS = ("一起做", "联合", "搭配", "同做", "配合", "间隔多久")
+_COMBO_SIGNALS = ("一起做", "联合", "搭配", "同做", "配合", "同时做", "能不能一起")
 _REPAIR_SIGNALS = ("修复", "补救", "返修", "重新做", "做坏", "做失败", "效果差", "垮了", "脸垮")
 _SYMPTOM_KWS = ("红肿", "肿胀", "硬块", "结节", "疼痛", "感染", "淤青", "瘀青",
                 "发紫", "发黑", "红疹", "疹子", "痒", "化脓", "溃烂", "坏死", "不消",
@@ -135,7 +135,7 @@ _OPERATION_CONTEXT_SIGNALS = ("深度", "参数", "针头", "几号", "0.8", "0.
 _INGREDIENT_CONTEXT_SIGNALS = ("成分", "PCL", "聚己内酯", "谷胱甘肽", "肽",
                                 "生长因子", "抗氧化", "再生", "交联", "分子量",
                                 "材料", "HA", "胶原蛋白")
-_RE_TEMPORAL_SHORT = re.compile(r"术后(第?\d+天|当天|1-3天|一周|1周)")
+_RE_TEMPORAL_SHORT = re.compile(r"术后(第?[0-9\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+天|当天|1-3天|一周|1周)")
 _RE_TEMPORAL_LONG = re.compile(r"(术后\d+个月|半年|一年|长期)")
 # 扩展短期时间线：覆盖"做完/打完第X天"等非"术后"前缀
 _RE_DONE_TEMPORAL_SHORT = re.compile(r"(做完|打完)(第?\d+天|当天|第二天)")
@@ -587,6 +587,9 @@ def detect_route(question: str) -> str:
                 scores["risk"] += 4.0
     if "complication" in scores and symptom_count >= 2:
         scores["complication"] += 3.0
+    # 紧急求助语气（"怎么办"/"咋办"）→ complication
+    if "complication" in scores and any(w in q for w in ("怎么办", "咋办", "急", "赶紧")):
+        scores["complication"] += 4.0
 
     # 术中疼痛 → operation（更精确）
     if "risk" in scores and "operation" in scores:
@@ -682,12 +685,23 @@ def detect_route(question: str) -> str:
                     scores["script"] += 4.0
                     break
 
-    # 多实体并列提及 → combo
+    # 多实体并列提及 或 combo 信号词 → combo
     mentioned_projects = detect_terms(q, PROJECT_ALIASES)
     mentioned_products = detect_terms(q, PRODUCT_ALIASES)
     entity_count = len(mentioned_projects) + len(mentioned_products)
+    has_combo_signal = any(s in q for s in _COMBO_SIGNALS)
+    # 即使关键词未直接命中 combo 路由，只要有 combo 信号词 + 多实体，注入 combo
+    if "combo" not in scores and has_combo_signal and entity_count >= 2:
+        scores["combo"] = 3.0
     if "combo" in scores and entity_count >= 2:
         scores["combo"] += 6.0
+    if "combo" in scores and has_combo_signal:
+        scores["combo"] += 3.0
+
+    # course vs combo: 单实体 + "间隔"/"几次"/"疗程" → course 优先
+    if "course" in scores and "combo" in scores and entity_count <= 1:
+        if any(w in q for w in ("间隔", "几次", "疗程")):
+            scores["course"] += 5.0
 
     # "维持" → effect, "恢复" → risk/complication
     if "effect" in scores and "维持" in q and "恢复" not in q:
@@ -707,6 +721,16 @@ def detect_route(question: str) -> str:
     # "一直" + risk vs complication → 持续性症状更偏 risk
     if "risk" in scores and "complication" in scores and "一直" in q:
         scores["risk"] += 3.0
+
+    # "打完/做完" + 急性症状词（无明确长期时间线）→ complication
+    if "complication" in scores and "risk" in scores:
+        if re.search(r"(做完|打完)", q) and symptom_count >= 1:
+            if not _RE_TEMPORAL_LONG.search(q):
+                scores["complication"] += 4.0
+
+    # "术前" + operation → pre_care 优先（术前准备而非操作参数）
+    if "pre_care" in scores and "operation" in scores and "术前" in q:
+        scores["pre_care"] += 5.0
 
     # indication_q vs procedure_q：有皮肤状况词时偏向 indication_q
     if "indication_q" in scores and "procedure_q" in scores:
@@ -1049,7 +1073,7 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
         "risk":            (10, 22),
         "combo":           (8,  16),
         "ingredient":      (8,  28),  # 7成分各3条，full 需28条
-        "basic":           (10, 22),
+        "basic":           (16, 22),
         "effect":          (10, 20),  # 效果问题关注度高
         "pre_care":        (10, 20),
         "design":          (12, 26),
@@ -1065,6 +1089,32 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
     }
     brief_lim, full_lim = limits.get(route, (8, 20))
     limit = brief_lim if mode == "brief" else full_lim
+
+    # 当问题提及具体子主题时，优先返回匹配该子主题的条目
+    if question and len(items) > limit:
+        q_lower = question.lower()
+        q_chars = set(c for c in q_lower if '\u4e00' <= c <= '\u9fff')
+        if q_chars:
+            # 将条目按与问题的关键字重叠度分为：高相关、低相关
+            # 同时将紧跟在匹配 header 后面的子条目也标为相关
+            relevant_idx = set()
+            for idx, item in enumerate(items):
+                item_lower = item.lower()
+                overlap = sum(1 for c in q_chars if c in item_lower)
+                if overlap >= 2:
+                    relevant_idx.add(idx)
+                    # 如果匹配的是 header 类条目（以"）"或"："结尾），
+                    # 后续非 header 子条目也标为相关
+                    if item.rstrip().endswith(("：", ":", "）", ")")):
+                        for j in range(idx + 1, len(items)):
+                            sub = items[j].strip()
+                            if re.match(r"^\d+[）\)]", sub) or sub.endswith(("：", ":")):
+                                break  # 碰到下一个 header，停止
+                            relevant_idx.add(j)
+            if relevant_idx:
+                relevant = [items[i] for i in sorted(relevant_idx)]
+                other = [items[i] for i in range(len(items)) if i not in relevant_idx]
+                items = relevant + other
 
     return items[:limit]
 
@@ -1300,6 +1350,24 @@ def _normalize_for_bigram(text: str) -> str:
     return _expand_synonyms(text).lower().replace(" ", "")
 
 
+_product_name_bigrams_cache: set = set()
+
+
+def _get_product_name_bigrams() -> set:
+    """缓存所有产品名/别名的 bigram，用于 FAQ 匹配时排除。"""
+    if _product_name_bigrams_cache:
+        return _product_name_bigrams_cache
+    from rag_runtime_config import PRODUCT_ALIASES
+    bgs = set()
+    for aliases in PRODUCT_ALIASES.values():
+        for alias in aliases:
+            norm = _normalize_for_bigram(alias)
+            for i in range(len(norm) - 1):
+                bgs.add(norm[i:i+2])
+    _product_name_bigrams_cache.update(bgs)
+    return _product_name_bigrams_cache
+
+
 def _extract_faq_from_hits(hits: List[Dict], question: str,
                             _q_bigrams: set = None) -> List[str]:
     """从检索结果中提取与问题高度相关的 FAQ 回答。
@@ -1388,8 +1456,11 @@ def _try_faq_fast_path(hits: List[Dict], question: str, route: str,
     # 要求双方均有足够 bigrams，防止极短文本（2-3字）的虚假高重叠率
     if len(q_bigrams) < 3 or len(faq_bigrams) < 3:
         return ""
-    overlap = len(q_bigrams & faq_bigrams)
-    ratio = overlap / max(len(q_bigrams), 1)
+    # 过滤产品名/别名的 bigrams，避免产品名贡献虚假重叠率
+    _product_bigrams = _get_product_name_bigrams()
+    effective_overlap = q_bigrams & faq_bigrams - _product_bigrams
+    overlap = len(effective_overlap)
+    ratio = overlap / max(len(q_bigrams - _product_bigrams), 1)
     if overlap < 3 or ratio < thresholds["ratio"]:
         return ""
 
