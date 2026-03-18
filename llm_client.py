@@ -74,6 +74,7 @@ def get_llm_config(purpose: str = "chat") -> Dict[str, Any]:
         "api_base": cfg["api_base"],
         "api_key_set": bool(cfg["api_key"]),
         "model_format": cfg.get("model_format", "standard"),
+        "client_ready": _clients.get(purpose) is not None and _clients_checked.get(purpose, False),
     }
 
 

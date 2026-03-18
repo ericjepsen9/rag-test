@@ -623,7 +623,10 @@
         <div class="model-cards" id="model-cards"></div>
       </div>
       <div class="card" id="model-config-panel" style="display:none">
-        <h2>模型配置</h2>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+          <h2 style="margin:0">模型配置</h2>
+          <span id="model-connection-status"></span>
+        </div>
         <div class="form-group">
           <label>模型名称</label>
           <select id="model-name" style="width:300px" onchange="onModelNameChange()"></select>
@@ -1659,6 +1662,19 @@ function selectProvider(provider) {
   const fmtEl = document.getElementById('model-format');
   if (fmtEl) fmtEl.checked = (cfg.model_format === 'litellm');
   document.getElementById('model-test-result').innerHTML = '';
+  // Connection status badge
+  const connEl = document.getElementById('model-connection-status');
+  if (connEl) {
+    if (cfg.provider === provider && cfg.enabled && cfg.client_ready) {
+      connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
+    } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.client_ready) {
+      connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，未验证连接</span>';
+    } else if (cfg.provider === provider && !cfg.enabled) {
+      connEl.innerHTML = '<span class="badge badge-danger" style="font-size:12px;padding:3px 10px">已停用</span>';
+    } else {
+      connEl.innerHTML = '';
+    }
+  }
 }
 
 function onModelNameChange() {
@@ -1675,28 +1691,62 @@ async function saveModelConfig() {
     : modelSel;
   if (!model) { toast('请输入模型名称', 'error'); return; }
   const fmtEl = document.getElementById('model-format');
+  const enabled = document.getElementById('model-enabled').checked;
   const payload = {
     purpose: currentLLMPurpose,
     provider: selectedProvider,
     model,
     api_base: document.getElementById('model-api-base').value.trim(),
     api_key: document.getElementById('model-api-key').value.trim(),
-    enabled: document.getElementById('model-enabled').checked,
+    enabled,
     model_format: (fmtEl && fmtEl.checked) ? 'litellm' : 'standard',
   };
+  const connEl = document.getElementById('model-connection-status');
+  const purposeLabel = currentLLMPurpose === 'chat' ? '对话' : '知识库';
   try {
     await api('/admin/llm/configs', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(payload)});
-    const purposeLabel = currentLLMPurpose === 'chat' ? '对话' : '知识库';
-    toast(`${purposeLabel} LLM 配置已更新`, 'success');
     document.getElementById('model-api-key').value = '';
+    if (!enabled) {
+      if (connEl) connEl.innerHTML = '<span class="badge badge-danger" style="font-size:12px;padding:3px 10px">已停用</span>';
+      toast(`${purposeLabel} LLM 配置已保存（已停用）`, 'success');
+      loadModelConfig();
+      return;
+    }
+    // Auto-test connection after save
+    if (connEl) connEl.innerHTML = '<span style="color:var(--primary);font-size:12px">验证连接中...</span>';
+    try {
+      const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
+      if (r.ok) {
+        if (connEl) connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
+        document.getElementById('model-test-result').innerHTML =
+          `<span class="badge badge-ok">连接成功</span>
+           <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
+           模型: ${esc(r.model)} | 延迟: ${r.latency_ms}ms</span>`;
+        toast(`${purposeLabel} LLM 配置已保存，连接正常`, 'success');
+      } else {
+        if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已保存，连接失败</span>';
+        document.getElementById('model-test-result').innerHTML =
+          `<span class="badge badge-danger">连接失败</span>
+           <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
+        toast(`${purposeLabel} LLM 配置已保存，但连接测试失败`, 'warn');
+      }
+    } catch(te) {
+      if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已保存，连接失败</span>';
+      document.getElementById('model-test-result').innerHTML =
+        `<span class="badge badge-danger">连接测试失败</span>
+         <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(te.message)}</span>`;
+      toast(`${purposeLabel} LLM 配置已保存，但连接测试失败`, 'warn');
+    }
     loadModelConfig();
   } catch(e) { toast('LLM 配置保存失败', 'error'); }
 }
 
 async function testModelConnection() {
   const out = document.getElementById('model-test-result');
+  const connEl = document.getElementById('model-connection-status');
   out.innerHTML = '<span style="color:var(--primary)">保存配置并测试连接中...</span>';
+  if (connEl) connEl.innerHTML = '<span style="color:var(--primary);font-size:12px">验证连接中...</span>';
   try {
     // 先保存当前表单配置，确保测试使用最新值
     const modelSel = document.getElementById('model-name').value;
@@ -1723,12 +1773,17 @@ async function testModelConnection() {
       out.innerHTML = `<span class="badge badge-ok">连接成功</span>
         <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
         提供商: ${esc(r.provider || '')} | 模型: ${esc(r.model)} | 延迟: ${r.latency_ms}ms | 回复: "${esc(r.reply)}"</span>`;
+      if (connEl) connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
     } else {
       out.innerHTML = `<span class="badge badge-danger">连接失败</span>
         <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
+      if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
     }
     loadModelConfig();
-  } catch(e) { out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`; }
+  } catch(e) {
+    out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`;
+    if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
+  }
 }
 
 // ===== Search Config =====
