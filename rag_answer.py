@@ -498,22 +498,9 @@ def detect_product(question: str) -> str:
     found = detect_terms(question, PRODUCT_ALIASES)
     if found:
         return found[0]
-    # 优先使用环境变量指定的默认产品
-    if (KNOWLEDGE_DIR / _DEFAULT_PRODUCT).exists():
-        return _DEFAULT_PRODUCT
-    if not KNOWLEDGE_DIR.exists():
-        return _DEFAULT_PRODUCT
-    # 缓存产品列表，按 knowledge 目录 mtime 失效
-    try:
-        mtime = KNOWLEDGE_DIR.stat().st_mtime
-    except OSError:
-        return _DEFAULT_PRODUCT
-    if _product_list_cache and _product_list_mtime == mtime:
-        return _product_list_cache[0] if _product_list_cache else _DEFAULT_PRODUCT
-    dirs = sorted(x.name for x in KNOWLEDGE_DIR.iterdir() if _is_product_dir(x.name))
-    _product_list_cache = dirs
-    _product_list_mtime = mtime
-    return dirs[0] if dirs else _DEFAULT_PRODUCT
+    # 未识别到具体产品 → 返回空字符串，由调用方决定搜索策略
+    # 避免将无关查询（如"肉毒"、"皮肤干燥"）错误路由到默认产品
+    return ""
 
 
 _PRICE_KWS = ("多少钱", "价格", "费用", "贵不贵", "便宜", "一支多少", "疗程多少钱",
@@ -1790,6 +1777,10 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # 决定搜索哪些 store
     # 纯材料查询：只搜共享库，不搜产品库（避免产品 chunk 干扰）
     if material_only_id:
+        search_product = False
+        search_shared = True
+    elif not product:
+        # 未识别到具体产品 → 只搜共享知识库，不搜任何产品库
         search_product = False
         search_shared = True
     else:
