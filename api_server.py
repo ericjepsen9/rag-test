@@ -592,6 +592,27 @@ def _build_oai_response(answer: str, model: str) -> Dict[str, Any]:
     }
 
 
+_RE_SENTENCE_SPLIT = re.compile(r'([。！？\n；;!?])')
+
+
+def _split_into_stream_chunks(text: str) -> list:
+    """将完整回答按句子边界拆分为流式分块。
+    每个分块以句末标点结尾，给客户端逐句渐进显示体验。"""
+    if not text:
+        return [text] if text == "" else []
+    parts = _RE_SENTENCE_SPLIT.split(text)
+    chunks = []
+    buf = ""
+    for p in parts:
+        buf += p
+        if _RE_SENTENCE_SPLIT.fullmatch(p):
+            chunks.append(buf)
+            buf = ""
+    if buf:
+        chunks.append(buf)
+    return chunks if chunks else [text]
+
+
 def _build_oai_stream_chunk(content: str, model: str, chunk_id: str, finish: bool = False) -> str:
     """构建 SSE 格式的流式响应块"""
     import json
@@ -687,7 +708,9 @@ def oai_chat_completions(request: Request, req: OAIChatRequest):
         chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
         def _generate():
-            yield _build_oai_stream_chunk(answer, req.model, chunk_id)
+            # 按句子/标点分块输出，模拟逐句流式体验
+            for chunk_text in _split_into_stream_chunks(answer):
+                yield _build_oai_stream_chunk(chunk_text, req.model, chunk_id)
             yield _build_oai_stream_chunk("", req.model, chunk_id, finish=True)
             yield "data: [DONE]\n\n"
 

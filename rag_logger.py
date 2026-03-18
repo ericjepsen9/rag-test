@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextvars
 import json
 import os
+import re
 import threading
 import uuid
 from collections import deque
@@ -44,6 +45,25 @@ LOG_MAX_BYTES = _safe_int("LOG_MAX_BYTES", 10 * 1024 * 1024)
 LOG_BACKUP_COUNT = _safe_int("LOG_BACKUP_COUNT", 3)
 
 _write_lock = threading.Lock()
+
+# ===== PII 脱敏 =====
+_RE_PHONE = re.compile(r'(?<!\d)(1[3-9]\d{9})(?!\d)')
+_RE_IDCARD = re.compile(r'(?<!\d)(\d{6})\d{6,8}(\d{4}[0-9Xx])(?!\d)')
+_RE_EMAIL = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+_RE_NAME = re.compile(r'(?:我(?:叫|是|姓)|(?:姓名|名字)[是为：:]\s*)([\u4e00-\u9fff]{2,4})')
+
+_SANITIZE_ENABLED = os.environ.get("RAG_LOG_SANITIZE", "1").strip() not in ("0", "false", "")
+
+
+def _sanitize_pii(text: str) -> str:
+    """对文本中的手机号、身份证、邮箱、自报姓名进行脱敏"""
+    if not text or not _SANITIZE_ENABLED:
+        return text
+    text = _RE_PHONE.sub(lambda m: m.group(1)[:3] + '****' + m.group(1)[-4:], text)
+    text = _RE_IDCARD.sub(lambda m: m.group(1) + '******' + m.group(2), text)
+    text = _RE_EMAIL.sub('***@***.***', text)
+    text = _RE_NAME.sub(lambda m: m.group(0).replace(m.group(1), '*' * len(m.group(1))), text)
+    return text
 
 
 def _ensure_dir() -> None:
@@ -100,9 +120,9 @@ def log_qa(
     meta: Optional[Dict[str, Any]] = None,
 ) -> None:
     payload: Dict[str, Any] = {
-        "question": question,
-        "rewritten_query": rewritten_query or "",
-        "answer": answer,
+        "question": _sanitize_pii(question),
+        "rewritten_query": _sanitize_pii(rewritten_query or ""),
+        "answer": _sanitize_pii(answer),
         "hit": bool(hit),
         "latency_ms": latency_ms,
         "matched_sources": matched_sources or [],
@@ -113,8 +133,8 @@ def log_qa(
         _append_jsonl(
             MISS_LOG,
             {
-                "question": question,
-                "rewritten_query": rewritten_query or "",
+                "question": _sanitize_pii(question),
+                "rewritten_query": _sanitize_pii(rewritten_query or ""),
                 "meta": meta or {},
             },
         )

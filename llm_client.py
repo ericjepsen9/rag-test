@@ -5,11 +5,13 @@
 所有 LLM 调用统一通过本模块获取 client，不再直接使用 rag_runtime_config 中的全局变量。
 """
 import base64
+import copy
 import os
 import threading
 from typing import Optional, Dict, Any
 
 _lock = threading.Lock()
+_persist_lock = threading.Lock()
 
 # 两个用途的独立配置
 # "chat"      — 用户对话（rag_answer, query_rewrite）
@@ -256,14 +258,18 @@ def sync_from_legacy():
 
 
 def _persist_llm_configs():
-    """持久化多 LLM 配置到文件"""
+    """持久化多 LLM 配置到文件。
+    使用 _persist_lock 序列化写入，用 _lock 短暂持锁读取快照，
+    避免并发 update_llm_config 导致后写入覆盖先写入的修改。"""
     import json
     from rag_runtime_config import BASE_DIR
     config_file = BASE_DIR / "data" / "llm_configs.json"
     config_file.parent.mkdir(parents=True, exist_ok=True)
+    # 短暂持锁读取配置快照
+    with _lock:
+        snapshot = copy.deepcopy(_llm_configs)
     data = {}
-    for purpose, cfg in _llm_configs.items():
-        # api_key 使用 base64 编码持久化（本地文件，基本混淆即可）
+    for purpose, cfg in snapshot.items():
         raw_key = cfg["api_key"] or ""
         encoded_key = base64.b64encode(raw_key.encode()).decode() if raw_key else ""
         data[purpose] = {
@@ -275,10 +281,10 @@ def _persist_llm_configs():
             "api_key_enc": encoded_key,
             "model_format": cfg.get("model_format", "standard"),
         }
-    with _lock:
+    # 用独立的持久化锁序列化文件写入
+    with _persist_lock:
         tmp = config_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        # 限制文件权限：仅 owner 可读写（防止其他用户读取 API key）
         try:
             os.chmod(str(tmp), 0o600)
         except OSError:

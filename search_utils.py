@@ -600,6 +600,22 @@ def _extract_terms(query: str) -> List[str]:
 
 
 
+def _effective_length(text: str) -> int:
+    """计算文本的有效长度：中文每字符算 1，连续 ASCII 序列算 1 个词。
+    比 len(text) 对中英混合文本更公平，比 _extract_terms 开销小。"""
+    length = 0
+    in_ascii = False
+    for ch in text:
+        if ord(ch) < 128:
+            if not in_ascii:
+                length += 1
+                in_ascii = True
+        else:
+            length += 1
+            in_ascii = False
+    return length
+
+
 def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
                doc_freqs: Dict[str, int], k1: float = BM25_K1, b: float = BM25_B) -> float:
     """BM25 评分：考虑词频、文档长度、逆文档频率。
@@ -607,7 +623,7 @@ def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
     短词(1-2字)和高频词(df > 50%文档)会被自动降权，减少噪音匹配。"""
     if isinstance(query_or_terms, str):
         query_or_terms = _extract_terms(query_or_terms)
-    dl = len(text)
+    dl = _effective_length(text)
     if not query_or_terms or dl == 0:
         return 0.0
 
@@ -687,16 +703,23 @@ def _cache_put(cache, key: Any, value: Any, max_size: int = 0,
 
 
 def _corpus_cache_key(docs: List[Dict]) -> Tuple:
-    """生成稳定的缓存键：使用确定性哈希（跨进程重启不变）"""
+    """生成稳定的缓存键：多采样点 + 全量 source 哈希，防跨产品碰撞。"""
     n = len(docs)
     if n == 0:
         return (0,)
-    first = (docs[0].get("text") or "")[:64]
-    last = (docs[-1].get("text") or "")[:64]
-    mid_idx = n // 2
-    mid = (docs[mid_idx].get("text") or "")[:32] if n > 2 else ""
-    digest = hashlib.md5(f"{first}|{mid}|{last}".encode()).hexdigest()[:12]
-    return (n, digest)
+    h = hashlib.md5()
+    # 采样多个位置的文本片段
+    sample_indices = {0, n // 4, n // 2, 3 * n // 4, n - 1}
+    for i in sorted(sample_indices):
+        if 0 <= i < n:
+            h.update((docs[i].get("text") or "")[:80].encode())
+    # 加入所有文档的 source 字段（通常是文件名，不同产品必定不同）
+    for d in docs:
+        src = d.get("source") or d.get("file") or ""
+        if src:
+            h.update(src.encode())
+            break  # 首个 source 足以区分产品
+    return (n, h.hexdigest()[:16])
 
 
 def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float, Tuple]:
@@ -710,7 +733,7 @@ def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float, Tuple]:
             return cached[0], cached[1], cached[2], key
     texts = [(d.get("text") or "").lower() for d in docs]
     n_docs = len(texts)
-    avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
+    avg_dl = sum(_effective_length(t) for t in texts) / max(n_docs, 1)
     _cache_put(_bm25_cache, key, (texts, n_docs, avg_dl), lock=_bm25_cache_lock)
     return texts, n_docs, avg_dl, key
 
