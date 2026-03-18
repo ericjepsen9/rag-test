@@ -37,11 +37,21 @@ def admin_headers():
 # ============================================================
 
 class TestSecurityHeaders:
-    """验证所有响应都包含安全头"""
+    """验证所有响应都包含安全头和 trace ID"""
 
     def test_health_has_security_headers(self, client):
         resp = client.get("/health")
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+    def test_response_has_trace_id(self, client):
+        resp = client.get("/health")
+        assert "X-Trace-Id" in resp.headers
+        assert len(resp.headers["X-Trace-Id"]) >= 8
+
+    def test_trace_id_passthrough(self, client):
+        """上游传入的 trace_id 应原样返回"""
+        resp = client.get("/health", headers={"X-Trace-Id": "test-trace-123"})
+        assert resp.headers["X-Trace-Id"] == "test-trace-123"
         assert resp.headers["X-Frame-Options"] == "DENY"
         assert resp.headers["X-XSS-Protection"] == "1; mode=block"
         assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"

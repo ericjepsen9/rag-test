@@ -110,6 +110,19 @@ app.add_middleware(
 )
 
 
+# ===== 请求追踪中间件 =====
+@app.middleware("http")
+async def trace_id_middleware(request: Request, call_next):
+    """为每个请求生成唯一 trace_id，贯穿日志链路"""
+    from rag_logger import set_trace_id, get_trace_id
+    # 支持上游传入 trace_id（如 nginx/网关），否则自动生成
+    incoming = request.headers.get("X-Trace-Id", "")
+    trace_id = set_trace_id(incoming)
+    response = await call_next(request)
+    response.headers["X-Trace-Id"] = trace_id
+    return response
+
+
 # ===== 安全响应头中间件 =====
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
@@ -400,7 +413,14 @@ def ask(request: Request, req: AskRequest):
         # 超时控制：复用 rag_answer 模块级线程池，避免每请求创建/销毁
         from concurrent.futures import TimeoutError as FuturesTimeout
         from rag_answer import _search_pool
-        future = _search_pool.submit(answer_question, question, req.mode, history=history, rewrite=rw)
+        from rag_logger import get_trace_id, set_trace_id
+        _tid = get_trace_id()
+
+        def _run_with_trace():
+            set_trace_id(_tid)  # 传播 trace_id 到工作线程
+            return answer_question(question, req.mode, history=history, rewrite=rw)
+
+        future = _search_pool.submit(_run_with_trace)
         try:
             answer = future.result(timeout=_ASK_TIMEOUT_SEC)
         except FuturesTimeout:
@@ -419,6 +439,7 @@ def ask(request: Request, req: AskRequest):
         debug = None
         if req.debug:
             debug = {
+                "trace_id": _tid,
                 "question": question,
                 "resolved_question": resolved_q if rw["context_resolved"] else None,
                 "mode": req.mode,
@@ -593,7 +614,14 @@ def oai_chat_completions(request: Request, req: OAIChatRequest):
         # 超时控制：复用 rag_answer 模块级线程池
         from concurrent.futures import TimeoutError as FuturesTimeout
         from rag_answer import _search_pool
-        future = _search_pool.submit(answer_question, question, "brief", history=history, rewrite=rw)
+        from rag_logger import get_trace_id, set_trace_id
+        _oai_tid = get_trace_id()
+
+        def _oai_run():
+            set_trace_id(_oai_tid)
+            return answer_question(question, "brief", history=history, rewrite=rw)
+
+        future = _search_pool.submit(_oai_run)
         try:
             answer = future.result(timeout=_ASK_TIMEOUT_SEC)
         except FuturesTimeout:

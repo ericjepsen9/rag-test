@@ -1,12 +1,30 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import threading
+import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# ===== 请求级 Trace ID =====
+# 使用 contextvars 实现跨异步/线程的请求追踪
+_trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="")
+
+
+def set_trace_id(trace_id: str = "") -> str:
+    """设置当前请求的 trace_id，返回实际使用的 ID"""
+    tid = trace_id or uuid.uuid4().hex[:12]
+    _trace_id_var.set(tid)
+    return tid
+
+
+def get_trace_id() -> str:
+    """获取当前请求的 trace_id"""
+    return _trace_id_var.get("")
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR = BASE_DIR / "logs"
@@ -55,8 +73,10 @@ def _rotate_if_needed(path: Path) -> None:
 
 def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
     _ensure_dir()
+    trace_id = get_trace_id()
     row = {
         "ts": datetime.now().isoformat(timespec="seconds"),
+        **({"trace_id": trace_id} if trace_id else {}),
         **payload,
     }
     line = json.dumps(row, ensure_ascii=False) + "\n"
