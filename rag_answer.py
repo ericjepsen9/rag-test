@@ -418,10 +418,9 @@ def load_store(product: str):
                           meta={"product": product, "index_path": str(index_path)})
                 index = None
 
-        # 写入缓存
+        # 写入缓存（含 index=None 的情况，避免反复重试坏索引）
         with _store_lock:
-            if index is not None or not index_path.exists():
-                _store_cache[product] = (index, docs, mtime)
+            _store_cache[product] = (index, docs, mtime)
     return index, docs
 
 
@@ -1872,7 +1871,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
 
     # 向量检索用 search_query（去除纠正前缀等噪音，语义更聚焦）
     # 关键词检索用扩展查询（别名/同义词有助于 term 匹配）
-    search_q = rewrite.get("search_query", rewrite["original"])
+    search_q = rewrite.get("search_query") or rewrite.get("original", question)
 
     # 决定搜索哪些 store
     # 纯材料查询：只搜共享库，不搜产品库（避免产品 chunk 干扰）
@@ -2171,13 +2170,15 @@ def answer_question(question: str, mode: str, history: list = None,
 
     # 预计算所有子问题的 rewrite 和 route（快速阶段，为并行执行做准备）
     sub_tasks = []  # [(subq, sub_rewrite, route)]
-    seen_routes = set()
+    seen_route_products = set()
     for subq in sub_questions:
-        sub_rewrite = rewrite if subq == rewrite["original"] else rewrite_query(subq, history=history, _cached_ctx=_history_ctx)
+        sub_rewrite = rewrite if subq == rewrite.get("original", "") else rewrite_query(subq, history=history, _cached_ctx=_history_ctx)
         route = _detect_route_with_history(subq, sub_rewrite)
-        if route in seen_routes:
+        product = detect_product(subq)
+        dedup_key = (route, product)
+        if dedup_key in seen_route_products:
             continue
-        seen_routes.add(route)
+        seen_route_products.add(dedup_key)
         sub_tasks.append((subq, sub_rewrite, route))
 
     # 多子问题时并行执行 answer_one，单子问题时直接调用（避免额外开销）

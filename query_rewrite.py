@@ -41,7 +41,12 @@ _ROUTE_EXPANSION = {
 # 触发条件：查询未匹配任何已知产品/项目/路由关键词（即静态手段完全失效）
 # 有 LRU 缓存，避免相同查询重复调用
 
-_LLM_REWRITE_ENABLED = USE_OPENAI and LLM_REWRITE_ENABLED
+def _is_llm_rewrite_enabled():
+    """动态检查 LLM 改写是否启用（响应热更新）"""
+    import rag_runtime_config as _cfg
+    return getattr(_cfg, 'USE_OPENAI', False) and getattr(_cfg, 'LLM_REWRITE_ENABLED', False)
+
+_LLM_REWRITE_ENABLED = USE_OPENAI and LLM_REWRITE_ENABLED  # 保留作快速路径
 _LLM_REWRITE_CACHE_SIZE = 256
 
 # 构建知识库已知术语列表（告知 LLM 可以映射到哪些词）
@@ -119,7 +124,7 @@ def _should_trigger_llm_rewrite(question: str, products: list, projects: list,
     2. 问题含有模糊/口语化表达，但只命中了一个通用路由关键词
     这样可以让更多「用词不精确」的查询被 LLM 纠正到规范术语。
     """
-    if not _LLM_REWRITE_ENABLED:
+    if not _is_llm_rewrite_enabled():
         return False
     if is_chitchat or is_offtopic:
         return False

@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import threading
@@ -169,8 +170,7 @@ async def admin_auth_middleware(request: Request, call_next):
     if path.startswith("/admin") and path not in _ADMIN_AUTH_EXEMPT and _ADMIN_API_KEY:
         auth = request.headers.get("authorization", "")
         key_ok = (
-            (auth.startswith("Bearer ") and auth[7:].strip() == _ADMIN_API_KEY)
-            or request.query_params.get("admin_key") == _ADMIN_API_KEY
+            auth.startswith("Bearer ") and auth[7:].strip() == _ADMIN_API_KEY
         )
         if not key_ok:
             from fastapi.responses import JSONResponse
@@ -399,8 +399,9 @@ def ask(request: Request, req: AskRequest):
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
-    # 响应缓存：相同 question+mode 组合在 TTL 内直接返回
-    cache_key = f"{question}|{req.mode}"
+    # 响应缓存：相同 question+mode+history 组合在 TTL 内直接返回
+    history_hash = hashlib.md5(str(req.history or []).encode()).hexdigest()[:8] if req.history else ""
+    cache_key = f"{question}|{req.mode}|{history_hash}"
     cached = _response_cache_get(cache_key)
     if cached is not None and not req.debug:
         cached_resp = cached.copy()
@@ -796,7 +797,9 @@ def admin_rebuild(request: Request, req: RebuildRequest):
         log_error("admin_rebuild", repr(e), meta={"product": product})
         raise HTTPException(status_code=500, detail="索引重建失败，请查看服务器日志")
     finally:
-        lock.release()
+        # 仅在构建线程已结束时释放锁，防止并发重建同一索引
+        if not t.is_alive():
+            lock.release()
 
 
 @app.post("/admin/rebuild_shared")

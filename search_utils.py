@@ -638,41 +638,52 @@ def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
 
 _CACHE_MAX_SIZE = CACHE_MAX_PRODUCTS
 _bm25_cache: OrderedDict = OrderedDict()
+_bm25_cache_lock = threading.Lock()
 
 
 def invalidate_bm25_cache(product: str = "") -> int:
     """清除 BM25 语料缓存。指定 product 时清除该产品的缓存，否则清除全部。
     供索引重建后调用，避免使用陈旧的 DF/avgDL 数据。"""
-    if not product:
+    with _bm25_cache_lock:
         count = len(_bm25_cache)
         _bm25_cache.clear()
-        return count
-    # 按 product 前缀清除（缓存 key 包含 docs 哈希，无法精确匹配，清除全部更安全）
-    count = len(_bm25_cache)
-    _bm25_cache.clear()
+    with _df_cache_lock:
+        _df_cache.clear()
+    with _inverted_index_cache_lock:
+        _inverted_index_cache.clear()
+    with _char_index_cache_lock:
+        _char_index_cache.clear()
     return count
 
 
-def _cache_put(cache, key: Any, value: Any, max_size: int = 0) -> None:
+def _cache_put(cache, key: Any, value: Any, max_size: int = 0,
+               lock: threading.Lock = None) -> None:
     """写入缓存，LRU 淘汰。OrderedDict 时使用 move_to_end/popitem(last=False)，
-    普通 dict 时回退到 next(iter()) 淘汰。"""
-    limit = max_size if max_size > 0 else _CACHE_MAX_SIZE
-    _is_ordered = isinstance(cache, OrderedDict)
-    if key in cache:
-        cache[key] = value
-        if _is_ordered:
-            cache.move_to_end(key)
-        return
-    while len(cache) >= limit:
-        try:
+    普通 dict 时回退到 next(iter()) 淘汰。可选 lock 参数保护并发写入。"""
+    def _do_put():
+        limit = max_size if max_size > 0 else _CACHE_MAX_SIZE
+        _is_ordered = isinstance(cache, OrderedDict)
+        if key in cache:
+            cache[key] = value
             if _is_ordered:
-                cache.popitem(last=False)
-            else:
-                oldest = next(iter(cache))
-                cache.pop(oldest, None)
-        except (KeyError, StopIteration, RuntimeError):
-            break
-    cache[key] = value
+                cache.move_to_end(key)
+            return
+        while len(cache) >= limit:
+            try:
+                if _is_ordered:
+                    cache.popitem(last=False)
+                else:
+                    oldest = next(iter(cache))
+                    cache.pop(oldest, None)
+            except (KeyError, StopIteration, RuntimeError):
+                break
+        cache[key] = value
+
+    if lock is not None:
+        with lock:
+            _do_put()
+    else:
+        _do_put()
 
 
 def _corpus_cache_key(docs: List[Dict]) -> Tuple:
@@ -692,26 +703,29 @@ def _get_bm25_corpus(docs: List[Dict]) -> Tuple[List[str], int, float, Tuple]:
     """缓存 docs 的小写文本和平均长度，避免每次请求重复计算。
     返回 (texts, n_docs, avg_dl, corpus_key)，调用方可复用 corpus_key。"""
     key = _corpus_cache_key(docs)
-    cached = _bm25_cache.get(key)
-    if cached:
-        _bm25_cache.move_to_end(key)  # LRU: 标记最近使用
-        return cached[0], cached[1], cached[2], key
+    with _bm25_cache_lock:
+        cached = _bm25_cache.get(key)
+        if cached:
+            _bm25_cache.move_to_end(key)
+            return cached[0], cached[1], cached[2], key
     texts = [(d.get("text") or "").lower() for d in docs]
     n_docs = len(texts)
     avg_dl = sum(len(t) for t in texts) / max(n_docs, 1)
-    _cache_put(_bm25_cache, key, (texts, n_docs, avg_dl))
+    _cache_put(_bm25_cache, key, (texts, n_docs, avg_dl), lock=_bm25_cache_lock)
     return texts, n_docs, avg_dl, key
 
 
 _df_cache: OrderedDict = OrderedDict()  # corpus_key -> {term: df}
+_df_cache_lock = threading.Lock()
 
 
 def _get_doc_freq(term: str, texts: List[str], corpus_key: Any) -> int:
     """获取 term 的文档频率，带缓存"""
-    cached = _df_cache.get(corpus_key)
-    if cached is None:
-        cached = {}
-        _cache_put(_df_cache, corpus_key, cached)
+    with _df_cache_lock:
+        cached = _df_cache.get(corpus_key)
+        if cached is None:
+            cached = {}
+            _cache_put(_df_cache, corpus_key, cached)
     if term not in cached:
         cached[term] = sum(1 for t in texts if term in t)
     return cached[term]
@@ -720,10 +734,11 @@ def _get_doc_freq(term: str, texts: List[str], corpus_key: Any) -> int:
 def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dict[str, int]:
     """批量计算多个 term 的文档频率，减少对 texts 的重复遍历。
     对缓存未命中的 term 只做一次 O(n) 扫描（n=文档数），而非每个 term 扫一次。"""
-    cached = _df_cache.get(corpus_key)
-    if cached is None:
-        cached = {}
-        _cache_put(_df_cache, corpus_key, cached)
+    with _df_cache_lock:
+        cached = _df_cache.get(corpus_key)
+        if cached is None:
+            cached = {}
+            _cache_put(_df_cache, corpus_key, cached)
 
     # 找出未缓存的 terms（用 set 加速后续内循环 membership 测试）
     uncached = [t for t in terms if t not in cached]
@@ -744,38 +759,41 @@ def _batch_doc_freqs(terms: List[str], texts: List[str], corpus_key: Any) -> Dic
 # ============================================================
 
 _inverted_index_cache: OrderedDict = OrderedDict()  # corpus_key -> {term: [doc_ids]}
+_inverted_index_cache_lock = threading.Lock()
 
 
 def _get_inverted_index(texts: List[str], corpus_key: Any) -> Dict[str, List[int]]:
     """构建/获取倒排索引：{term: [doc_indices]}，按 bigram 粒度索引。
     惰性构建，缓存复用。索引粒度为 2-gram 以匹配 _extract_terms 的输出。"""
-    cached = _inverted_index_cache.get(corpus_key)
-    if cached is not None:
-        _inverted_index_cache.move_to_end(corpus_key)  # LRU
-        return cached
+    with _inverted_index_cache_lock:
+        cached = _inverted_index_cache.get(corpus_key)
+        if cached is not None:
+            _inverted_index_cache.move_to_end(corpus_key)
+            return cached
     inv: Dict[str, List[int]] = {}
     for i, text in enumerate(texts):
-        # 对每个文档建立字符级 bigram 索引
         for j in range(len(text) - 1):
             bg = text[j:j+2]
             if bg not in inv:
                 inv[bg] = [i]
-            elif inv[bg][-1] != i:  # 去重：同一文档只记录一次
+            elif inv[bg][-1] != i:
                 inv[bg].append(i)
-    _cache_put(_inverted_index_cache, corpus_key, inv)
+    _cache_put(_inverted_index_cache, corpus_key, inv, lock=_inverted_index_cache_lock)
     return inv
 
 
 _char_index_cache: OrderedDict = OrderedDict()  # corpus_key -> {char: set(doc_ids)}
+_char_index_cache_lock = threading.Lock()
 
 
 def _get_char_index(inv_index: Dict[str, List[int]], corpus_key: Any) -> Dict[str, set]:
     """构建/获取字符级索引：{单字符: 包含该字符的文档集合}。
     从 bigram 索引反推，缓存复用。"""
-    cached = _char_index_cache.get(corpus_key)
-    if cached is not None:
-        _char_index_cache.move_to_end(corpus_key)
-        return cached
+    with _char_index_cache_lock:
+        cached = _char_index_cache.get(corpus_key)
+        if cached is not None:
+            _char_index_cache.move_to_end(corpus_key)
+            return cached
     char_idx: Dict[str, set] = {}
     for bg, doc_ids in inv_index.items():
         for ch in bg:
@@ -783,7 +801,7 @@ def _get_char_index(inv_index: Dict[str, List[int]], corpus_key: Any) -> Dict[st
                 char_idx[ch] = set(doc_ids)
             else:
                 char_idx[ch].update(doc_ids)
-    _cache_put(_char_index_cache, corpus_key, char_idx)
+    _cache_put(_char_index_cache, corpus_key, char_idx, lock=_char_index_cache_lock)
     return char_idx
 
 
@@ -1079,6 +1097,7 @@ def detect_terms(question: str, term_map: Dict[str, List[str]],
 
 # Rerank 结果缓存：避免相同 query + 相同候选集重复调用 compute_score
 _rerank_cache: OrderedDict = OrderedDict()  # cache_key -> [(hit_key, score), ...]
+_rerank_cache_lock = threading.Lock()
 _RERANK_CACHE_MAX = int(os.environ.get("RAG_RERANK_CACHE_MAX", "512"))
 
 
@@ -1103,9 +1122,10 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
 
     # 缓存查找
     cache_key = _rerank_cache_key(query, hits)
-    cached = _rerank_cache.get(cache_key)
-    if cached is not None:
-        _rerank_cache.move_to_end(cache_key)  # LRU
+    with _rerank_cache_lock:
+        cached = _rerank_cache.get(cache_key)
+        if cached is not None:
+            _rerank_cache.move_to_end(cache_key)
         # 用缓存的分数重建排序
         score_map = dict(cached)
         for h in hits:
@@ -1148,20 +1168,23 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
         return hits[:top_k]
 
     # 归一化 rerank 分数到 [0, 1]
+    # 当所有分数相同时保留原始 hybrid_score 排序，避免全部归零
     if final_scores:
         max_s = max(final_scores) if final_scores else 1.0
         min_s = min(final_scores) if final_scores else 0.0
+        all_equal = (max_s == min_s)
         rng = max_s - min_s if max_s > min_s else 1.0
         cache_entries = []
         for i, h in enumerate(hits):
             raw = final_scores[i] if i < len(final_scores) else 0.0
-            normalized = (raw - min_s) / rng
+            normalized = h.get("hybrid_score", raw) if all_equal else (raw - min_s) / rng
             h["rerank_score"] = normalized
             h["hybrid_score_before_rerank"] = h.get("hybrid_score", 0.0)
             h["hybrid_score"] = normalized
             cache_entries.append((_hit_key(h), normalized))
         # 写入缓存
-        _cache_put(_rerank_cache, cache_key, cache_entries, max_size=_RERANK_CACHE_MAX)
+        _cache_put(_rerank_cache, cache_key, cache_entries, max_size=_RERANK_CACHE_MAX,
+                   lock=_rerank_cache_lock)
 
     hits.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
     return hits[:top_k]

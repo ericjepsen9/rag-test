@@ -733,17 +733,19 @@ def update_server_config(updates: dict) -> dict:
     # host/port 可修改（下次重启生效）
     if "host" in updates:
         new_host = str(updates["host"]).strip()
-        if new_host != SERVER_HOST:
+        old_host = SERVER_HOST
+        if new_host != old_host:
             _mod.SERVER_HOST = new_host
             data["host"] = new_host
-            changed["host"] = {"old": SERVER_HOST, "new": new_host}
+            changed["host"] = {"old": old_host, "new": new_host}
     if "port" in updates:
         try:
             new_port = int(updates["port"])
-            if 1 <= new_port <= 65535 and new_port != SERVER_PORT:
+            old_port = SERVER_PORT
+            if 1 <= new_port <= 65535 and new_port != old_port:
                 _mod.SERVER_PORT = new_port
                 data["port"] = new_port
-                changed["port"] = {"old": SERVER_PORT, "new": new_port}
+                changed["port"] = {"old": old_port, "new": new_port}
         except (ValueError, TypeError):
             pass
     if changed:

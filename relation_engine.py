@@ -104,7 +104,7 @@ def _load() -> Dict:
             _relations = {}
             return _relations
         _build_indices(data)
-        _relations = data
+        _relations = data  # assign AFTER indices are built, so lockless read sees consistent state
     return _relations
 
 

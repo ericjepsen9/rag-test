@@ -526,7 +526,10 @@ def load_jieba_user_dict(jieba_mod) -> int:
             continue
         parts = line.split()
         word = parts[0]
-        freq = int(parts[1]) if len(parts) > 1 else 5
+        try:
+            freq = int(parts[1]) if len(parts) > 1 else 5
+        except (ValueError, TypeError):
+            freq = 5
         # jieba.add_word(word, freq=freq)
         jieba_mod.add_word(word, freq=freq)
         count += 1
