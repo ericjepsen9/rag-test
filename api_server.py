@@ -359,17 +359,17 @@ def ask(request: Request, req: AskRequest):
         rw = rewrite_query(question, history=history)
         resolved_q = rw["original"]  # 上下文补全后的问题
 
-        # 超时控制：使用线程池执行 answer_question，避免无限阻塞
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(answer_question, question, req.mode, history=history, rewrite=rw)
-            try:
-                answer = future.result(timeout=_ASK_TIMEOUT_SEC)
-            except FuturesTimeout:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                log_error("api_ask_timeout", f"请求超时 ({_ASK_TIMEOUT_SEC}s)",
-                          meta={"question": question[:200], "latency_ms": latency_ms})
-                return AskResponse(ok=False, answer=f"查询处理超时（{_ASK_TIMEOUT_SEC}秒），请简化问题后重试")
+        # 超时控制：复用 rag_answer 模块级线程池，避免每请求创建/销毁
+        from concurrent.futures import TimeoutError as FuturesTimeout
+        from rag_answer import _search_pool
+        future = _search_pool.submit(answer_question, question, req.mode, history=history, rewrite=rw)
+        try:
+            answer = future.result(timeout=_ASK_TIMEOUT_SEC)
+        except FuturesTimeout:
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            log_error("api_ask_timeout", f"请求超时 ({_ASK_TIMEOUT_SEC}s)",
+                      meta={"question": question[:200], "latency_ms": latency_ms})
+            return AskResponse(ok=False, answer=f"查询处理超时（{_ASK_TIMEOUT_SEC}秒），请简化问题后重试")
         latency_ms = int((time.monotonic() - t0) * 1000)
         # 复用 answer_one 中已计算的 route/product，避免重复检测
         route, product_id = get_last_route_product()
@@ -551,17 +551,17 @@ def oai_chat_completions(request: Request, req: OAIChatRequest):
         from query_rewrite import rewrite_query
         rw = rewrite_query(question, history=history)
 
-        # 超时控制
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(answer_question, question, "brief", history=history, rewrite=rw)
-            try:
-                answer = future.result(timeout=_ASK_TIMEOUT_SEC)
-            except FuturesTimeout:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                log_error("oai_chat_timeout", f"请求超时 ({_ASK_TIMEOUT_SEC}s)",
-                          meta={"question": question[:200], "latency_ms": latency_ms})
-                answer = f"查询处理超时（{_ASK_TIMEOUT_SEC}秒），请简化问题后重试"
+        # 超时控制：复用 rag_answer 模块级线程池
+        from concurrent.futures import TimeoutError as FuturesTimeout
+        from rag_answer import _search_pool
+        future = _search_pool.submit(answer_question, question, "brief", history=history, rewrite=rw)
+        try:
+            answer = future.result(timeout=_ASK_TIMEOUT_SEC)
+        except FuturesTimeout:
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            log_error("oai_chat_timeout", f"请求超时 ({_ASK_TIMEOUT_SEC}s)",
+                      meta={"question": question[:200], "latency_ms": latency_ms})
+            answer = f"查询处理超时（{_ASK_TIMEOUT_SEC}秒），请简化问题后重试"
 
         # OAI 格式无自定义字段，将消歧选项追加到回答末尾
         if rw.get("needs_clarification") and rw.get("clarification"):

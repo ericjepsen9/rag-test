@@ -69,6 +69,32 @@ _RE_TIME_PATTERN = re.compile(
 # 分隔线字符集：用于快速判断一行是否为纯分隔线（避免每次 set(ln) 构造临时集合）
 _SEPARATOR_CHARS = frozenset("=-_ ")
 
+# jieba 分词结果缓存：同一查询在 expand_synonyms / _extract_terms 中避免重复分词
+_JIEBA_CUT_CACHE: OrderedDict = OrderedDict()
+_JIEBA_CUT_CACHE_MAX = 128
+_jieba_cut_lock = threading.Lock()
+
+
+def _jieba_cut_cached(text: str, mode: str = "default") -> list:
+    """缓存版 jieba 分词，避免相同文本重复分词。mode: 'default' | 'search'"""
+    cache_key = f"{mode}|{text}"
+    with _jieba_cut_lock:
+        if cache_key in _JIEBA_CUT_CACHE:
+            _JIEBA_CUT_CACHE.move_to_end(cache_key)
+            return _JIEBA_CUT_CACHE[cache_key]
+    j = _get_jieba()
+    if j is None:
+        return []
+    if mode == "search":
+        result = list(j.cut_for_search(text))
+    else:
+        result = list(j.cut(text))
+    with _jieba_cut_lock:
+        if len(_JIEBA_CUT_CACHE) >= _JIEBA_CUT_CACHE_MAX:
+            _JIEBA_CUT_CACHE.popitem(last=False)
+        _JIEBA_CUT_CACHE[cache_key] = result
+    return result
+
 
 def _sigmoid_norm(raw_score: float) -> float:
     """BM25 分数归一化：sigmoid(score/scale)，钳位防 exp 溢出。
@@ -339,6 +365,22 @@ def reload_learned_synonyms() -> int:
     return count
 
 
+def add_learned_synonym(orig: str, mapped: str) -> None:
+    """增量添加一条学习同义词到运行时扩展表（避免全量 reload）。
+    仅更新内存，不涉及持久化（由调用方负责）。
+    """
+    orig = orig.strip()
+    mapped = mapped.strip()
+    if not orig or not mapped or orig == mapped:
+        return
+    with _learned_lock:
+        _LEARNED_SYNONYM_DIRECT[orig] = mapped
+        _SYNONYM_EXPAND.setdefault(mapped, set()).add(orig)
+        _SYNONYM_EXPAND.setdefault(orig, set()).add(mapped)
+        global _SYNONYM_EXPAND_SNAPSHOT
+        _SYNONYM_EXPAND_SNAPSHOT = list(_SYNONYM_EXPAND.items())
+
+
 def _ensure_learned_loaded():
     """确保已学习同义词已加载（只在首次调用时触发）。"""
     if not _learned_loaded:
@@ -377,10 +419,9 @@ def expand_synonyms(query: str) -> str:
     q_lower = query.lower()
 
     # 短同义词(<=2字)使用分词级匹配，提高精度
-    # jieba 分词一次，构建 word set 供短词查找
-    jieba = _get_jieba()
-    if jieba is not None:
-        q_words = set(jieba.cut(q_lower))
+    # 使用缓存版 jieba 分词，避免同一查询重复调用
+    if _get_jieba() is not None:
+        q_words = set(_jieba_cut_cached(q_lower, "default"))
     else:
         q_words = set(x for x in _RE_TERM_SPLIT.split(q_lower) if x)
 
@@ -518,10 +559,9 @@ def _extract_terms_bigram(query: str) -> List[str]:
 
 def _extract_terms_jieba(query: str) -> List[str]:
     """jieba 分词 + bigram 补充：先用 jieba 精确分词，再对长中文词补充 bigram 提高部分匹配能力"""
-    jieba = _get_jieba()
     q_lower = query.lower()
-    # jieba 切词（搜索引擎模式：更细粒度，召回更高）
-    raw_words = list(jieba.cut_for_search(q_lower))
+    # jieba 切词（搜索引擎模式：更细粒度，召回更高）——使用缓存版避免重复分词
+    raw_words = _jieba_cut_cached(q_lower, "search")
     terms = []
     seen = set()
     for w in raw_words:

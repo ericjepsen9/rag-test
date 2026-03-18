@@ -161,8 +161,18 @@ _CLARIFICATION_RULES: Dict[str, List[Dict[str, str]]] = {
 _SORTED_TRIGGER_KEYS = sorted(_CLARIFICATION_RULES.keys(), key=len, reverse=True)
 
 
+_merged_rules_cache: Optional[Dict[str, List[Dict[str, str]]]] = None
+_merged_rules_ts: float = 0.0
+_MERGED_RULES_TTL = 60.0  # 60 秒缓存
+
+
 def _get_merged_rules() -> Dict[str, List[Dict[str, str]]]:
-    """合并静态规则和动态自定义规则（动态优先覆盖静态）"""
+    """合并静态规则和动态自定义规则（动态优先覆盖静态），带 TTL 缓存"""
+    global _merged_rules_cache, _merged_rules_ts
+    import time
+    now = time.monotonic()
+    if _merged_rules_cache is not None and (now - _merged_rules_ts) < _MERGED_RULES_TTL:
+        return _merged_rules_cache
     merged = dict(_CLARIFICATION_RULES)
     try:
         from keyword_store import get_clarification_rules
@@ -171,6 +181,8 @@ def _get_merged_rules() -> Dict[str, List[Dict[str, str]]]:
             merged[trigger] = rule_data.get("options", [])
     except Exception:
         pass
+    _merged_rules_cache = merged
+    _merged_rules_ts = now
     return merged
 
 # 不触发消歧的上下文关键词：当用户输入中已包含这些词时，说明意图已明确

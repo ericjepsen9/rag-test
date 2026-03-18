@@ -607,9 +607,9 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
                 try:
                     from synonym_store import save_learned
                     save_learned(q, llm_rewritten)
-                    # 热更新运行时同义词表，后续查询立即生效
-                    from search_utils import reload_learned_synonyms
-                    reload_learned_synonyms()
+                    # 增量更新运行时同义词表（避免全量 reload 的 I/O 开销）
+                    from search_utils import add_learned_synonym
+                    add_learned_synonym(q, llm_rewritten)
                 except Exception:
                     pass  # 沉淀失败不影响主流程
         if llm_rewritten:
