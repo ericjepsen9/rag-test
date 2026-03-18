@@ -51,6 +51,8 @@ def get_model():
     global _model
     if _model is None:
         from FlagEmbedding import BGEM3FlagModel
+        from rag_logger import log_event
+        log_event("build_faiss", f"加载模型: {MODEL_NAME}")
         print(f"[INFO] 加载模型：{MODEL_NAME}")
         _model = BGEM3FlagModel(MODEL_NAME, use_fp16=EMBED_USE_FP16)
     return _model

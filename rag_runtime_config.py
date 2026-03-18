@@ -600,7 +600,9 @@ def load_persisted_overrides() -> dict:
         if data:
             changed = update_tunable_config(data)
             if changed:
-                print(f"[INFO] 加载了 {len(changed)} 个运行时配置覆盖: {list(changed.keys())}")
+                from rag_logger import log_event
+                log_event("config", f"加载了 {len(changed)} 个运行时配置覆盖",
+                          meta={"keys": list(changed.keys())})
             return changed
     except Exception as e:
         print(f"[WARN] 加载运行时配置覆盖失败: {e}")

@@ -216,13 +216,15 @@ def get_model():
             if _model is None:
                 try:
                     import torch
+                    from rag_logger import log_event, log_error
                     if torch.cuda.is_available():
                         gpu_name = torch.cuda.get_device_name(0)
-                        print(f"[INFO] CUDA 可用，使用 GPU: {gpu_name}")
+                        log_event("model_init", f"CUDA 可用，使用 GPU: {gpu_name}")
                     else:
-                        print("[WARN] CUDA 不可用，BGE-M3 将在 CPU 上运行（速度较慢）")
+                        log_event("model_init", "CUDA 不可用，BGE-M3 将在 CPU 上运行")
                 except ImportError:
-                    print("[WARN] PyTorch 未安装，无法检测 GPU")
+                    from rag_logger import log_event
+                    log_event("model_init", "PyTorch 未安装，无法检测 GPU")
                 _model = get_bg_cls()(EMBED_MODEL_NAME, use_fp16=EMBED_USE_FP16)
     return _model
 
@@ -297,7 +299,9 @@ def _auto_rebuild_index(product: str, docs: List[Dict], store_dir: Path):
         # 写回磁盘
         index_path = store_dir / "index.faiss"
         faiss.write_index(index, str(index_path))
-        print(f"[INFO] {product}: 索引自动重建成功 ({len(docs)} vectors, dim={dim})")
+        from rag_logger import log_event
+        log_event("index_rebuild", f"索引自动重建成功: {product}",
+                  meta={"product": product, "vectors": len(docs), "dim": dim})
         return index
     except Exception as e:
         from rag_logger import log_error

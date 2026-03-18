@@ -50,7 +50,8 @@ def _get_jieba():
                 from keyword_extractor import load_jieba_user_dict
                 user_dict_count = load_jieba_user_dict(_jieba_mod)
                 if user_dict_count > 0:
-                    print(f"[INFO] 加载 jieba 用户词典: {user_dict_count} 条")
+                    from rag_logger import log_event
+                    log_event("jieba_init", f"加载 jieba 用户词典: {user_dict_count} 条")
             except ImportError:
                 pass
             _jieba = _jieba_mod

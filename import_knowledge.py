@@ -344,6 +344,9 @@ def _generate_knowledge(client, raw_text: str, entity_type: str,
     # 限制发送给 LLM 的文本长度（约 12000 字 ≈ 6000 tokens）
     max_chars = 12000
     if len(raw_text) > max_chars:
+        from rag_logger import log_event
+        log_event("import_knowledge", "原始文档分段处理",
+                  meta={"length": len(raw_text), "max": max_chars})
         print(f"[INFO] 原始文档较长（{len(raw_text)} 字），将分段处理")
         # 先发送前半部分生成主结构
         part1 = raw_text[:max_chars]

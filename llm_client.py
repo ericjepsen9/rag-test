@@ -306,8 +306,10 @@ def load_persisted_llm_configs():
         if loaded:
             # 同步 chat 到旧版全局变量
             _sync_to_legacy("chat")
-            print(f"[INFO] 已加载多 LLM 配置: chat={_llm_configs['chat']['provider']}/{_llm_configs['chat']['model']}, "
-                  f"knowledge={_llm_configs['knowledge']['provider']}/{_llm_configs['knowledge']['model']}")
+            from rag_logger import log_event
+            log_event("llm_config", "已加载多 LLM 配置",
+                      meta={"chat": f"{_llm_configs['chat']['provider']}/{_llm_configs['chat']['model']}",
+                            "knowledge": f"{_llm_configs['knowledge']['provider']}/{_llm_configs['knowledge']['model']}"})
         return loaded
     except Exception as e:
         from rag_logger import log_error
