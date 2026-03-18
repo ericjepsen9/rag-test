@@ -1,4 +1,5 @@
 import re
+import time
 import threading
 from collections import OrderedDict
 from typing import Dict, Any, List, Optional
@@ -59,27 +60,47 @@ _KNOWN_VOCAB = "、".join(sorted(set(_KNOWN_VOCAB_PARTS)))
 
 
 class _LRUCache:
-    """简易线程安全 LRU 缓存"""
-    def __init__(self, maxsize: int = 256):
+    """线程安全 LRU 缓存，支持 TTL 过期"""
+    def __init__(self, maxsize: int = 256, ttl: float = 3600.0):
         self._cache: OrderedDict = OrderedDict()
         self._maxsize = maxsize
+        self._ttl = ttl  # 秒，默认 1 小时
         self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
 
     def get(self, key: str) -> Optional[str]:
         with self._lock:
-            if key in self._cache:
+            entry = self._cache.get(key)
+            if entry is not None:
+                ts, value = entry
+                # TTL 过期检查
+                if time.monotonic() - ts > self._ttl:
+                    self._cache.pop(key, None)
+                    self._misses += 1
+                    return None
                 self._cache.move_to_end(key)
-                return self._cache[key]
+                self._hits += 1
+                return value
+            self._misses += 1
         return None
 
     def put(self, key: str, value: str) -> None:
+        now = time.monotonic()
         with self._lock:
             if key in self._cache:
+                self._cache[key] = (now, value)
                 self._cache.move_to_end(key)
             else:
                 if len(self._cache) >= self._maxsize:
                     self._cache.popitem(last=False)
-            self._cache[key] = value
+                self._cache[key] = (now, value)
+
+    @property
+    def stats(self) -> Dict[str, int]:
+        with self._lock:
+            return {"size": len(self._cache), "hits": self._hits,
+                    "misses": self._misses, "maxsize": self._maxsize}
 
 
 _llm_rewrite_cache = _LRUCache(_LLM_REWRITE_CACHE_SIZE)

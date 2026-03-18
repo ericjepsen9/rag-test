@@ -46,9 +46,13 @@ BASE_DIR = Path(__file__).resolve().parent
 ADMIN_PAGE = BASE_DIR / "admin_page.html"
 CHAT_PAGE = BASE_DIR / "web" / "chat.html"
 
+_startup_time: float = 0.0  # 服务启动时间戳（monotonic）
+
 @asynccontextmanager
 async def _lifespan(app):
     """启动时预热嵌入模型并预构建共享知识索引，避免首次查询延迟"""
+    global _startup_time
+    _startup_time = time.monotonic()
     if not os.environ.get("SKIP_WARMUP"):
         try:
             from rag_answer import embed_query
@@ -65,6 +69,14 @@ async def _lifespan(app):
         except Exception as e:
             print(f"[WARN] 共享知识库预构建失败: {e}")
     yield
+    # 优雅停机：清理资源
+    print("[INFO] 服务正在关闭，刷新日志缓存...")
+    try:
+        from rag_answer import _search_pool
+        _search_pool.shutdown(wait=True, cancel_futures=False)
+        print("[INFO] 搜索线程池已关闭")
+    except Exception:
+        pass
 
 app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0", lifespan=_lifespan)
 app.state.limiter = limiter
@@ -212,25 +224,65 @@ def health():
     from rag_runtime_config import STORE_ROOT
     shared_names = _SHARED_DIR_NAMES
     products = []
+    total_docs = 0
     if KNOWLEDGE_DIR.exists():
         for p in sorted(KNOWLEDGE_DIR.iterdir()):
             if not p.is_dir() or p.name in shared_names:
                 continue
             store = STORE_ROOT / p.name
+            index_path = store / "index.faiss"
+            docs_path = store / "docs.jsonl"
+            index_exists = index_path.exists()
+            docs_exists = docs_path.exists()
+            doc_count = 0
+            index_size = 0
+            if docs_exists:
+                try:
+                    doc_count = sum(1 for _ in docs_path.open("r", encoding="utf-8"))
+                except OSError:
+                    pass
+            if index_exists:
+                try:
+                    index_size = index_path.stat().st_size
+                except OSError:
+                    pass
+            total_docs += doc_count
             products.append({
                 "name": p.name,
-                "index_exists": (store / "index.faiss").exists(),
-                "docs_exists": (store / "docs.jsonl").exists(),
+                "index_exists": index_exists,
+                "docs_exists": docs_exists,
+                "doc_count": doc_count,
+                "index_size_bytes": index_size,
             })
     # 共享知识索引状态
     shared_store = STORE_ROOT / "_shared"
     shared_indexed = (shared_store / "index.faiss").exists() and (shared_store / "docs.jsonl").exists()
+    shared_docs = 0
+    if shared_indexed:
+        try:
+            shared_docs = sum(1 for _ in (shared_store / "docs.jsonl").open("r", encoding="utf-8"))
+        except OSError:
+            pass
     all_indexed = all(p["index_exists"] and p["docs_exists"] for p in products) if products else False
+
+    # 依赖检查
+    embedding_ready = False
+    try:
+        from rag_answer import _model
+        embedding_ready = _model is not None
+    except Exception:
+        pass
+
     result = {
         "status": "ok" if all_indexed else "degraded",
         "knowledge_exists": KNOWLEDGE_DIR.exists(),
         "products": products,
         "shared_knowledge_indexed": shared_indexed,
+        "total_product_docs": total_docs,
+        "shared_docs": shared_docs,
+        "embedding_model_loaded": embedding_ready,
+        "response_cache_size": len(_RESPONSE_CACHE),
+        "uptime_seconds": int(now - _startup_time) if _startup_time else 0,
     }
     with _health_lock:
         _health_cache = result
@@ -468,10 +520,18 @@ def _build_oai_stream_chunk(content: str, model: str, chunk_id: str, finish: boo
 
 
 @app.post("/v1/chat/completions")
-def oai_chat_completions(req: OAIChatRequest):
+@limiter.limit(_ASK_RATE_LIMIT)
+def oai_chat_completions(request: Request, req: OAIChatRequest):
     question, history = _oai_messages_to_question_and_history(req.messages)
     if not question:
         raise HTTPException(status_code=400, detail="No user message found")
+
+    # 响应缓存（非流式且无历史时）
+    cache_key = f"oai|{question}" if not history and not req.stream else None
+    if cache_key:
+        cached = _response_cache_get(cache_key)
+        if cached is not None:
+            return _build_oai_response(cached["answer"], req.model)
 
     t0 = time.monotonic()
     try:
@@ -490,12 +550,28 @@ def oai_chat_completions(req: OAIChatRequest):
 
         from query_rewrite import rewrite_query
         rw = rewrite_query(question, history=history)
-        answer = answer_question(question, "brief", history=history, rewrite=rw)
+
+        # 超时控制
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(answer_question, question, "brief", history=history, rewrite=rw)
+            try:
+                answer = future.result(timeout=_ASK_TIMEOUT_SEC)
+            except FuturesTimeout:
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                log_error("oai_chat_timeout", f"请求超时 ({_ASK_TIMEOUT_SEC}s)",
+                          meta={"question": question[:200], "latency_ms": latency_ms})
+                answer = f"查询处理超时（{_ASK_TIMEOUT_SEC}秒），请简化问题后重试"
+
         # OAI 格式无自定义字段，将消歧选项追加到回答末尾
         if rw.get("needs_clarification") and rw.get("clarification"):
             from clarification_engine import format_clarification_text
             clarify_text = format_clarification_text(rw["clarification"])
             answer = answer + "\n\n---\n" + clarify_text
+
+        # 写入缓存
+        if cache_key:
+            _response_cache_put(cache_key, {"answer": answer})
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
         log_error("oai_chat", repr(e), meta={"question": question[:200], "latency_ms": latency_ms})
@@ -1437,6 +1513,44 @@ def admin_llm_test():
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
         return {"ok": False, "error": str(e), "latency_ms": latency_ms}
+
+
+# ===== 缓存管理接口 =====
+
+@app.get("/admin/cache")
+def admin_cache_stats():
+    """查看缓存统计"""
+    from rag_answer import _embed_cache, _store_cache
+    llm_cache_stats = {}
+    try:
+        from query_rewrite import _llm_rewrite_cache
+        llm_cache_stats = _llm_rewrite_cache.stats
+    except Exception:
+        pass
+    return {
+        "response_cache": {
+            "size": len(_RESPONSE_CACHE),
+            "max_size": _RESPONSE_CACHE_MAX,
+            "ttl_seconds": _RESPONSE_CACHE_TTL,
+        },
+        "embed_cache": {
+            "size": len(_embed_cache),
+            "max_size": 1024,
+        },
+        "store_cache": {
+            "products_loaded": list(_store_cache.keys()),
+        },
+        "llm_rewrite_cache": llm_cache_stats,
+    }
+
+
+@app.post("/admin/cache/clear")
+def admin_cache_clear():
+    """清空所有响应缓存"""
+    with _response_cache_lock:
+        count = len(_RESPONSE_CACHE)
+        _RESPONSE_CACHE.clear()
+    return {"ok": True, "cleared": count}
 
 
 # ===== 系统状态接口 =====
