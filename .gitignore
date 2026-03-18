@@ -7,3 +7,4 @@ logs/
 answer.txt
 answer_*.txt
 data/
+stores/_shared/
