@@ -165,13 +165,17 @@ def extract_keywords_from_document(
         )
         raw_result = (resp.choices[0].message.content or "").strip()
     except Exception as e:
-        print(f"[WARN] LLM 关键词提取调用失败: {e}")
+        from rag_logger import log_error
+        log_error("keyword_extract", f"LLM 调用失败: {e}",
+                  meta={"type": entity_type, "id": entity_id})
         return _empty_result(entity_type, entity_id)
 
     # 解析 JSON
     result = _parse_json_result(raw_result)
     if result is None:
-        print(f"[WARN] LLM 关键词提取结果解析失败")
+        from rag_logger import log_error
+        log_error("keyword_extract", "LLM 结果解析失败",
+                  meta={"type": entity_type, "id": entity_id, "raw": raw_result[:200]})
         return _empty_result(entity_type, entity_id)
 
     # 标准化和验证
@@ -360,15 +364,18 @@ def _save_jieba_words(words: List[Dict]) -> int:
 
     _ensure_dir()
 
-    # 读取已有的自定义词
+    # 读取已有的自定义词（容错处理损坏文件）
     existing_words = set()
     if JIEBA_USER_DICT_FILE.exists():
-        for line in JIEBA_USER_DICT_FILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                parts = line.split()
-                if parts:
-                    existing_words.add(parts[0])
+        try:
+            for line in JIEBA_USER_DICT_FILE.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    parts = line.split()
+                    if parts:
+                        existing_words.add(parts[0])
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"[WARN] jieba 用户词典读取失败，将重建: {e}")
 
     # 也读取 search_utils 中的硬编码自定义词
     try:
@@ -390,10 +397,18 @@ def _save_jieba_words(words: List[Dict]) -> int:
         existing_words.add(word)
 
     if new_lines:
-        with JIEBA_USER_DICT_FILE.open("a", encoding="utf-8") as f:
-            if f.tell() > 0:
-                f.write("\n")
-            f.write("\n".join(new_lines) + "\n")
+        # 原子写入：读取现有内容 + 追加新词 → 写临时文件 → 替换
+        existing_content = ""
+        if JIEBA_USER_DICT_FILE.exists():
+            try:
+                existing_content = JIEBA_USER_DICT_FILE.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                pass
+        if existing_content and not existing_content.endswith("\n"):
+            existing_content += "\n"
+        tmp = JIEBA_USER_DICT_FILE.with_suffix(".tmp")
+        tmp.write_text(existing_content + "\n".join(new_lines) + "\n", encoding="utf-8")
+        tmp.replace(JIEBA_USER_DICT_FILE)
 
     return len(new_lines)
 
@@ -451,9 +466,11 @@ def _save_route_keywords(
             if source_key not in existing[route][kw]["source_entities"]:
                 existing[route][kw]["source_entities"].append(source_key)
 
-    # 写入
-    with ROUTE_KEYWORDS_FILE.open("w", encoding="utf-8") as f:
+    # 原子写入
+    tmp = ROUTE_KEYWORDS_FILE.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
+    tmp.replace(ROUTE_KEYWORDS_FILE)
 
     return added
 
@@ -477,8 +494,10 @@ def _append_extraction_log(result: Dict[str, Any]) -> None:
     # 限制日志大小（保留最近 100 条）
     records = records[-100:]
 
-    with EXTRACTED_KEYWORDS_FILE.open("w", encoding="utf-8") as f:
+    tmp = EXTRACTED_KEYWORDS_FILE.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+    tmp.replace(EXTRACTED_KEYWORDS_FILE)
 
 
 # ============================================================

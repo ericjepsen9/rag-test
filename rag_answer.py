@@ -323,13 +323,14 @@ def _ensure_shared_store():
         if (shared_dir / "docs.jsonl").exists():
             return
         # _shared store 不存在，尝试自动构建
-        print("[WARN] _shared 索引不存在，正在自动构建共享知识库...")
+        from rag_logger import log_event, log_error
+        log_event("shared_store", "_shared 索引不存在，正在自动构建共享知识库...")
         try:
             from build_faiss import build_shared
             build_shared()
-            print("[INFO] _shared 索引自动构建完成")
+            log_event("shared_store", "_shared 索引自动构建完成")
         except Exception as e:
-            print(f"[ERROR] _shared 索引自动构建失败: {e}")
+            log_error("shared_store", f"_shared 索引自动构建失败: {e}")
             print("[HINT] 请手动运行: python build_faiss.py --shared")
 
 
@@ -397,7 +398,9 @@ def load_store(product: str):
                 index = get_faiss().read_index(str(index_path))
                 # 检测索引与文档数不一致（索引过期未重建）→ 自动重建
                 if index.ntotal != len(docs):
-                    print(f"[INFO] {product}: index.faiss has {index.ntotal} vectors but docs.jsonl has {len(docs)} records. 自动重建索引...")
+                    from rag_logger import log_event
+                    log_event("load_store", f"索引/文档数不一致，自动重建",
+                              meta={"product": product, "index_n": index.ntotal, "docs_n": len(docs)})
                     index = _auto_rebuild_index(product, docs, store_dir)
             except Exception as e:
                 from rag_logger import log_error
@@ -1754,7 +1757,8 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # 根据问题类型使用不同的检索参数
     route_cfg = QUESTION_TYPE_CONFIG.get(route)
     if route_cfg is None:
-        print(f"[WARN] route '{route}' 无专属配置，使用默认检索参数")
+        from rag_logger import log_error
+        log_error("answer_one", f"route '{route}' 无专属配置，使用默认检索参数")
         route_cfg = {}
     route_top_k = route_cfg.get("k", DEFAULT_TOP_K)
     route_threshold = route_cfg.get("threshold", 0.30)

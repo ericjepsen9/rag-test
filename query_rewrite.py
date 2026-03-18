@@ -179,7 +179,9 @@ def _llm_rewrite_query(question: str) -> str:
         try:
             from rag_answer import _get_openai_client
             client = _get_openai_client()
-        except Exception:
+        except Exception as e:
+            from rag_logger import log_error
+            log_error("llm_rewrite", f"OpenAI client 获取失败: {e}")
             client = None
     if client is None:
         # 不缓存：client 可能稍后变为可用（如用户配置了 API key）
@@ -610,8 +612,10 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
                     # 增量更新运行时同义词表（避免全量 reload 的 I/O 开销）
                     from search_utils import add_learned_synonym
                     add_learned_synonym(q, llm_rewritten)
-                except Exception:
-                    pass  # 沉淀失败不影响主流程
+                except Exception as e:
+                    from rag_logger import log_error
+                    log_error("llm_rewrite", f"同义词沉淀失败: {e}",
+                              meta={"query": q[:100], "rewritten": llm_rewritten[:100]})
         if llm_rewritten:
             # 改写成功：用改写结果替换检索查询，同时保留原始查询做混合检索
             search_q = llm_rewritten

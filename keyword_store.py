@@ -21,10 +21,19 @@
 """
 
 import json
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# 输入清理：去除控制字符，防止注入
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _sanitize(text: str, max_len: int = 500) -> str:
+    """清理输入文本：去除控制字符并截断"""
+    return _CONTROL_CHAR_RE.sub("", text.strip())[:max_len]
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -59,8 +68,12 @@ def _save(data: Dict[str, Any]) -> None:
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         tmp.replace(OVERRIDES_FILE)
-    except OSError:
+    except OSError as e:
         tmp.unlink(missing_ok=True)
+        from rag_logger import log_error
+        log_error("keyword_store", f"保存覆盖文件失败: {e}",
+                  meta={"path": str(OVERRIDES_FILE)})
+        raise
 
 
 # ============================================================
@@ -75,8 +88,8 @@ def get_synonym_overrides() -> Dict[str, Dict]:
 
 def add_synonym_override(original: str, mapped_to: str) -> Dict[str, Any]:
     """添加或更新一条静态同义词覆盖"""
-    original = original.strip()
-    mapped_to = mapped_to.strip()
+    original = _sanitize(original, max_len=200)
+    mapped_to = _sanitize(mapped_to, max_len=200)
     if not original or not mapped_to:
         return {"ok": False, "error": "原始词和映射词不能为空"}
     if original == mapped_to:
@@ -161,15 +174,17 @@ def get_clarification_rules() -> Dict[str, Any]:
 
 def save_clarification_rule(trigger: str, options: List[Dict[str, str]]) -> Dict[str, Any]:
     """保存一条消歧规则"""
-    trigger = trigger.strip()
+    trigger = _sanitize(trigger, max_len=200)
     if not trigger:
         return {"ok": False, "error": "触发词不能为空"}
     if not options or len(options) < 1:
         return {"ok": False, "error": "至少需要一个选项"}
-    # 校验选项格式
+    # 校验选项格式并清理输入
     for opt in options:
         if not opt.get("label") or not opt.get("query"):
             return {"ok": False, "error": "每个选项需要 label 和 query"}
+        opt["label"] = _sanitize(opt["label"], max_len=200)
+        opt["query"] = _sanitize(opt["query"], max_len=500)
 
     with _lock:
         data = _load()
