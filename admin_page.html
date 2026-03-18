@@ -1665,6 +1665,7 @@ function selectProvider(provider) {
   // Connection status badge
   const connEl = document.getElementById('model-connection-status');
   if (connEl) {
+    console.log('[selectProvider] called with:', provider, 'cfg:', JSON.stringify({provider: cfg.provider, enabled: cfg.enabled, client_ready: cfg.client_ready, api_key_set: cfg.api_key_set}), 'trace:', new Error().stack);
     if (cfg.provider === provider && cfg.enabled && cfg.client_ready) {
       connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
     } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.client_ready) {
