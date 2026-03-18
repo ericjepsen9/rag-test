@@ -1,5 +1,6 @@
 import hashlib
 import math
+import os
 import re
 import threading
 import unicodedata
@@ -71,7 +72,7 @@ _SEPARATOR_CHARS = frozenset("=-_ ")
 
 # jieba 分词结果缓存：同一查询在 expand_synonyms / _extract_terms 中避免重复分词
 _JIEBA_CUT_CACHE: OrderedDict = OrderedDict()
-_JIEBA_CUT_CACHE_MAX = 128
+_JIEBA_CUT_CACHE_MAX = int(os.environ.get("RAG_JIEBA_CACHE_MAX", "256"))
 _jieba_cut_lock = threading.Lock()
 
 
@@ -1052,7 +1053,7 @@ def detect_terms(question: str, term_map: Dict[str, List[str]],
 
 # Rerank 结果缓存：避免相同 query + 相同候选集重复调用 compute_score
 _rerank_cache: OrderedDict = OrderedDict()  # cache_key -> [(hit_key, score), ...]
-_RERANK_CACHE_MAX = 512
+_RERANK_CACHE_MAX = int(os.environ.get("RAG_RERANK_CACHE_MAX", "512"))
 
 
 def _rerank_cache_key(query: str, hits: List[Dict]) -> str:

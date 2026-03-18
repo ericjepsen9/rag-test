@@ -581,8 +581,8 @@ def _persist_overrides(updates: dict) -> None:
         if _CONFIG_FILE.exists():
             try:
                 existing = _json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[WARN] 读取运行时配置文件失败: {e}")
         for key, val in updates.items():
             if key in TUNABLE_PARAMS:
                 existing[key] = val
@@ -641,14 +641,14 @@ def switch_model_provider(provider: str, model: str = "", api_base: str = "",
         import rag_answer
         rag_answer._openai_client = None
         rag_answer._openai_client_checked = False
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 重置 OpenAI client 缓存失败: {e}")
     # 同步到 llm_client（保持多 LLM 配置一致）
     try:
         from llm_client import sync_from_legacy
         sync_from_legacy()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 同步 llm_client 配置失败: {e}")
     # 持久化
     _persist_overrides({
         "use_openai": True,

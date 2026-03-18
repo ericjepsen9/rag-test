@@ -113,8 +113,8 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
-MAX_QUESTION_LEN = 500
-MAX_HISTORY_TOTAL_CHARS = 3000  # 防止历史内容过大
+MAX_QUESTION_LEN = int(os.environ.get("MAX_QUESTION_LEN", "500"))
+MAX_HISTORY_TOTAL_CHARS = int(os.environ.get("MAX_HISTORY_TOTAL_CHARS", "3000"))
 
 # ===== 管理接口鉴权 =====
 # 通过环境变量 ADMIN_API_KEY 设置管理密钥，未设置时管理接口不开放鉴权（向后兼容）
@@ -225,7 +225,7 @@ class OAIChatRequest(BaseModel):
 # 健康检查缓存：避免频繁的文件系统探测（Kubernetes probes 等）
 _health_cache: Dict[str, Any] = {}
 _health_cache_ts: float = 0.0
-_HEALTH_CACHE_TTL = 15.0  # 秒
+_HEALTH_CACHE_TTL = float(os.environ.get("HEALTH_CACHE_TTL", "15.0"))
 _health_lock = threading.Lock()
 
 
