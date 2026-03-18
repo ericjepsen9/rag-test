@@ -320,19 +320,18 @@ _shared_build_lock = threading.Lock()
 
 
 def _ensure_shared_store():
-    """如果 _shared store 不存在，尝试自动构建。仅尝试一次。"""
+    """如果 _shared store 不存在，尝试自动构建。仅尝试一次。
+    即使 embedding 模型不可用（无 FAISS），也会生成 docs.jsonl 供 keyword search 使用。"""
     global _shared_build_attempted
     if _shared_build_attempted:
         return
     with _shared_build_lock:
-        # 获得锁后再次检查（另一个线程可能刚完成构建）
         if _shared_build_attempted:
             return
         _shared_build_attempted = True
         shared_dir = STORE_ROOT / "_shared"
         if (shared_dir / "docs.jsonl").exists():
             return
-        # _shared store 不存在，尝试自动构建
         from rag_logger import log_event, log_error
         log_event("shared_store", "_shared 索引不存在，正在自动构建共享知识库...")
         try:
@@ -341,6 +340,21 @@ def _ensure_shared_store():
             log_event("shared_store", "_shared 索引自动构建完成")
         except Exception as e:
             log_error("shared_store", f"_shared 索引自动构建失败: {e}")
+            # Fallback: 即使 embedding 失败，也生成 docs.jsonl 供 keyword search 使用
+            if not (shared_dir / "docs.jsonl").exists():
+                try:
+                    from build_faiss import collect_shared_records
+                    records = collect_shared_records()
+                    if records:
+                        shared_dir.mkdir(parents=True, exist_ok=True)
+                        docs_path = shared_dir / "docs.jsonl"
+                        with docs_path.open("w", encoding="utf-8") as f:
+                            for r in records:
+                                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                        log_event("shared_store",
+                                  f"已生成 docs.jsonl（{len(records)} chunks，仅关键词搜索可用）")
+                except Exception as e2:
+                    log_error("shared_store", f"docs.jsonl fallback 也失败: {e2}")
             print("[HINT] 请手动运行: python build_faiss.py --shared")
 
 
@@ -493,13 +507,26 @@ def _is_product_dir(name: str) -> bool:
 
 
 
+# 产品专有特征词 → 产品ID：这些术语虽非产品名别名，但在当前知识库中仅属于特定产品。
+# 仅当常规别名检测失败时使用，避免误触发（如"水光"不应直接匹配产品）。
+_PRODUCT_FEATURE_TERMS: Dict[str, List[str]] = {
+    "feiluoao": ["PCL", "聚己内酯", "HiddenTag", "谷胱甘肽", "IntoCell",
+                 "肽复合物", "聚乙二醇"],
+}
+
+
 def detect_product(question: str) -> str:
     global _product_list_cache, _product_list_mtime
     found = detect_terms(question, PRODUCT_ALIASES)
     if found:
         return found[0]
+    # 二次检测：产品专有特征词（成分/防伪等术语）
+    q_upper = question.upper()
+    for product_id, terms in _PRODUCT_FEATURE_TERMS.items():
+        for term in terms:
+            if term.upper() in q_upper:
+                return product_id
     # 未识别到具体产品 → 返回空字符串，由调用方决定搜索策略
-    # 避免将无关查询（如"肉毒"、"皮肤干燥"）错误路由到默认产品
     return ""
 
 
@@ -946,7 +973,8 @@ _ACCEPT_LINE_KEYWORDS = {
     "pre_care": ("术前", "检查", "病史", "过敏史", "用药", "A酸", "果酸",
                  "饮酒", "抗凝", "素颜", "沟通", "知情", "同意书", "费用",
                  "方案", "准备", "评估", "皮肤状态", "感染", "炎症",
-                 "妊娠", "哺乳", "禁忌", "风险", "注意事项"),
+                 "妊娠", "哺乳", "禁忌", "风险", "注意事项",
+                 "麻醉", "敷麻", "表面麻醉", "分钟"),
     "design": ("设计", "方案", "评估", "松弛", "皱纹", "轮廓", "法令纹",
                "下颌", "苹果肌", "毛孔", "弹性", "含水量", "用量", "支",
                "导入", "注射", "全脸", "区域", "疗程", "间隔", "保守",
@@ -967,7 +995,10 @@ _ACCEPT_LINE_KEYWORDS = {
                   "推荐项目", "常见问题", "注意事项"),
     "indication_q": ("松弛", "干燥", "毛孔", "色斑", "痘坑", "皱纹", "缺水",
                      "粗糙", "暗沉", "细纹", "改善", "推荐", "适合", "年龄",
-                     "敏感肌", "油性", "屏障", "备孕", "孕期"),
+                     "敏感肌", "油性", "屏障", "备孕", "孕期",
+                     "首选", "动态纹", "静态纹", "表情纹", "肉毒", "填充",
+                     "水光", "菲罗奥", "导入", "光电", "射频", "激光",
+                     "注意事项", "项目"),
     "procedure_q": ("项目", "操作", "流程", "对比", "区别", "优势", "原理",
                     "适用", "适应症", "效果", "疗程", "搭配", "水光针",
                     "微针", "光电", "填充", "射频", "激光",
@@ -975,7 +1006,8 @@ _ACCEPT_LINE_KEYWORDS = {
     "equipment_q": ("仪器", "设备", "机器", "参数", "针头", "深度", "功能",
                     "兼容", "适配", "品牌", "维护", "水光仪", "微针仪"),
     "script": ("话术", "解释", "回答", "沟通", "顾虑", "说法", "合规",
-               "介绍", "客户", "担心", "推销", "预期"),
+               "介绍", "客户", "担心", "推销", "预期",
+               "恢复", "针眼", "红肿", "天", "化妆", "影响", "正常"),
 }
 _BASIC_KEYWORDS = ("产品", "品牌", "备案", "规格", "形态", "保质期", "储存",
                    "适用", "肤质", "松弛", "下垂", "缺水", "细纹", "紧致",
@@ -1059,11 +1091,19 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
             items.append("术后如有任何异常，请及时联系操作医生。")
 
     # 临床优先级排序：警告/就医类条目排在前面（被 brief 截断时不丢失关键安全信息）
+    # 但当用户问轻微症状时（"正常吗"/"咋办"），也保留 【正常】/轻微类条目
     priority_kws = _CLINICAL_PRIORITY_KWS.get(route)
     if priority_kws:
         critical = [x for x in items if any(k in x for k in priority_kws)]
         normal = [x for x in items if not any(k in x for k in priority_kws)]
-        items = critical + normal
+        # 混合排序：critical 在前，但也交错一些 normal 条目（特别是【正常】类）
+        if route == "complication" and normal:
+            reassurance = [x for x in normal if "正常" in x or "冰敷" in x or "消退" in x]
+            other_normal = [x for x in normal if x not in reassurance]
+            # 先放安抚类，再放严重警告，再放其余
+            items = reassurance + critical + other_normal
+        else:
+            items = critical + normal
 
     # 各路由的条目数限制 (brief, full)
     limits = {
@@ -1103,9 +1143,11 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
                 overlap = sum(1 for c in q_chars if c in item_lower)
                 if overlap >= 2:
                     relevant_idx.add(idx)
-                    # 如果匹配的是 header 类条目（以"）"或"："结尾），
+                    # 如果匹配的是 header 类条目（小节编号或以"："结尾），
                     # 后续非 header 子条目也标为相关
-                    if item.rstrip().endswith(("：", ":", "）", ")")):
+                    is_header = (item.rstrip().endswith(("：", ":", "）", ")"))
+                                 or re.match(r"^\d+[）\)]", item.strip()))
+                    if is_header:
                         for j in range(idx + 1, len(items)):
                             sub = items[j].strip()
                             if re.match(r"^\d+[）\)]", sub) or sub.endswith(("：", ":")):
@@ -2063,9 +2105,15 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
     body_lines = parse_answer(route, product, mode, question=question)
 
-    # 补充 FAQ 命中：规则提取结果不够丰富时，用 FAQ 补充
-    # 规则提取已充分（>= 6 条）时跳过 FAQ 补充，避免冗余
-    if hits and len(body_lines) < 6:
+    # 补充 FAQ 命中：规则提取结果不足或不覆盖问题核心时，用 FAQ 补充
+    # 条件：body_lines < 6 (不足) 或 body_lines 不包含问题中的关键中文字符 (不相关)
+    _need_faq_supplement = len(body_lines) < 6
+    if not _need_faq_supplement and body_lines and question:
+        _q_key_chars = set(c for c in question if '\u4e00' <= c <= '\u9fff')
+        _body_text = "".join(body_lines)
+        _q_coverage = sum(1 for c in _q_key_chars if c in _body_text)
+        _need_faq_supplement = _q_coverage < len(_q_key_chars) * 0.5
+    if hits and _need_faq_supplement:
         faq_supplement = _extract_faq_from_hits(hits, question, _q_bigrams=_q_bigrams)
         if faq_supplement:
             if body_lines:
