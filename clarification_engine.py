@@ -365,7 +365,7 @@ def resolve_numeric_choice(
     如果用户输入不是数字或超出范围，返回 None。
     """
     s = user_input.strip()
-    if not s.isdigit():
+    if not s.isdigit() or len(s) > 5:  # 防止超长数字字符串
         return None
     idx = int(s)
     options = previous_clarification.get("options", [])

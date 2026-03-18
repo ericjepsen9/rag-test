@@ -112,6 +112,15 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # CSP：限制资源加载来源；inline script/style 因单页 HTML 架构需保留
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
     return response
 
 MAX_QUESTION_LEN = int(os.environ.get("MAX_QUESTION_LEN", "500"))
@@ -654,7 +663,8 @@ def admin_products():
 
 
 @app.post("/admin/rebuild")
-def admin_rebuild(req: RebuildRequest):
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_rebuild(request: Request, req: RebuildRequest):
     global _health_cache
     from build_faiss import build_for_product
     product = req.product.strip()
@@ -695,7 +705,8 @@ def admin_rebuild(req: RebuildRequest):
 
 
 @app.post("/admin/rebuild_shared")
-def admin_rebuild_shared():
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_rebuild_shared(request: Request):
     """重建共享知识索引（procedures、equipment、anatomy 等）"""
     global _health_cache
     from build_faiss import build_shared
@@ -946,7 +957,8 @@ class LLMExpandRequest(BaseModel):
 
 
 @app.post("/admin/keywords/llm-expand")
-def admin_llm_expand(req: LLMExpandRequest):
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_llm_expand(request: Request, req: LLMExpandRequest):
     """调用 LLM 基于已有词库智能生成新词条"""
     from keyword_store import llm_expand_synonyms
     result = llm_expand_synonyms(category=req.category, count=req.count)
@@ -1125,6 +1137,7 @@ def admin_delete_product(product: str):
 # ===== 文件上传接口 =====
 
 @app.post("/admin/upload")
+@limiter.limit(_ADMIN_RATE_LIMIT)
 async def admin_upload(request: "Request"):
     """通用文件上传：支持上传 txt/json 文件到指定产品目录。
     Form fields: product (str), files (UploadFile[])
@@ -1185,6 +1198,7 @@ async def admin_upload(request: "Request"):
 # ===== 批量上传：ZIP 包解压 =====
 
 @app.post("/admin/upload_zip")
+@limiter.limit(_ADMIN_RATE_LIMIT)
 async def admin_upload_zip(request: "Request"):
     """上传 ZIP 包，自动解压到知识库。
     ZIP 内部结构：product_name/main.txt, product_name/faq.txt 等
@@ -1565,7 +1579,8 @@ def admin_cache_stats():
 
 
 @app.post("/admin/cache/clear")
-def admin_cache_clear():
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_cache_clear(request: Request):
     """清空所有响应缓存"""
     with _response_cache_lock:
         count = len(_RESPONSE_CACHE)
@@ -1630,7 +1645,8 @@ class ImportKnowledgeRequest(BaseModel):
 
 
 @app.post("/admin/import_knowledge")
-def admin_import_knowledge(req: ImportKnowledgeRequest):
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_import_knowledge(request: Request, req: ImportKnowledgeRequest):
     """通过 LLM 自动将原始文档整理为结构化知识库文件。
 
     用法：POST JSON 请求体，content 字段放原始文档文本。

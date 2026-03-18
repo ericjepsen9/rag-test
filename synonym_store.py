@@ -34,7 +34,10 @@ def _load() -> Dict[str, Any]:
     try:
         with LEARNED_SYNONYMS_FILE.open("r", encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as e:
+        from rag_logger import log_error
+        log_error("synonym_store", f"同义词文件加载失败: {e}",
+                  meta={"path": str(LEARNED_SYNONYMS_FILE)})
         return {}
 
 
@@ -46,8 +49,12 @@ def _save(data: Dict[str, Any]) -> None:
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         tmp.replace(LEARNED_SYNONYMS_FILE)
-    except OSError:
+    except OSError as e:
         tmp.unlink(missing_ok=True)
+        from rag_logger import log_error
+        log_error("synonym_store", f"同义词文件写入失败: {e}",
+                  meta={"path": str(LEARNED_SYNONYMS_FILE)})
+        raise
 
 
 def save_learned(original_term: str, mapped_to: str) -> None:
