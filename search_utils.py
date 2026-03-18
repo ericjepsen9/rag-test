@@ -55,7 +55,8 @@ def _get_jieba():
                 pass
             _jieba = _jieba_mod
         except ImportError:
-            print("[WARN] jieba 未安装，回退到 bigram 分词")
+            from rag_logger import log_error
+            log_error("jieba_init", "jieba 未安装，回退到 bigram 分词")
             _jieba = None
         _jieba_initialized = True
         return _jieba
@@ -1095,7 +1096,9 @@ def rerank_hits(query: str, hits: List[Dict], model, top_k: int) -> List[Dict]:
     try:
         scores = model.compute_score(sentence_pairs)
     except Exception as e:
-        print(f"[WARN] rerank 失败，回退原排序: {e}")
+        from rag_logger import log_error
+        log_error("rerank", f"compute_score 失败，回退原排序: {e}",
+                  meta={"query": query[:100], "n_hits": len(hits)})
         return hits[:top_k]
 
     # compute_score 返回 {"colbert": [...], "sparse": [...], "dense": [...], "score": [...]}

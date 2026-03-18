@@ -13,6 +13,7 @@ LOG_DIR = BASE_DIR / "logs"
 QA_LOG = LOG_DIR / "qa_log.jsonl"
 MISS_LOG = LOG_DIR / "miss_log.jsonl"
 ERROR_LOG = LOG_DIR / "error_log.jsonl"
+EVENT_LOG = LOG_DIR / "event_log.jsonl"
 
 # 日志文件大小上限（默认 10MB），超过后轮转
 def _safe_int(env_key: str, default: int) -> int:
@@ -116,6 +117,14 @@ def log_error(stage: str, error: str, *, meta: Optional[Dict[str, Any]] = None) 
             print(f"[LOG_ERROR_FAIL] stage={stage} error={error}", file=sys.stderr)
         except Exception:
             pass
+
+
+def log_event(stage: str, message: str, *, meta: Optional[Dict[str, Any]] = None) -> None:
+    """记录 info 级别事件（启动、关闭、配置变更等）"""
+    try:
+        _append_jsonl(EVENT_LOG, {"stage": stage, "message": message, "meta": meta or {}})
+    except Exception:
+        print(f"[EVENT] {stage}: {message}")
 
 
 def read_recent(path: Path, limit: int = 20) -> list[Dict[str, Any]]:

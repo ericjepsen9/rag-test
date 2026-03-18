@@ -250,7 +250,7 @@ def embed_query(text: str) -> np.ndarray:
         elif "embeddings" in out:
             vec = out["embeddings"]
         else:
-            raise ValueError("未找到查询向量字段")
+            raise ValueError(f"未找到查询向量字段，可用字段: {list(out.keys())}，预期: dense_vecs/dense/embeddings")
     else:
         vec = out
     vec = np.asarray(vec, dtype="float32")
@@ -285,7 +285,8 @@ def _auto_rebuild_index(product: str, docs: List[Dict], store_dir: Path):
         else:
             vecs = out
         if vecs is None:
-            print(f"[WARN] {product}: 自动重建失败 — 未获取到向量")
+            from rag_logger import log_error
+            log_error("index_rebuild", "未获取到向量", meta={"product": product})
             return None
         vecs = np.asarray(vecs, dtype="float32")
         faiss = get_faiss()
@@ -299,7 +300,8 @@ def _auto_rebuild_index(product: str, docs: List[Dict], store_dir: Path):
         print(f"[INFO] {product}: 索引自动重建成功 ({len(docs)} vectors, dim={dim})")
         return index
     except Exception as e:
-        print(f"[WARN] {product}: 自动重建索引失败 — {e}")
+        from rag_logger import log_error
+        log_error("index_rebuild", f"自动重建失败: {e}", meta={"product": product})
         return None
 
 

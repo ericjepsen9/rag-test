@@ -51,32 +51,33 @@ _startup_time: float = 0.0  # 服务启动时间戳（monotonic）
 @asynccontextmanager
 async def _lifespan(app):
     """启动时预热嵌入模型并预构建共享知识索引，避免首次查询延迟"""
+    from rag_logger import log_event, log_error
     global _startup_time
     _startup_time = time.monotonic()
     if not os.environ.get("SKIP_WARMUP"):
         try:
             from rag_answer import embed_query
             embed_query("预热查询")
-            print("[INFO] 嵌入模型预热完成")
+            log_event("startup", "嵌入模型预热完成")
         except Exception as e:
-            print(f"[WARN] 模型预热失败: {e}")
+            log_error("startup", f"模型预热失败: {e}")
         # 预构建共享知识索引（procedures/equipment/anatomy 等），
         # 避免首次跨实体查询时 30s+ 的冷启动延迟
         try:
             from rag_answer import _ensure_shared_store
             _ensure_shared_store()
-            print("[INFO] 共享知识库索引预检完成")
+            log_event("startup", "共享知识库索引预检完成")
         except Exception as e:
-            print(f"[WARN] 共享知识库预构建失败: {e}")
+            log_error("startup", f"共享知识库预构建失败: {e}")
     yield
     # 优雅停机：清理资源
-    print("[INFO] 服务正在关闭，刷新日志缓存...")
+    log_event("shutdown", "服务正在关闭，刷新日志缓存...")
     try:
         from rag_answer import _search_pool
         _search_pool.shutdown(wait=True, cancel_futures=False)
-        print("[INFO] 搜索线程池已关闭")
+        log_event("shutdown", "搜索线程池已关闭")
     except Exception as e:
-        print(f"[WARN] 搜索线程池关闭失败: {e}")
+        log_error("shutdown", f"搜索线程池关闭失败: {e}")
 
 app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0", lifespan=_lifespan)
 app.state.limiter = limiter

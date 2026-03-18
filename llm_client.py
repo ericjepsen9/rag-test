@@ -170,8 +170,12 @@ def get_client(purpose: str = "chat"):
             kwargs = {"api_key": api_key}
             if cfg["api_base"]:
                 kwargs["base_url"] = cfg["api_base"]
+            # 超时配置：连接 10s，读取 60s（LLM 生成可能较慢）
+            _timeout = float(os.environ.get("LLM_CLIENT_TIMEOUT", "60"))
+            kwargs["timeout"] = _timeout
             _clients[purpose] = OpenAI(**kwargs)
-        except Exception:
+        except Exception as e:
+            print(f"[WARN] OpenAI client ({purpose}) 初始化失败: {e}")
             _clients[purpose] = None
         _clients_checked[purpose] = True
         return _clients[purpose]
