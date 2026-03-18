@@ -754,7 +754,24 @@ def admin_rebuild(request: Request, req: RebuildRequest):
     if not lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail=f"产品 '{product}' 正在重建中，请稍后重试")
     try:
-        build_for_product(product)
+        # 使用线程 + 超时，让前端传入的 timeout_sec 生效
+        build_error = [None]
+        def _do_build():
+            try:
+                build_for_product(product)
+            except Exception as exc:
+                build_error[0] = exc
+        t = threading.Thread(target=_do_build, daemon=True)
+        t.start()
+        t.join(timeout=req.timeout_sec)
+        if t.is_alive():
+            # 超时：线程仍在运行，但已超出用户指定时限
+            log_error("admin_rebuild", f"索引重建超时 ({req.timeout_sec}s)",
+                      meta={"product": product})
+            raise HTTPException(status_code=504,
+                                detail=f"索引重建超时（{req.timeout_sec}秒），后台可能仍在运行")
+        if build_error[0] is not None:
+            raise build_error[0]
         # 重建后清除缓存，下次请求会加载新索引
         invalidate_store_cache(product)
         from search_utils import invalidate_bm25_cache
@@ -766,6 +783,8 @@ def admin_rebuild(request: Request, req: RebuildRequest):
         invalidate_relations_cache()
         invalidate_media_cache(product)
         return {"ok": True, "product": product}
+    except HTTPException:
+        raise
     except Exception as e:
         log_error("admin_rebuild", repr(e), meta={"product": product})
         raise HTTPException(status_code=500, detail="索引重建失败，请查看服务器日志")
@@ -873,8 +892,8 @@ def admin_synonyms_delete(original: str):
 
 
 class SynonymAddRequest(BaseModel):
-    original: str
-    mapped_to: str
+    original: str = Field(..., min_length=1, max_length=200)
+    mapped_to: str = Field(..., min_length=1, max_length=200)
 
 
 @app.post("/admin/synonyms/learned/add")
@@ -889,8 +908,8 @@ def admin_synonyms_add(req: SynonymAddRequest):
 
 
 class SynonymEditRequest(BaseModel):
-    original: str
-    mapped_to: str
+    original: str = Field(..., min_length=1, max_length=200)
+    mapped_to: str = Field(..., min_length=1, max_length=200)
 
 
 @app.put("/admin/synonyms/learned")
@@ -1374,9 +1393,26 @@ async def admin_upload_zip(request: "Request"):
                 results.append({"file": fname, "error": "只支持 .zip 文件"})
                 continue
             data = await item.read()
+            # ZIP 炸弹防护：限制 ZIP 文件大小（100MB）和最大条目数
+            _ZIP_MAX_SIZE = 100 * 1024 * 1024  # 100MB
+            _ZIP_MAX_ENTRIES = 500
+            _ZIP_MAX_EXTRACTED = 200 * 1024 * 1024  # 解压后总大小上限 200MB
+            if len(data) > _ZIP_MAX_SIZE:
+                results.append({"file": fname, "error": f"ZIP 文件过大（超过 {_ZIP_MAX_SIZE // 1024 // 1024}MB）"})
+                continue
             try:
                 with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                    for info in zf.infolist():
+                    entries = zf.infolist()
+                    if len(entries) > _ZIP_MAX_ENTRIES:
+                        results.append({"file": fname,
+                            "error": f"ZIP 条目过多（{len(entries)} > {_ZIP_MAX_ENTRIES}）"})
+                        continue
+                    total_uncompressed = sum(e.file_size for e in entries)
+                    if total_uncompressed > _ZIP_MAX_EXTRACTED:
+                        results.append({"file": fname,
+                            "error": f"ZIP 解压后过大（超过 {_ZIP_MAX_EXTRACTED // 1024 // 1024}MB）"})
+                        continue
+                    for info in entries:
                         if info.is_dir():
                             continue
                         # 安全校验路径
@@ -1537,17 +1573,20 @@ def admin_llm_test_purpose(purpose: str = "chat"):
         raise HTTPException(status_code=400, detail="purpose 必须为 chat 或 knowledge")
 
     if not is_enabled(purpose):
-        return {"ok": False, "error": f"{purpose} LLM 未启用"}
+        return JSONResponse(status_code=503,
+            content={"ok": False, "error": f"{purpose} LLM 未启用"})
 
     cfg = get_llm_config(purpose)
     if not cfg["api_key_set"]:
-        return {"ok": False, "error": f"{purpose} LLM 未设置 API Key"}
+        return JSONResponse(status_code=503,
+            content={"ok": False, "error": f"{purpose} LLM 未设置 API Key"})
 
     t0 = time.monotonic()
     try:
         client = get_client(purpose)
         if client is None:
-            return {"ok": False, "error": "LLM client 创建失败"}
+            return JSONResponse(status_code=503,
+                content={"ok": False, "error": "LLM client 创建失败"})
         model_name = get_model(purpose)
         resp = client.chat.completions.create(
             model=model_name,
@@ -1568,7 +1607,8 @@ def admin_llm_test_purpose(purpose: str = "chat"):
         }
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        return {"ok": False, "error": str(e), "latency_ms": latency_ms}
+        return JSONResponse(status_code=502,
+            content={"ok": False, "error": str(e), "latency_ms": latency_ms})
 
 
 # ===== 服务器 / 域名配置接口 =====
@@ -1672,10 +1712,12 @@ def admin_llm_test():
     """测试 LLM API 连接（发送一次简短请求验证连通性）"""
     from rag_runtime_config import USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE
     if not USE_OPENAI:
-        return {"ok": False, "error": "LLM 未启用"}
+        return JSONResponse(status_code=503,
+            content={"ok": False, "error": "LLM 未启用"})
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
-        return {"ok": False, "error": "未设置 OPENAI_API_KEY"}
+        return JSONResponse(status_code=503,
+            content={"ok": False, "error": "未设置 OPENAI_API_KEY"})
     t0 = time.monotonic()
     try:
         from openai import OpenAI
@@ -1700,7 +1742,8 @@ def admin_llm_test():
         }
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        return {"ok": False, "error": str(e), "latency_ms": latency_ms}
+        return JSONResponse(status_code=502,
+            content={"ok": False, "error": str(e), "latency_ms": latency_ms})
 
 
 # ===== 缓存管理接口 =====
@@ -1735,11 +1778,24 @@ def admin_cache_stats():
 @app.post("/admin/cache/clear")
 @limiter.limit(_ADMIN_RATE_LIMIT)
 def admin_cache_clear(request: Request):
-    """清空所有响应缓存"""
+    """清空所有缓存（响应缓存、嵌入缓存、索引缓存、LLM 改写缓存）"""
+    from rag_answer import _embed_cache, _store_cache
+    cleared = {}
     with _response_cache_lock:
-        count = len(_RESPONSE_CACHE)
+        cleared["response_cache"] = len(_RESPONSE_CACHE)
         _RESPONSE_CACHE.clear()
-    return {"ok": True, "cleared": count}
+    cleared["embed_cache"] = len(_embed_cache)
+    _embed_cache.clear()
+    cleared["store_cache"] = len(_store_cache)
+    _store_cache.clear()
+    try:
+        from query_rewrite import _llm_rewrite_cache
+        with _llm_rewrite_cache._lock:
+            cleared["llm_rewrite_cache"] = len(_llm_rewrite_cache._cache)
+            _llm_rewrite_cache._cache.clear()
+    except Exception:
+        pass
+    return {"ok": True, "cleared": cleared}
 
 
 # ===== 系统状态接口 =====

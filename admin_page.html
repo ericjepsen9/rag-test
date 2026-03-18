@@ -1100,7 +1100,7 @@ async function api(url, opts = {}) {
       throw new Error(j.detail || '管理接口鉴权失败，请输入正确的 Admin Key');
     }
     const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
     return j;
   } catch (e) {
     toast(e.message, 'error');
