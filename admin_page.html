@@ -692,6 +692,8 @@
           <span id="syn-runtime-status"></span>
           <button class="btn-ghost btn-sm" onclick="reloadSynRuntime()" style="margin-left:auto">刷新运行时</button>
           <button class="btn-ghost btn-sm" onclick="exportSynonyms()">导出词库</button>
+          <button class="btn-ghost btn-sm" onclick="showImportSynonyms()">批量导入</button>
+          <button class="btn-ghost btn-sm" onclick="showTestSynonym()">测试扩展</button>
         </div>
         <div class="tabs" id="syn-tabs">
           <button class="active" data-tab="learned" onclick="switchSynTab('learned')">LLM 学习词库</button>
@@ -2043,6 +2045,40 @@ function exportSynonyms() {
   a.click();
   URL.revokeObjectURL(a.href);
   toast('词库已导出', 'success');
+}
+
+function showImportSynonyms() {
+  const json = prompt('粘贴 JSON 数组格式的同义词列表：\n[{"original":"词A","mapped_to":"词B"}, ...]\n\n或粘贴导出文件中的 learned 数组：');
+  if (!json) return;
+  try {
+    let items = JSON.parse(json);
+    // 支持导出文件格式：{learned: [...]}
+    if (items.learned) items = items.learned;
+    if (!Array.isArray(items)) throw new Error('需要数组格式');
+    const mapped = items.map(it => ({original: it.original, mapped_to: it.mapped_to}))
+                        .filter(it => it.original && it.mapped_to);
+    if (!mapped.length) { toast('无有效数据', 'error'); return; }
+    const autoApprove = confirm(`即将导入 ${mapped.length} 条同义词。\n点击"确定"自动审批，点击"取消"仅导入待审核。`);
+    api('/admin/synonyms/import', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({items: mapped, auto_approve: autoApprove}),
+    }).then(r => {
+      toast(`导入完成：新增 ${r.added} 条，跳过 ${r.skipped} 条`, 'success');
+      loadSynonyms();
+    }).catch(e => toast('导入失败: ' + (e.message||''), 'error'));
+  } catch(e) { toast('JSON 解析失败: ' + e.message, 'error'); }
+}
+
+function showTestSynonym() {
+  const query = prompt('输入查询词，测试同义词扩展效果：');
+  if (!query) return;
+  api(`/admin/synonyms/test?query=${encodeURIComponent(query)}`)
+    .then(r => {
+      const msg = r.expanded_count > 0
+        ? `查询：${r.query}\n扩展词(${r.expanded_count})：${r.expanded_terms.join('、')}`
+        : `查询：${r.query}\n无扩展词命中`;
+      alert(msg);
+    }).catch(e => toast('测试失败', 'error'));
 }
 
 // ===== 全部生效词管理 =====

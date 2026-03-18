@@ -69,6 +69,13 @@ async def _lifespan(app):
             log_event("startup", "共享知识库索引预检完成")
         except Exception as e:
             log_error("startup", f"共享知识库预构建失败: {e}")
+        # 预加载学习同义词到运行时，避免首次查询时的加载延迟
+        try:
+            from search_utils import reload_learned_synonyms
+            count = reload_learned_synonyms()
+            log_event("startup", f"学习同义词预加载完成: {count} 条")
+        except Exception as e:
+            log_error("startup", f"学习同义词预加载失败: {e}")
     yield
     # 优雅停机：清理资源
     log_event("shutdown", "服务正在关闭，刷新日志缓存...")
@@ -856,7 +863,53 @@ def admin_synonyms_batch_delete(req: SynonymBatchRequest):
     return result
 
 
+class SynonymImportItem(BaseModel):
+    original: str = Field(..., min_length=1, max_length=200)
+    mapped_to: str = Field(..., min_length=1, max_length=200)
+
+
+class SynonymBatchImportRequest(BaseModel):
+    items: List[SynonymImportItem] = Field(..., max_length=500)
+    auto_approve: bool = False
+
+
+@app.post("/admin/synonyms/import")
+def admin_synonyms_import(req: SynonymBatchImportRequest):
+    """批量导入同义词（支持 JSON 数组，可选自动审批）"""
+    from synonym_store import save_learned, approve_learned
+    added = 0
+    skipped = 0
+    for item in req.items:
+        orig = item.original.strip()
+        mapped = item.mapped_to.strip()
+        if not orig or not mapped or orig == mapped:
+            skipped += 1
+            continue
+        save_learned(orig, mapped)
+        if req.auto_approve:
+            approve_learned(orig)
+        added += 1
+    if added > 0:
+        _reload_synonym_runtime()
+    return {"ok": True, "added": added, "skipped": skipped, "total": len(req.items)}
+
+
 # ===== 关键词综合管理接口 =====
+
+
+@app.get("/admin/synonyms/test")
+def admin_synonyms_test(query: str = Query(..., min_length=1, max_length=200)):
+    """测试同义词扩展效果：输入查询词，返回扩展后的所有关键词"""
+    from search_utils import expand_synonyms, normalize_text
+    query = query.strip()
+    expanded = expand_synonyms(query)
+    normalized = normalize_text(query)
+    return {
+        "query": query,
+        "normalized": normalized,
+        "expanded_terms": sorted(expanded),
+        "expanded_count": len(expanded),
+    }
 
 
 @app.get("/admin/keywords/effective")
@@ -929,6 +982,17 @@ class ClarificationRuleRequest(BaseModel):
     options: List[Dict[str, str]] = Field(..., max_length=10)
 
 
+def _invalidate_clarification_cache():
+    """清除消歧规则合并缓存，使新规则立即生效"""
+    try:
+        from clarification_engine import _get_merged_rules
+        import clarification_engine
+        clarification_engine._merged_rules_cache = None
+        clarification_engine._merged_rules_ts = 0
+    except Exception:
+        pass
+
+
 @app.post("/admin/keywords/clarification")
 def admin_clarification_save(req: ClarificationRuleRequest):
     """保存一条消歧规则"""
@@ -936,6 +1000,7 @@ def admin_clarification_save(req: ClarificationRuleRequest):
     result = save_clarification_rule(req.trigger, req.options)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
+    _invalidate_clarification_cache()
     return result
 
 
@@ -946,6 +1011,7 @@ def admin_clarification_delete(trigger: str = Query(..., min_length=1, max_lengt
     result = delete_clarification_rule(trigger.strip())
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
+    _invalidate_clarification_cache()
     return result
 
 
