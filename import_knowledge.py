@@ -433,6 +433,12 @@ def _write_knowledge_files(result: dict, entity_type: str, entity_id: str,
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    def _atomic_write(path: Path, text: str):
+        """原子写入：先写临时文件再替换，避免崩溃导致数据损坏"""
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+
     # main.txt
     main_txt = result.get("main_txt", "")
     if main_txt:
@@ -442,21 +448,21 @@ def _write_knowledge_files(result: dict, entity_type: str, entity_id: str,
             existing = main_path.read_text(encoding="utf-8")
             main_txt = existing.rstrip() + "\n\n" + main_txt
             print(f"[INFO] 追加内容到已有文件: {main_path}")
-        main_path.write_text(main_txt, encoding="utf-8")
+        _atomic_write(main_path, main_txt)
         print(f"[OK] 写入 {main_path} ({len(main_txt)} 字)")
 
     # faq.txt（仅产品类型）
     faq_txt = result.get("faq_txt", "")
     if faq_txt and entity_type == "product":
         faq_path = out_dir / "faq.txt"
-        faq_path.write_text(faq_txt, encoding="utf-8")
+        _atomic_write(faq_path, faq_txt)
         print(f"[OK] 写入 {faq_path} ({len(faq_txt)} 字)")
 
     # alias.txt
     alias_txt = result.get("alias_txt", "")
     if alias_txt:
         alias_path = out_dir / "alias.txt"
-        alias_path.write_text(alias_txt, encoding="utf-8")
+        _atomic_write(alias_path, alias_txt)
         print(f"[OK] 写入 {alias_path}")
 
     return out_dir

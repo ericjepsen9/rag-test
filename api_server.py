@@ -757,6 +757,8 @@ def admin_rebuild(request: Request, req: RebuildRequest):
         build_for_product(product)
         # 重建后清除缓存，下次请求会加载新索引
         invalidate_store_cache(product)
+        from search_utils import invalidate_bm25_cache
+        invalidate_bm25_cache(product)
         with _health_lock:
             _health_cache = {}  # 索引变更后清除健康检查缓存
         # 同时清除关联数据和媒体缓存
@@ -780,6 +782,8 @@ def admin_rebuild_shared(request: Request):
     try:
         build_shared()
         invalidate_store_cache("_shared")
+        from search_utils import invalidate_bm25_cache
+        invalidate_bm25_cache("_shared")
         with _health_lock:
             _health_cache = {}  # 索引变更后清除健康检查缓存
         from relation_engine import invalidate_relations_cache
@@ -961,13 +965,18 @@ def admin_synonyms_test(query: str = Query(..., min_length=1, max_length=200)):
     """测试同义词扩展效果：输入查询词，返回扩展后的所有关键词"""
     from search_utils import expand_synonyms, normalize_text
     query = query.strip()
-    expanded = expand_synonyms(query)
+    expanded_str = expand_synonyms(query)
     normalized = normalize_text(query)
+    # expand_synonyms 返回字符串如 "原查询 同义词1 同义词2"
+    # 提取原查询之外新增的扩展词
+    expanded_terms = expanded_str.split()
+    query_terms = set(query.split())
+    new_terms = sorted(t for t in expanded_terms if t not in query_terms)
     return {
         "query": query,
         "normalized": normalized,
-        "expanded_terms": sorted(expanded),
-        "expanded_count": len(expanded),
+        "expanded_terms": new_terms,
+        "expanded_count": len(new_terms),
     }
 
 

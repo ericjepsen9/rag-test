@@ -333,11 +333,13 @@ def _llm_expand_synonyms_impl(client, model: str, count: int) -> Dict[str, Any]:
 
         # 自动应用到学习词库（标记为 LLM 扩充，待审核）
         applied = 0
-        from synonym_store import add_manual
+        from synonym_store import save_learned
         for it in new_items:
-            result = add_manual(it["original"].strip(), it["mapped_to"].strip())
-            if result.get("ok"):
+            try:
+                save_learned(it["original"].strip(), it["mapped_to"].strip())
                 applied += 1
+            except Exception:
+                pass
 
         save_llm_expansion_log("synonym", new_items)
         return {"ok": True, "items": new_items, "applied": applied, "total_generated": len(items)}

@@ -569,6 +569,20 @@ def update_tunable_config(updates: dict) -> dict:
     # 持久化覆盖值
     if changed:
         _persist_overrides(updates)
+        # 如果模型相关参数变更，需要重置 LLM client 缓存
+        _model_keys = {"use_openai", "openai_model", "openai_api_base"}
+        if _model_keys & changed.keys():
+            try:
+                import rag_answer
+                rag_answer._openai_client = None
+                rag_answer._openai_client_checked = False
+            except Exception:
+                pass
+            try:
+                from llm_client import sync_from_legacy
+                sync_from_legacy()
+            except Exception:
+                pass
     return changed
 
 
@@ -611,12 +625,13 @@ def load_persisted_overrides() -> dict:
 
 def get_model_config() -> dict:
     """获取当前模型配置"""
+    import rag_runtime_config as _mod
     return {
-        "use_openai": USE_OPENAI,
-        "model": OPENAI_MODEL,
-        "api_base": OPENAI_API_BASE or "",
+        "use_openai": _mod.USE_OPENAI,
+        "model": _mod.OPENAI_MODEL,
+        "api_base": _mod.OPENAI_API_BASE or "",
         "api_key_set": bool(_os.environ.get("OPENAI_API_KEY", "").strip()),
-        "llm_rewrite": LLM_REWRITE_ENABLED,
+        "llm_rewrite": _mod.LLM_REWRITE_ENABLED,
         "presets": MODEL_PRESETS,
     }
 
@@ -872,27 +887,28 @@ def stop_embedding_model() -> dict:
 
 def get_llm_status() -> dict:
     """获取 LLM 服务状态"""
+    import rag_runtime_config as _mod
     try:
         import rag_answer
         client = getattr(rag_answer, "_openai_client", None)
         checked = getattr(rag_answer, "_openai_client_checked", False)
         return {
-            "enabled": USE_OPENAI,
+            "enabled": _mod.USE_OPENAI,
             "client_ready": client is not None,
             "client_checked": checked,
-            "model": OPENAI_MODEL,
-            "api_base": OPENAI_API_BASE or "",
+            "model": _mod.OPENAI_MODEL,
+            "api_base": _mod.OPENAI_API_BASE or "",
             "api_key_set": bool(_os.environ.get("OPENAI_API_KEY", "").strip()),
-            "rewrite_enabled": LLM_REWRITE_ENABLED,
-            "temperature": LLM_TEMPERATURE,
+            "rewrite_enabled": _mod.LLM_REWRITE_ENABLED,
+            "temperature": _mod.LLM_TEMPERATURE,
         }
     except Exception:
         return {
-            "enabled": USE_OPENAI,
+            "enabled": _mod.USE_OPENAI,
             "client_ready": False,
             "client_checked": False,
-            "model": OPENAI_MODEL,
-            "api_base": OPENAI_API_BASE or "",
+            "model": _mod.OPENAI_MODEL,
+            "api_base": _mod.OPENAI_API_BASE or "",
             "api_key_set": bool(_os.environ.get("OPENAI_API_KEY", "").strip()),
         }
 
