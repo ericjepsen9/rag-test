@@ -458,6 +458,7 @@ def vector_search(product: str, query: str, top_k: int) -> List[Dict]:
 
 
 _knowledge_file_cache: OrderedDict = OrderedDict()  # path -> (mtime, content)
+_knowledge_file_cache_lock = threading.Lock()
 _KNOWLEDGE_CACHE_MAX = int(os.environ.get("RAG_KNOWLEDGE_CACHE_MAX", "128"))
 
 def read_knowledge_file(product: str, fname: str) -> str:
@@ -466,13 +467,15 @@ def read_knowledge_file(product: str, fname: str) -> str:
         return ""
     key = str(p)
     mtime = p.stat().st_mtime
-    cached = _knowledge_file_cache.get(key)
-    if cached and cached[0] == mtime:
-        _knowledge_file_cache.move_to_end(key)  # LRU
-        return cached[1]
+    with _knowledge_file_cache_lock:
+        cached = _knowledge_file_cache.get(key)
+        if cached and cached[0] == mtime:
+            _knowledge_file_cache.move_to_end(key)  # LRU
+            return cached[1]
     content = p.read_text(encoding="utf-8")
-    _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
-    _knowledge_file_cache[key] = (mtime, content)
+    with _knowledge_file_cache_lock:
+        _evict_cache(_knowledge_file_cache, _KNOWLEDGE_CACHE_MAX)
+        _knowledge_file_cache[key] = (mtime, content)
     return content
 
 
@@ -1234,6 +1237,8 @@ def _extract_faq_from_hits(hits: List[Dict], question: str,
     _q_bigrams: 预计算的问题 bigram 集合（可选，避免重复计算）。"""
     if _q_bigrams is not None:
         q_bigrams = _q_bigrams
+        if not q_bigrams:
+            return []  # 预计算的 bigram 集合为空，无法匹配
     else:
         q_norm = _normalize_for_bigram(question)
         if len(q_norm) < 2:

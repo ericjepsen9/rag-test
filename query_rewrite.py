@@ -278,7 +278,9 @@ _MEDAES_GUARD_PATTERNS = re.compile(
     r"|术后|术前|恢复期|禁忌|并发症|红肿|肿胀|硬块|瘢痕|疤痕"
     r"|皮肤|面部|脸部|额头|法令纹|苹果肌|下颌|鼻部|眼周|颈部"
     r"|医美|美容|整形|抗衰|紧致|提升|嫩肤|祛斑|祛痘|脱毛"
-    r"|菲罗奥|赛罗菲|FILLOUP|PCL|聚己内酯|透明质酸|生长因子"
+    r"|" + "|".join(re.escape(alias) for aliases in PRODUCT_ALIASES.values()
+                     for alias in aliases[:3]) +
+    r"|PCL|聚己内酯|透明质酸|生长因子"
     r"|仪器|设备|水光仪|微针仪|射频|超声|冷冻溶脂"
     r"|操作|治疗|方案|疗程|护理|敷麻|麻醉)"
 )

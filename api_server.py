@@ -1420,7 +1420,9 @@ async def admin_upload_zip(request: "Request"):
                         if len(parts) < 2:
                             continue
                         product_name = parts[0]
-                        file_name = parts[-1]
+                        # 保留子目录结构：parts[1:] 为产品目录内的相对路径
+                        relative_path = Path(*parts[1:])
+                        file_name = relative_path.name
                         if ".." in info.filename:
                             continue
                         suffix = Path(file_name).suffix.lower()
@@ -1431,14 +1433,16 @@ async def admin_upload_zip(request: "Request"):
                         except Exception:
                             continue
                         pdir = KNOWLEDGE_DIR / product_name
-                        pdir.mkdir(parents=True, exist_ok=True)
+                        # 创建子目录（如果有的话）
+                        dest_dir = pdir / relative_path.parent
+                        dest_dir.mkdir(parents=True, exist_ok=True)
                         content = zf.read(info.filename)
                         try:
                             text = content.decode("utf-8")
                         except UnicodeDecodeError:
                             text = content.decode("utf-8-sig", errors="replace")
                         # 原子写入
-                        dest = pdir / file_name
+                        dest = dest_dir / file_name
                         tmp = dest.with_suffix(dest.suffix + ".tmp")
                         try:
                             tmp.write_text(text, encoding="utf-8")
@@ -1948,9 +1952,9 @@ def admin_import_knowledge(request: Request, req: ImportKnowledgeRequest):
                 log_error("import_build_index", repr(e),
                           meta={"type": entity_type, "id": entity_id})
 
-        # 构建响应
+        # 构建响应：索引构建失败时明确告知
         response = {
-            "ok": True,
+            "ok": True if (not req.build or req.dry_run or built_index) else False,
             "type": entity_type,
             "id": entity_id,
             "dry_run": req.dry_run,
@@ -1959,6 +1963,8 @@ def admin_import_knowledge(request: Request, req: ImportKnowledgeRequest):
             "model": _get_knowledge_model_name(),
             "files_generated": {},
         }
+        if req.build and not req.dry_run and not built_index:
+            response["warning"] = "知识文件已写入，但索引构建失败，查询可能返回旧结果。请手动重建索引。"
         if result.get("main_txt"):
             response["files_generated"]["main.txt"] = len(result["main_txt"])
         if result.get("faq_txt"):

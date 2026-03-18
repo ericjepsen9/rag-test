@@ -179,6 +179,8 @@ def get_client(purpose: str = "chat"):
             from rag_logger import log_error
             log_error("llm_client", f"OpenAI client ({purpose}) 初始化失败: {e}")
             _clients[purpose] = None
+            # 不标记 checked，允许后续重试（可能是临时网络错误）
+            return None
         _clients_checked[purpose] = True
         return _clients[purpose]
 

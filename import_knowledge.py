@@ -361,9 +361,11 @@ def _generate_knowledge(client, raw_text: str, entity_type: str,
         # 再发送后半部分补充
         if len(part2) > max_chars:
             from rag_logger import log_error
-            log_error("import_knowledge", f"文档第2部分超长，截断",
+            dropped = len(part2) - max_chars
+            log_error("import_knowledge", f"文档第2部分超长，截断丢失 {dropped} 字符",
                       meta={"part2_len": len(part2), "max": max_chars,
-                            "dropped": len(part2) - max_chars})
+                            "dropped": dropped})
+            print(f"[WARN] 文档过长，第2部分截断丢失 {dropped} 字符，建议拆分文档后分别导入")
         user_prompt_2 = (
             f"以下是文档的第2部分，请整理并补充到之前的结果中。"
             f"输出完整的最终 JSON（合并两部分内容）：\n\n"
@@ -444,11 +446,20 @@ def _write_knowledge_files(result: dict, entity_type: str, entity_id: str,
     if main_txt:
         main_path = out_dir / "main.txt"
         if is_single and main_path.exists():
-            # 单文件模式：追加内容
-            existing = main_path.read_text(encoding="utf-8")
-            main_txt = existing.rstrip() + "\n\n" + main_txt
-            print(f"[INFO] 追加内容到已有文件: {main_path}")
-        _atomic_write(main_path, main_txt)
+            # 单文件模式：追加内容（使用文件锁防止并发覆盖）
+            lock_path = main_path.with_suffix(".lock")
+            import fcntl
+            with open(lock_path, "w") as lf:
+                fcntl.flock(lf, fcntl.LOCK_EX)
+                try:
+                    existing = main_path.read_text(encoding="utf-8")
+                    main_txt = existing.rstrip() + "\n\n" + main_txt
+                    print(f"[INFO] 追加内容到已有文件: {main_path}")
+                    _atomic_write(main_path, main_txt)
+                finally:
+                    fcntl.flock(lf, fcntl.LOCK_UN)
+        else:
+            _atomic_write(main_path, main_txt)
         print(f"[OK] 写入 {main_path} ({len(main_txt)} 字)")
 
     # faq.txt（仅产品类型）

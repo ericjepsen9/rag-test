@@ -146,8 +146,10 @@ def extract_keywords_from_document(
             + "、".join(dedup_lines)
         )
 
+    # 清理 entity_id 中的特殊字符，防止破坏 prompt 结构
+    _safe_entity = (entity_id or entity_type).replace("\n", " ").replace("\r", " ").strip()
     user_prompt = (
-        f"以下是关于「{entity_id or entity_type}」（类型：{entity_type}）的医美文档。"
+        f"以下是关于「{_safe_entity}」（类型：{entity_type}）的医美文档。"
         f"请提取关键词信息。\n\n"
         f"【文档内容】\n{truncated}"
         f"{dedup_hint}"

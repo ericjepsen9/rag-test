@@ -7,6 +7,7 @@
 4. equipment_q 路由 → 补充设备-项目对应关系
 """
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any, List, Dict, Optional
@@ -185,7 +186,12 @@ def get_indication_recommendations(query: str, _data: Optional[Dict] = None) -> 
     lines = []
     q_lower = query.lower()
     for indication, items in (_idx_indication or {}).items():
-        if indication in q_lower:
+        if not indication:
+            continue
+        # 使用词边界匹配避免子串误判（如"头部"不应匹配"后头疼"）
+        if re.search(re.escape(indication) + r'(?!\w)', q_lower) is None:
+            continue
+        if True:
             for item in items:
                 products = [_product_label(p) for p in item.get("products", [])]
                 procedures = [_procedure_label(p) for p in item.get("procedures", [])]
@@ -209,7 +215,11 @@ def get_anatomy_recommendations(query: str, _data: Optional[Dict] = None) -> Lis
     lines = []
     q_lower = query.lower()
     for area, items in (_idx_anatomy or {}).items():
-        if area in q_lower:
+        if not area:
+            continue
+        if re.search(re.escape(area) + r'(?!\w)', q_lower) is None:
+            continue
+        if True:
             for item in items:
                 products = [_product_label(p) for p in item.get("products", [])]
                 procedures = [_procedure_label(p) for p in item.get("procedures", [])]
@@ -304,7 +314,9 @@ def validate_combo_safety(product_id: str, question: str, data: Optional[Dict] =
         text = rule.get("rule", "")
         if severity == "禁止":
             # 同一部位同日多种注射 → 检查是否有多个注射类项目
-            injection_procs = {"water_light", "microneedling", "filling"}
+            # 从配置动态获取注射类项目，避免硬编码
+            from rag_runtime_config import INJECTION_PROCEDURE_IDS
+            injection_procs = INJECTION_PROCEDURE_IDS
             mentioned_injections = [p for p in mentioned_procs if p in injection_procs]
             if len(mentioned_injections) >= 2 and "同一部位" in text:
                 warnings.append(f"⚠ {text}")

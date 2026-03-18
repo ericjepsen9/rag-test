@@ -313,8 +313,12 @@ def reload_learned_synonyms() -> int:
     try:
         from keyword_store import get_synonym_overrides
         overrides = get_synonym_overrides()
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            from rag_logger import log_error
+            log_error("reload_learned_synonyms", f"同义词覆盖加载失败: {e}")
+        except Exception:
+            pass
 
     with _learned_lock:
         # 清除旧的学习词条（避免已删除的词残留）

@@ -226,6 +226,11 @@ PROCEDURE_ALIASES = {
                       "botox", "保妥适", "衡力", "乐提葆", "肉毒素注射"],
 }
 
+# 注射类项目 ID（用于联合禁忌检查，同一部位同日多种注射需警告）
+INJECTION_PROCEDURE_IDS = frozenset({
+    "water_light", "microneedling", "filling", "botox",
+})
+
 EQUIPMENT_ALIASES = {
     "water_light_machine": ["水光仪", "水光机", "水光注射仪", "德玛莎", "水光枪"],
     "mts_device":          ["微针仪", "微针笔", "电动微针", "滚轮微针", "飞针仪"],
