@@ -1380,8 +1380,22 @@ def parse_answer(route: str, product: str, mode: str,
 
     if route == "anti_fake":
         return parse_anti_fake(main_text, faq_text, mode)
-    return parse_bullets_from_section(main_text, faq_text, route, mode,
-                                      question=question)
+    items = parse_bullets_from_section(main_text, faq_text, route, mode,
+                                       question=question)
+    # 基础资料路由 + 宽泛概览问题：追加关键注意事项摘要
+    if route == "basic" and question and product:
+        _overview_kws = ("了解什么", "需要知道", "注意什么", "须知", "入门",
+                         "第一次", "新手", "初次")
+        if any(k in question for k in _overview_kws):
+            overview = [
+                "【重要须知】",
+                "术前准备：告知病史、停用抗凝药、避免酸类护肤品",
+                "术后护理：冰敷、24小时后可洗脸、一周内防晒避桑拿",
+                "禁忌人群：妊娠/哺乳期、活动性感染、免疫疾病、18岁以下",
+                "详细信息请咨询专业医师",
+            ]
+            items = items + [""] + overview
+    return items
 
 
 from search_utils import expand_synonyms as _expand_synonyms
@@ -1415,6 +1429,7 @@ def _extract_faq_from_hits(hits: List[Dict], question: str,
     """从检索结果中提取与问题高度相关的 FAQ 回答。
     先对双方做同义词归一化，再用 bigram 重叠匹配。
     短问题（<15字）降低重叠数要求。
+    同时检查 FAQ 答案中是否包含问题关键词（补充 bigram 评分）。
     _q_bigrams: 预计算的问题 bigram 集合（可选，避免重复计算）。"""
     if _q_bigrams is not None:
         q_bigrams = _q_bigrams
@@ -1427,6 +1442,13 @@ def _extract_faq_from_hits(hits: List[Dict], question: str,
         q_bigrams = set(q_norm[i:i+2] for i in range(len(q_norm) - 1))
     min_overlap = 2 if len(question) < 15 else 3
 
+    # 提取问题中的关键中文词（用于答案侧匹配）
+    q_key_chars = set(c for c in question if '\u4e00' <= c <= '\u9fff')
+    # 扩展同义词关键词
+    from search_utils import expand_synonyms as _expand_syn
+    q_expanded = _expand_syn(question)
+    q_expanded_chars = set(c for c in q_expanded if '\u4e00' <= c <= '\u9fff')
+
     faq_candidates = []
     for h in hits:
         meta = h.get("meta", {})
@@ -1436,17 +1458,31 @@ def _extract_faq_from_hits(hits: List[Dict], question: str,
         if "【Q】" not in text or "【A】" not in text:
             continue
         q_part = text.split("【A】")[0].replace("【Q】", "")
+        _, _, a_part = text.partition("【A】")
+        a_part = a_part.strip()
+        if not a_part:
+            continue
         faq_norm = _normalize_for_bigram(q_part)
         faq_bigrams = set(faq_norm[i:i+2] for i in range(len(faq_norm) - 1))
         if not faq_bigrams:
             continue
         overlap = len(q_bigrams & faq_bigrams)
         ratio = overlap / max(len(q_bigrams), 1)
-        if overlap >= min_overlap and ratio >= 0.3:
-            _, _, a_part = text.partition("【A】")
-            a_part = a_part.strip()
-            if a_part:
-                faq_candidates.append((ratio, a_part))
+
+        # 额外加分：FAQ 答案包含问题扩展关键词（排除产品名字符）
+        product_chars = set()
+        for alias_list in PRODUCT_ALIASES.values():
+            for alias in alias_list:
+                product_chars.update(c for c in alias if '\u4e00' <= c <= '\u9fff')
+        # 问题中的非产品名关键字符
+        q_topic_chars = q_key_chars - product_chars
+        a_text_all = q_part + a_part
+        topic_in_answer = sum(1 for c in q_topic_chars if c in a_text_all)
+        topic_bonus = min(topic_in_answer / max(len(q_topic_chars), 1) * 0.5, 0.5)
+
+        score = ratio + topic_bonus
+        if overlap >= min_overlap and score >= 0.3:
+            faq_candidates.append((score, a_part))
     faq_candidates.sort(key=lambda x: x[0], reverse=True)
     return [a_part for _, a_part in faq_candidates[:2]]
 
@@ -1949,10 +1985,36 @@ def _is_material_only_query(question: str, product: str) -> str:
     return material_id
 
 
+# 术后护理/操作类路由：无产品时若知识库只有一个产品，默认使用该产品
+_PROCEDURE_ROUTES = frozenset({
+    "aftercare", "pre_care", "operation", "effect", "risk",
+    "combo", "design", "repair", "contraindication",
+})
+
+
+def _get_sole_product() -> str:
+    """如果知识库只有一个产品，返回其 ID；否则返回空字符串。"""
+    if not KNOWLEDGE_DIR.exists():
+        return ""
+    products = [p.name for p in sorted(KNOWLEDGE_DIR.iterdir())
+                if p.is_dir() and (p / "main.txt").exists()
+                and p.name not in ("anatomy", "complications", "courses",
+                                   "equipment", "indications", "materials",
+                                   "procedures", "scripts")]
+    if len(products) == 1:
+        return products[0]
+    return ""
+
+
 def answer_one(question: str, mode: str, rewrite: dict = None,
                route_override: str = "") -> str:
     product = detect_product(question)
     route = route_override or detect_route(question)
+    # 无产品 + 术后操作类路由 + 知识库只有一个产品 → 默认使用该产品
+    if not product and route in _PROCEDURE_ROUTES:
+        sole = _get_sole_product()
+        if sole:
+            product = sole
     _thread_local.route = route
     _thread_local.product = product
     _thread_local.method = ""
