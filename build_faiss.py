@@ -438,11 +438,11 @@ def build_for_product(product: str):
         tmp_index.unlink(missing_ok=True)
         raise
 
-    print(f"[DONE] Built store")
-    print(f"       product: {product}")
-    print(f"       chunks : {len(records)}")
-    print(f"       dim    : {dim}")
-    print(f"       index  : {FAISS_INDEX_TYPE}")
+    from rag_logger import log_event
+    log_event("build_faiss", f"索引构建完成: {product}",
+              meta={"product": product, "chunks": len(records),
+                    "dim": dim, "index_type": FAISS_INDEX_TYPE})
+    print(f"[DONE] Built store: {product} ({len(records)} chunks, dim={dim}, {FAISS_INDEX_TYPE})")
 
 
 def collect_shared_records():
@@ -509,7 +509,8 @@ def build_shared():
     """构建共享知识索引（存储在 stores/_shared/）"""
     records = collect_shared_records()
     if not records:
-        print("[WARN] 无共享知识可索引")
+        from rag_logger import log_error
+        log_error("build_shared", "无共享知识可索引")
         return
     texts = [r["text"] for r in records]
     print(f"[INFO] Shared total chunks: {len(texts)}")
@@ -534,9 +535,10 @@ def build_shared():
     os.replace(str(tmp_docs), str(docs_path))
     os.replace(str(tmp_index), str(index_path))
 
-    print(f"[DONE] Built shared store")
-    print(f"       chunks : {len(records)}")
-    print(f"       dim    : {dim}")
+    from rag_logger import log_event
+    log_event("build_shared", "共享索引构建完成",
+              meta={"chunks": len(records), "dim": dim})
+    print(f"[DONE] Built shared store ({len(records)} chunks, dim={dim})")
 
 
 def _is_product_dir(p: Path) -> bool:
@@ -546,7 +548,8 @@ def _is_product_dir(p: Path) -> bool:
 
 def list_products():
     if not KNOWLEDGE_DIR.exists():
-        print(f"[ERROR] knowledge 目录不存在：{KNOWLEDGE_DIR}")
+        from rag_logger import log_error
+        log_error("list_products", f"knowledge 目录不存在: {KNOWLEDGE_DIR}")
         return
     # 列出产品目录（顶层有 main.txt 且不是共享知识目录）
     for p in sorted(KNOWLEDGE_DIR.iterdir()):

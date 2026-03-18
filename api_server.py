@@ -298,7 +298,8 @@ def health():
         from rag_answer import _model
         embedding_ready = _model is not None
     except Exception as e:
-        print(f"[WARN] embedding 模型状态检查失败: {e}")
+        from rag_logger import log_error
+        log_error("health", f"embedding 模型状态检查失败: {e}")
 
     result = {
         "status": "ok" if all_indexed else "degraded",

@@ -357,8 +357,10 @@ def _generate_knowledge(client, raw_text: str, entity_type: str,
 
         # 再发送后半部分补充
         if len(part2) > max_chars:
-            print(f"[WARN] 文档第2部分仍超长（{len(part2)} 字），截断至 {max_chars} 字，"
-                  f"丢弃 {len(part2) - max_chars} 字内容")
+            from rag_logger import log_error
+            log_error("import_knowledge", f"文档第2部分超长，截断",
+                      meta={"part2_len": len(part2), "max": max_chars,
+                            "dropped": len(part2) - max_chars})
         user_prompt_2 = (
             f"以下是文档的第2部分，请整理并补充到之前的结果中。"
             f"输出完整的最终 JSON（合并两部分内容）：\n\n"
@@ -552,7 +554,8 @@ def main():
             print(f"  → 文件为空，跳过")
 
     if not raw_parts:
-        print("[ERROR] 所有输入文件均为空")
+        from rag_logger import log_error
+        log_error("import_knowledge_main", "所有输入文件均为空")
         sys.exit(1)
 
     raw_text = "\n\n---\n\n".join(raw_parts)
@@ -610,7 +613,8 @@ def main():
                 print(f"  python -c \"from keyword_extractor import get_pending_review; "
                       f"import json; print(json.dumps(get_pending_review(), ensure_ascii=False, indent=2))\"")
         except Exception as e:
-            print(f"[WARN] 关键词提取失败（不影响知识库导入）: {e}")
+            from rag_logger import log_error
+            log_error("keyword_extraction", f"关键词提取失败: {e}")
 
     elif args.no_keywords:
         print(f"[INFO] 跳过关键词提取（--no-keywords）")

@@ -375,7 +375,8 @@ def _save_jieba_words(words: List[Dict]) -> int:
                     if parts:
                         existing_words.add(parts[0])
         except (OSError, UnicodeDecodeError) as e:
-            print(f"[WARN] jieba 用户词典读取失败，将重建: {e}")
+            from rag_logger import log_error
+            log_error("keyword_extractor", f"jieba 用户词典读取失败，将重建: {e}")
 
     # 也读取 search_utils 中的硬编码自定义词
     try:

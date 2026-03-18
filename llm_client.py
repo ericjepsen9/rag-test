@@ -175,7 +175,8 @@ def get_client(purpose: str = "chat"):
             kwargs["timeout"] = _timeout
             _clients[purpose] = OpenAI(**kwargs)
         except Exception as e:
-            print(f"[WARN] OpenAI client ({purpose}) 初始化失败: {e}")
+            from rag_logger import log_error
+            log_error("llm_client", f"OpenAI client ({purpose}) 初始化失败: {e}")
             _clients[purpose] = None
         _clients_checked[purpose] = True
         return _clients[purpose]
@@ -309,7 +310,8 @@ def load_persisted_llm_configs():
                   f"knowledge={_llm_configs['knowledge']['provider']}/{_llm_configs['knowledge']['model']}")
         return loaded
     except Exception as e:
-        print(f"[WARN] 加载多 LLM 配置失败: {e}")
+        from rag_logger import log_error
+        log_error("llm_client", f"加载多 LLM 配置失败: {e}")
         return False
 
 
