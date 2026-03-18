@@ -191,11 +191,11 @@ def get_model(purpose: str = "chat") -> str:
     """
     cfg = _llm_configs.get(purpose, _llm_configs["chat"])
     model = cfg["model"]
-    if (cfg.get("model_format") == "litellm"
-            and cfg["provider"]
-            and model
-            and ":" not in model):
-        return f"{cfg['provider']}:{model}"
+    if cfg.get("model_format") == "litellm" and model:
+        # LiteLLM 模式：模型名本身已包含 provider 前缀（如 openai/xxx）
+        # 仅当模型名中没有 "/" 也没有 ":" 时才拼接 provider
+        if "/" not in model and ":" not in model and cfg["provider"] and cfg["provider"] != "custom":
+            return f"{cfg['provider']}:{model}"
     return model
 
 
