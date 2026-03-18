@@ -490,8 +490,6 @@ def _is_product_dir(name: str) -> bool:
     return p.is_dir() and (p / "main.txt").exists() and name not in _SHARED_DIR_NAMES
 
 
-_DEFAULT_PRODUCT = os.environ.get("RAG_DEFAULT_PRODUCT", "feiluoao")
-
 
 def detect_product(question: str) -> str:
     global _product_list_cache, _product_list_mtime
@@ -1631,14 +1629,20 @@ def _log_knowledge_gap(question: str, route: str, rewrite: dict,
 # ===== LLM 智能兜底 =====
 
 # 知识库覆盖的主题列表（用于 LLM 兜底时告知用户可以问什么）
-_KNOWLEDGE_TOPICS = (
-    "菲罗奥（PCL胶原再生产品）的成分、功效、操作方法、术后护理、禁忌人群、防伪鉴别、"
-    "效果与维持时间、术前准备、方案设计、修复补救、联合方案；"
-    "注射填充（玻尿酸/透明质酸）的分类、应用、对比、风险；"
-    "水光针、微针、光电（射频/皮秒/IPL）等项目的原理和流程；"
-    "面部分区治疗方案、皮肤问题（松弛/干燥/毛孔/色斑/痘坑/皱纹）的改善建议；"
-    "术后并发症处理、疗程规划、设备知识、客户沟通话术"
-)
+def _build_knowledge_topics() -> str:
+    """动态构建知识库主题描述，避免硬编码产品名。"""
+    prod_names = [aliases[0] for aliases in PRODUCT_ALIASES.values() if aliases]
+    prod_hint = "、".join(prod_names) if prod_names else "产品"
+    return (
+        f"{prod_hint}等产品的成分、功效、操作方法、术后护理、禁忌人群、防伪鉴别、"
+        "效果与维持时间、术前准备、方案设计、修复补救、联合方案；"
+        "注射填充（玻尿酸/透明质酸）的分类、应用、对比、风险；"
+        "水光针、微针、光电（射频/皮秒/IPL）等项目的原理和流程；"
+        "面部分区治疗方案、皮肤问题（松弛/干燥/毛孔/色斑/痘坑/皱纹）的改善建议；"
+        "术后并发症处理、疗程规划、设备知识、客户沟通话术"
+    )
+
+_KNOWLEDGE_TOPICS = _build_knowledge_topics()
 
 
 def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
