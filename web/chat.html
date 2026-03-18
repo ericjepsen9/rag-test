@@ -117,12 +117,45 @@
     /* Debug panel in bubble */
     .debug-toggle { margin-top: 8px; }
     .debug-toggle summary { font-size: 11px; color: var(--text-light); cursor: pointer;
-                            user-select: none; }
+                            user-select: none; display: flex; align-items: center; gap: 6px; }
     .debug-toggle summary:hover { color: var(--primary); }
-    .debug-content { margin-top: 6px; padding: 10px; background: #f8f9fb; border-radius: 8px;
-                     font-family: 'SF Mono', Menlo, monospace; font-size: 11px;
-                     line-height: 1.5; overflow-x: auto; white-space: pre-wrap;
-                     color: var(--text-secondary); max-height: 300px; overflow-y: auto; }
+    .debug-toggle summary .debug-method-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px;
+                                                  background: var(--primary-light); color: var(--primary);
+                                                  font-weight: 500; }
+    .debug-content { margin-top: 6px; padding: 0; background: #f8f9fb; border-radius: 8px;
+                     font-size: 11px; line-height: 1.5; overflow: hidden;
+                     color: var(--text-secondary); max-height: 400px; overflow-y: auto; }
+    /* Debug tabs */
+    .debug-tabs { display: flex; border-bottom: 1px solid var(--border); background: #f0f1f4;
+                  border-radius: 8px 8px 0 0; }
+    .debug-tab { flex: 1; padding: 6px 8px; font-size: 10px; text-align: center; cursor: pointer;
+                 border: none; background: none; color: var(--text-secondary);
+                 transition: all .15s; white-space: nowrap; }
+    .debug-tab:hover { color: var(--primary); background: rgba(79,110,247,.06); }
+    .debug-tab.active { color: var(--primary); font-weight: 600;
+                        box-shadow: inset 0 -2px 0 var(--primary); background: #fff; }
+    .debug-tab-content { display: none; padding: 10px; font-family: 'SF Mono', Menlo, monospace;
+                         font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
+    .debug-tab-content.active { display: block; }
+    /* Debug table */
+    .debug-table { width: 100%; border-collapse: collapse; }
+    .debug-table td { padding: 3px 6px; vertical-align: top; }
+    .debug-table td:first-child { color: var(--text-light); white-space: nowrap; width: 90px;
+                                    font-weight: 500; }
+    .debug-table td:last-child { word-break: break-all; }
+    .debug-table tr:nth-child(even) { background: rgba(0,0,0,.02); }
+    /* Debug action bar */
+    .debug-actions { display: flex; gap: 4px; padding: 6px 10px; background: #f0f1f4;
+                     border-radius: 0 0 8px 8px; border-top: 1px solid var(--border); }
+    .debug-action-btn { padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px;
+                        background: #fff; font-size: 10px; color: var(--text-secondary);
+                        cursor: pointer; transition: all .15s; }
+    .debug-action-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .debug-tag { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px;
+                 margin: 1px 2px; background: #e8ecff; color: var(--primary); }
+    .debug-tag.warn { background: #fef3cd; color: #856404; }
+    .debug-tag.success { background: #d4edda; color: #155724; }
+    .debug-tag.muted { background: #f3f4f6; color: var(--text-light); }
 
     /* Media */
     .media-group { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
@@ -270,6 +303,9 @@
     <div class="header-right">
       <button class="new-chat-btn" onclick="clearChat()" title="新对话">
         <span style="font-size:14px">&#x2795;</span> 新对话
+      </button>
+      <button class="icon-btn" id="debugExpandBtn" onclick="toggleAllDebug()" title="展开/折叠全部调试" style="display:none;font-size:14px">
+        &#x1f50d;
       </button>
       <button class="icon-btn" id="settingsBtn" onclick="toggleSettings()" title="设置">
         &#x2699;&#xFE0F;
@@ -473,6 +509,95 @@ function formatTime(date) {
   return h + ':' + m;
 }
 
+// ===== Debug panel renderers =====
+function _debugTag(text, cls = '') {
+  return '<span class="debug-tag ' + cls + '">' + esc(text) + '</span>';
+}
+function _debugRow(label, value) {
+  if (value === null || value === undefined || value === '') return '';
+  return '<tr><td>' + esc(label) + '</td><td>' + value + '</td></tr>';
+}
+function _debugTable(rows) {
+  return '<table class="debug-table">' + rows.filter(Boolean).join('') + '</table>';
+}
+
+function renderDebugQuery(d) {
+  const methodLabels = {
+    'llm_rag': 'LLM RAG 生成', 'llm_material_direct': 'LLM 材料直答',
+    'llm_fallback': 'LLM 兜底', 'rule_extract': '规则提取',
+    'faq_fast_path': 'FAQ 精确匹配', 'low_confidence': '低置信度兜底',
+    'no_hit': '无命中', 'chitchat': '闲聊', 'offtopic': '非领域',
+    'special_intent': '特殊意图', 'no_match': '无匹配',
+  };
+  const methodText = d.method ? (methodLabels[d.method] || d.method) : '—';
+  const methodCls = d.method && (d.method.startsWith('llm') || d.method === 'faq_fast_path' || d.method === 'rule_extract') ? 'success' : d.method && (d.method === 'no_hit' || d.method === 'no_match') ? 'warn' : '';
+  return _debugTable([
+    _debugRow('原始问题', esc(d.question || '')),
+    d.resolved_question ? _debugRow('上下文补全', esc(d.resolved_question)) : '',
+    d.search_query && d.search_query !== d.question ? _debugRow('检索查询', esc(d.search_query)) : '',
+    _debugRow('路由', _debugTag(d.route || '—')),
+    _debugRow('产品', _debugTag(d.product || '未识别', d.product ? '' : 'muted')),
+    _debugRow('回答方法', _debugTag(methodText, methodCls)),
+    _debugRow('模式', _debugTag(d.mode || 'brief')),
+  ]);
+}
+
+function renderDebugRewrite(d) {
+  const rows = [];
+  if (d.expanded_query) rows.push(_debugRow('扩展查询', '<span style="word-break:break-all">' + esc(d.expanded_query) + '</span>'));
+  if (d.llm_rewritten) rows.push(_debugRow('LLM 改写', _debugTag(d.llm_rewritten, 'success')));
+  if (d.detected_routes && d.detected_routes.length)
+    rows.push(_debugRow('检测路由', d.detected_routes.map(r => _debugTag(r)).join(' ')));
+  if (d.sub_questions && d.sub_questions.length > 1)
+    rows.push(_debugRow('子问题', d.sub_questions.map(q => '<div>' + esc(q) + '</div>').join('')));
+  if (d.products && d.products.length)
+    rows.push(_debugRow('识别产品', d.products.map(p => _debugTag(p)).join(' ')));
+  if (d.projects && d.projects.length)
+    rows.push(_debugRow('识别项目', d.projects.map(p => _debugTag(p)).join(' ')));
+  if (d.times && d.times.length)
+    rows.push(_debugRow('时间词', d.times.map(t => _debugTag(t, 'muted')).join(' ')));
+  if (d.symptoms && d.symptoms.length)
+    rows.push(_debugRow('症状词', d.symptoms.map(s => _debugTag(s, 'warn')).join(' ')));
+  // Special flags
+  const flags = [];
+  if (d.context_resolved) flags.push(_debugTag('上下文已补全', 'success'));
+  if (d.is_chitchat) flags.push(_debugTag('闲聊', 'muted'));
+  if (d.is_offtopic) flags.push(_debugTag('非领域', 'warn'));
+  if (d.needs_clarification) flags.push(_debugTag('需消歧', 'warn'));
+  if (flags.length) rows.push(_debugRow('标记', flags.join(' ')));
+  if (!rows.length) return '<div style="padding:10px;color:var(--text-light)">无改写操作</div>';
+  return _debugTable(rows);
+}
+
+function renderDebugContext(d) {
+  const rows = [];
+  if (d.history_summary) rows.push(_debugRow('历史摘要', '<span style="white-space:pre-wrap">' + esc(d.history_summary) + '</span>'));
+  rows.push(_debugRow('历史对数', String(d.history_pairs_count || 0)));
+  if (d.last_user_q) rows.push(_debugRow('上轮问题', esc(d.last_user_q)));
+  if (!d.history_summary && !d.last_user_q && !d.history_pairs_count) return '<div style="padding:10px;color:var(--text-light)">无历史上下文（首轮对话）</div>';
+  return _debugTable(rows);
+}
+
+function renderDebugPerf(d) {
+  const latency = d.latency_ms || 0;
+  const color = latency < 500 ? 'var(--success)' : latency < 2000 ? 'var(--warning)' : 'var(--danger)';
+  // Visual latency bar
+  const barWidth = Math.min(latency / 50, 100);
+  const bar = '<div style="display:flex;align-items:center;gap:8px">'
+    + '<div style="flex:1;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden">'
+    + '<div style="width:' + barWidth + '%;height:100%;background:' + color + ';border-radius:3px;transition:width .3s"></div></div>'
+    + '<span style="font-weight:600;color:' + color + '">' + latency + 'ms</span></div>';
+  return _debugTable([
+    _debugRow('总延迟', bar),
+    _debugRow('Trace ID', '<code style="font-size:10px;user-select:all">' + esc(d.trace_id || '—') + '</code>'),
+  ]);
+}
+
+function renderDebugRaw(d) {
+  return '<pre style="margin:0;padding:8px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-all;max-height:280px;overflow-y:auto">'
+    + esc(JSON.stringify(d, null, 2)) + '</pre>';
+}
+
 // ===== Create message =====
 function addMessage(text, role, opts = {}) {
   // Hide welcome on first message
@@ -544,25 +669,90 @@ function addMessage(text, role, opts = {}) {
     bubble.appendChild(group);
   }
 
-  // Debug info (collapsible)
+  // Debug info (collapsible with tabs)
   if (debug && $('setDebug').checked) {
     const details = document.createElement('details');
     details.className = 'debug-toggle';
     const summary = document.createElement('summary');
-    summary.textContent = '调试信息';
+    const sumText = document.createElement('span');
+    sumText.textContent = '调试信息';
+    summary.appendChild(sumText);
+    if (debug.method) {
+      const badge = document.createElement('span');
+      badge.className = 'debug-method-badge';
+      badge.textContent = debug.method;
+      summary.appendChild(badge);
+    }
+    if (debug.trace_id) {
+      const tid = document.createElement('span');
+      tid.style.cssText = 'font-size:10px;color:var(--text-light);font-family:monospace';
+      tid.textContent = debug.trace_id.slice(0, 8);
+      summary.appendChild(tid);
+    }
     details.appendChild(summary);
     const content = document.createElement('div');
     content.className = 'debug-content';
-    const debugLines = [];
-    if (debug.route) debugLines.push('路由: ' + debug.route);
-    if (debug.product) debugLines.push('产品: ' + debug.product);
-    if (debug.resolved_question) debugLines.push('上下文补全: ' + debug.resolved_question);
-    if (debug.expanded_query) debugLines.push('查询扩展: ' + debug.expanded_query);
-    if (debug.context_resolved !== undefined) debugLines.push('上下文解析: ' + debug.context_resolved);
-    if (debug.history_summary) debugLines.push('历史摘要: ' + debug.history_summary);
-    if (debug.history_pairs_count !== undefined) debugLines.push('历史对数: ' + debug.history_pairs_count);
-    if (debug.latency_ms !== undefined) debugLines.push('总延迟: ' + debug.latency_ms + 'ms');
-    content.textContent = debugLines.join('\n') || JSON.stringify(debug, null, 2);
+
+    // Build tab structure
+    const tabDefs = [
+      { id: 'query', label: '查询链路', render: renderDebugQuery },
+      { id: 'rewrite', label: '改写详情', render: renderDebugRewrite },
+      { id: 'context', label: '上下文', render: renderDebugContext },
+      { id: 'perf', label: '性能', render: renderDebugPerf },
+      { id: 'raw', label: '原始JSON', render: renderDebugRaw },
+    ];
+
+    const tabBar = document.createElement('div');
+    tabBar.className = 'debug-tabs';
+    const panels = [];
+
+    tabDefs.forEach((td, i) => {
+      const tab = document.createElement('button');
+      tab.className = 'debug-tab' + (i === 0 ? ' active' : '');
+      tab.textContent = td.label;
+      tab.onclick = () => {
+        tabBar.querySelectorAll('.debug-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        panels.forEach((p, j) => p.classList.toggle('active', j === i));
+      };
+      tabBar.appendChild(tab);
+
+      const panel = document.createElement('div');
+      panel.className = 'debug-tab-content' + (i === 0 ? ' active' : '');
+      panel.innerHTML = td.render(debug);
+      panels.push(panel);
+    });
+
+    content.appendChild(tabBar);
+    panels.forEach(p => content.appendChild(p));
+
+    // Action bar
+    const actions = document.createElement('div');
+    actions.className = 'debug-actions';
+    const copyJsonBtn = document.createElement('button');
+    copyJsonBtn.className = 'debug-action-btn';
+    copyJsonBtn.textContent = '复制 JSON';
+    copyJsonBtn.onclick = () => {
+      const json = JSON.stringify(debug, null, 2);
+      navigator.clipboard.writeText(json).then(() => toast('调试 JSON 已复制', 'success'))
+        .catch(() => { const ta = document.createElement('textarea'); ta.value = json;
+          document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+          document.body.removeChild(ta); toast('调试 JSON 已复制', 'success'); });
+    };
+    actions.appendChild(copyJsonBtn);
+
+    if (debug.trace_id) {
+      const copyTid = document.createElement('button');
+      copyTid.className = 'debug-action-btn';
+      copyTid.textContent = '复制 Trace ID';
+      copyTid.onclick = () => {
+        navigator.clipboard.writeText(debug.trace_id).then(() => toast('Trace ID 已复制', 'success'))
+          .catch(() => toast('复制失败', 'error'));
+      };
+      actions.appendChild(copyTid);
+    }
+
+    content.appendChild(actions);
     details.appendChild(content);
     bubble.appendChild(details);
   }
@@ -799,6 +989,18 @@ function setStatus(state) {
     text.textContent = '连接异常';
   }
 }
+
+// ===== Toggle all debug panels =====
+let _allDebugOpen = false;
+function toggleAllDebug() {
+  _allDebugOpen = !_allDebugOpen;
+  document.querySelectorAll('.debug-toggle').forEach(d => { d.open = _allDebugOpen; });
+  toast(_allDebugOpen ? '已展开全部调试信息' : '已折叠全部调试信息', 'info');
+}
+// Show/hide debug expand button when debug setting changes
+$('setDebug').addEventListener('change', function() {
+  $('debugExpandBtn').style.display = this.checked ? '' : 'none';
+});
 
 // ===== Health check =====
 async function checkHealth() {

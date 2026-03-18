@@ -438,17 +438,36 @@ def ask(request: Request, req: AskRequest):
         media = [MediaItem(**m) for m in find_media(resolved_q, product_id=product_id, route=route)]
         debug = None
         if req.debug:
+            from rag_answer import get_last_method
+            # 查询链路信息
             debug = {
                 "trace_id": _tid,
                 "question": question,
                 "resolved_question": resolved_q if rw["context_resolved"] else None,
+                "search_query": rw.get("search_query", ""),
                 "mode": req.mode,
                 "route": route,
                 "product": product_id,
+                "method": get_last_method() or None,
                 "expanded_query": rw["expanded"],
                 "context_resolved": rw["context_resolved"],
+                # 查询改写详情
+                "llm_rewritten": rw.get("llm_rewritten") or None,
+                "detected_routes": rw.get("detected_routes", []),
+                "sub_questions": rw.get("sub_questions", []),
+                "products": rw.get("products", []),
+                "projects": rw.get("projects", []),
+                "times": rw.get("times", []),
+                "symptoms": rw.get("symptoms", []),
+                # 特殊路径标记
+                "is_chitchat": rw.get("is_chitchat", False),
+                "is_offtopic": rw.get("is_offtopic", False),
+                "needs_clarification": rw.get("needs_clarification", False),
+                # 历史上下文
                 "history_summary": rw.get("history_summary") or None,
                 "history_pairs_count": len(rw.get("history_pairs", [])),
+                "last_user_q": rw.get("last_user_q") or None,
+                # 性能
                 "latency_ms": latency_ms,
             }
         # 消歧引导：当查询模糊时，在回答同时提供候选选项

@@ -1605,6 +1605,11 @@ def get_last_route_product():
             getattr(_thread_local, "product", ""))
 
 
+def get_last_method():
+    """返回当前线程最近一次 answer_one 使用的回答方法"""
+    return getattr(_thread_local, "method", "")
+
+
 # ===== 知识缺口日志 =====
 _GAP_LOG = Path(__file__).resolve().parent / "logs" / "knowledge_gap.jsonl"
 
@@ -1750,6 +1755,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     route = route_override or detect_route(question)
     _thread_local.route = route
     _thread_local.product = product
+    _thread_local.method = ""
     if rewrite is None:
         rewrite = rewrite_query(question)
 
@@ -1855,6 +1861,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
         faq_answer = _try_faq_fast_path(hits, question, route, rewrite, _log_meta,
                                          _q_bigrams=_q_bigrams)
         if faq_answer:
+            _thread_local.method = "faq_fast_path"
             return faq_answer
 
     # ---- 策略1: LLM RAG（优先）——检索结果作为 context 让 LLM 生成答案 ----
@@ -1873,6 +1880,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
                        matched_sources=build_evidence(hits), hit=True,
                        meta={**_log_meta, "method": "llm_material_direct"})
+                _thread_local.method = "llm_material_direct"
                 return llm_answer
 
     if hits and USE_OPENAI:
@@ -1887,6 +1895,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 log_qa(question, llm_answer, rewritten_query=rewrite["expanded"],
                        matched_sources=build_evidence(hits), hit=True,
                        meta={**_log_meta, "method": "llm_rag"})
+                _thread_local.method = "llm_rag"
                 return llm_answer
 
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
@@ -1923,6 +1932,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                     log_qa(question, llm_fallback, rewritten_query=rewrite["expanded"],
                            matched_sources=build_evidence(hits), hit=False,
                            meta={**_log_meta, "method": method})
+                    _thread_local.method = method
                     return llm_fallback
 
             # 无 LLM 或 LLM 兜底失败 → 静态兜底
@@ -1937,6 +1947,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=evidence, hit=False,
                    meta={**_log_meta, "method": method})
+            _thread_local.method = method
             return text
 
     evidence = build_evidence(hits)
@@ -1956,6 +1967,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
     log_qa(question, text, rewritten_query=rewrite["expanded"],
            matched_sources=evidence, hit=True,
            meta={**_log_meta, "method": "rule_extract"})
+    _thread_local.method = "rule_extract"
     return text
 
 
