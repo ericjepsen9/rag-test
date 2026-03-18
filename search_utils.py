@@ -634,6 +634,19 @@ _CACHE_MAX_SIZE = CACHE_MAX_PRODUCTS
 _bm25_cache: OrderedDict = OrderedDict()
 
 
+def invalidate_bm25_cache(product: str = "") -> int:
+    """清除 BM25 语料缓存。指定 product 时清除该产品的缓存，否则清除全部。
+    供索引重建后调用，避免使用陈旧的 DF/avgDL 数据。"""
+    if not product:
+        count = len(_bm25_cache)
+        _bm25_cache.clear()
+        return count
+    # 按 product 前缀清除（缓存 key 包含 docs 哈希，无法精确匹配，清除全部更安全）
+    count = len(_bm25_cache)
+    _bm25_cache.clear()
+    return count
+
+
 def _cache_put(cache, key: Any, value: Any, max_size: int = 0) -> None:
     """写入缓存，LRU 淘汰。OrderedDict 时使用 move_to_end/popitem(last=False)，
     普通 dict 时回退到 next(iter()) 淘汰。"""

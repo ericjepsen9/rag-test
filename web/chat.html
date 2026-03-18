@@ -584,9 +584,9 @@ function addMessage(text, role, opts = {}) {
       chip.onclick = () => {
         $('questionInput').value = opt.query;
         autoResize($('questionInput'));
-        // Remove clarification chips after selection
-        group.remove();
-        ask();
+        // 先隐藏芯片，ask 成功后再移除；失败时恢复显示
+        group.style.display = 'none';
+        ask().catch(() => { group.style.display = ''; });
       };
       chips.appendChild(chip);
     }
@@ -597,8 +597,8 @@ function addMessage(text, role, opts = {}) {
       fb.onclick = () => {
         $('questionInput').value = clarification.fallback_option.query;
         autoResize($('questionInput'));
-        group.remove();
-        ask();
+        group.style.display = 'none';
+        ask().catch(() => { group.style.display = ''; });
       };
       chips.appendChild(fb);
     }

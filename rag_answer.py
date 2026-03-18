@@ -163,9 +163,15 @@ _CLINICAL_PRIORITY_KWS = {
 
 
 def invalidate_store_cache(product: str) -> None:
-    """线程安全地清除指定产品的索引缓存，供 rebuild 后调用"""
+    """线程安全地清除指定产品的索引/BM25缓存，供 rebuild 后调用"""
     with _store_lock:
         _store_cache.pop(product, None)
+    # 同时清除 BM25 语料缓存，避免使用陈旧的 DF/avgDL 数据
+    try:
+        from search_utils import invalidate_bm25_cache
+        invalidate_bm25_cache(product)
+    except Exception:
+        pass
 
 
 _faiss_lock = threading.Lock()
@@ -1604,9 +1610,10 @@ _GAP_LOG = Path(__file__).resolve().parent / "logs" / "knowledge_gap.jsonl"
 
 
 def _log_knowledge_gap(question: str, route: str, rewrite: dict,
-                       hits: list, log_meta: dict) -> None:
+                       hits: list, log_meta: dict,
+                       threshold: float = 0.0, pre_filter_count: int = 0) -> None:
     """记录知识库未覆盖的查询，便于定期分析和补充知识。
-    与 miss_log 不同，这里额外记录路由、扩展查询、最高分等诊断信息。"""
+    与 miss_log 不同，这里额外记录路由、扩展查询、最高分、阈值等诊断信息。"""
     from rag_logger import _append_jsonl, _ensure_dir
     top_score = max((h.get("hybrid_score") or h.get("score", 0.0) for h in hits), default=0.0)
     top_text = (hits[0].get("text", "")[:100] if hits else "")
@@ -1615,7 +1622,9 @@ def _log_knowledge_gap(question: str, route: str, rewrite: dict,
         "expanded_query": rewrite.get("expanded", ""),
         "route": route,
         "hit_count": len(hits),
+        "pre_filter_count": pre_filter_count,  # 阈值过滤前的命中数
         "top_score": round(top_score, 3),
+        "threshold": round(threshold, 3),       # 实际使用的过滤阈值
         "top_snippet": top_text,
         "product": log_meta.get("product", ""),
     }
@@ -1832,6 +1841,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
             ratio=DYNAMIC_THRESHOLD_RATIO, floor_ratio=DYNAMIC_THRESHOLD_FLOOR_RATIO)
     else:
         effective_threshold = route_threshold
+    _pre_filter_count = len(hits)
     hits = [h for h in hits if (h.get("hybrid_score") or h.get("score", 0.0)) >= effective_threshold]
 
     # 预计算问题 bigram（FAQ 快速路径和 FAQ 补充共用，避免重复归一化+切分）
@@ -1908,7 +1918,8 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 llm_fallback = _llm_fallback_answer(question, route, hits)
                 if llm_fallback:
                     method = "llm_fallback"
-                    _log_knowledge_gap(question, route, rewrite, hits, _log_meta)
+                    _log_knowledge_gap(question, route, rewrite, hits, _log_meta,
+                                       threshold=effective_threshold, pre_filter_count=_pre_filter_count)
                     log_qa(question, llm_fallback, rewritten_query=rewrite["expanded"],
                            matched_sources=build_evidence(hits), hit=False,
                            meta={**_log_meta, "method": method})
