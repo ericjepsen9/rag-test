@@ -1240,6 +1240,11 @@ def admin_knowledge_delete(product: str, filename: str):
     if not fpath.resolve().is_relative_to(KNOWLEDGE_DIR.resolve()):
         raise HTTPException(status_code=400, detail="非法路径")
     fpath.unlink()
+    # 文件删除后清除相关缓存，避免搜索返回已删除文件的内容
+    invalidate_store_cache(product)
+    from search_utils import invalidate_bm25_cache
+    invalidate_bm25_cache(product)
+    invalidate_media_cache(product)
     return {"ok": True, "deleted": filename}
 
 
@@ -1275,7 +1280,11 @@ def admin_delete_product(product: str):
     if store_dir.exists():
         shutil.rmtree(store_dir)
     invalidate_store_cache(product)
+    from search_utils import invalidate_bm25_cache
+    invalidate_bm25_cache(product)
     invalidate_media_cache(product)
+    with _health_lock:
+        _health_cache = {}
     return {"ok": True, "deleted": product}
 
 
@@ -1961,7 +1970,8 @@ class CommitKnowledgeRequest(BaseModel):
 
 
 @app.post("/admin/import_knowledge/refine")
-def admin_import_knowledge_refine(req: RefineKnowledgeRequest):
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_import_knowledge_refine(request: Request, req: RefineKnowledgeRequest):
     """根据用户反馈修订知识库内容（LLM 修订）。"""
     from import_knowledge import (
         _ENTITY_TYPES, _get_openai_client, refine_knowledge,
@@ -2048,7 +2058,8 @@ def admin_import_knowledge_refine(req: RefineKnowledgeRequest):
 
 
 @app.post("/admin/import_knowledge/commit")
-def admin_import_knowledge_commit(req: CommitKnowledgeRequest):
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_import_knowledge_commit(request: Request, req: CommitKnowledgeRequest):
     """将审阅确认的内容正式写入知识库文件并建索引。"""
     from import_knowledge import (
         _ENTITY_TYPES, _write_knowledge_files,
@@ -2092,14 +2103,18 @@ def admin_import_knowledge_commit(req: CommitKnowledgeRequest):
         built_index = False
         if req.build:
             try:
+                from search_utils import invalidate_bm25_cache
                 if entity_type == "product":
                     from build_faiss import build_for_product
                     build_for_product(entity_id)
                     invalidate_store_cache(entity_id)
+                    invalidate_bm25_cache(entity_id)
+                    invalidate_media_cache(entity_id)
                 else:
                     from build_faiss import build_shared
                     build_shared()
                     invalidate_store_cache("_shared")
+                    invalidate_bm25_cache("_shared")
                 with _health_lock:
                     global _health_cache
                     _health_cache = {}
@@ -2200,7 +2215,7 @@ async def admin_import_knowledge_file(request: "Request"):
             build=build,
             dry_run=dry_run,
         )
-        return admin_import_knowledge(import_req)
+        return admin_import_knowledge(request, import_req)
     finally:
         await form.close()
 
