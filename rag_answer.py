@@ -960,7 +960,44 @@ _BASIC_KEYWORDS = ("产品", "品牌", "备案", "规格", "形态", "保质期"
                    "ml", "瓶", "液体", "常温")
 
 
-def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: str) -> List[str]:
+def _extract_subsection(block: str, question: str) -> str:
+    """从大章节中提取与问题相关的子节。
+    anatomy 的子节格式如 '1）额部（额头）'，indication 如 '1）皮肤松弛'，
+    script 如 '1）"打水光/微针疼不疼？"'。
+    找到问题关键词匹配的子节标题后，提取到下一个同级子节为止。"""
+    if not question or not block:
+        return ""
+    import re
+    # 子节标题模式：数字+）开头
+    subsection_re = re.compile(r'(?:^|\n)(\d+）)')
+    splits = list(subsection_re.finditer(block))
+    if len(splits) < 2:
+        return ""  # 没有子节结构，返回空让调用方用全文
+
+    q_lower = question.lower()
+    best_idx = -1
+    best_score = 0
+    for i, m in enumerate(splits):
+        end_pos = splits[i + 1].start() if i + 1 < len(splits) else len(block)
+        header = block[m.start():end_pos][:80].lower()
+        # 计算问题关键词与子节标题的匹配度
+        score = 0
+        for char in q_lower:
+            if '\u4e00' <= char <= '\u9fff' and char in header:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_idx = i
+
+    if best_idx >= 0 and best_score >= 2:
+        start = splits[best_idx].start()
+        end = splits[best_idx + 1].start() if best_idx + 1 < len(splits) else len(block)
+        return block[start:end].strip()
+    return ""
+
+
+def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: str,
+                               question: str = "") -> List[str]:
     rule = SECTION_RULES.get(route)
     if not rule:
         return []
@@ -969,6 +1006,12 @@ def parse_bullets_from_section(main_text: str, faq_text: str, route: str, mode: 
         block = section_block(faq_text, rule["titles"], [])
     if not block:
         return []
+
+    # 共享路由的大章节：按问题定位到具体子节（如苹果肌、色斑等）
+    if question and route in _SHARED_ROUTE_DIR:
+        subsection = _extract_subsection(block, question)
+        if subsection:
+            block = subsection
 
     lines = [ln for ln in normalize_lines(block) if not is_faq_line(ln)]
     items = []
@@ -1187,7 +1230,28 @@ def parse_answer(route: str, product: str, mode: str,
         main_text = _read_shared_knowledge(shared_dir_name, question=question)
         faq_text = ""
     elif not product:
-        # 非共享路由 + 无产品 → 无法从产品知识库提取，直接返回空
+        # 非共享路由 + 无产品：尝试材料知识库（"胶原蛋白是什么"等通用问题）
+        if route == "ingredient" and question:
+            material_id = _detect_material(question)
+            if material_id:
+                mat_text = _read_material_knowledge(material_id)
+                if mat_text:
+                    lines = [ln for ln in normalize_lines(mat_text) if not is_faq_line(ln)]
+                    items = []
+                    for ln in lines:
+                        clean = ln.lstrip("-").strip()
+                        if clean and _accept_line(clean, route):
+                            items.append(clean)
+                    items = uniq(items)
+                    limit = 12 if mode == "brief" else 32
+                    return items[:limit]
+        # 无产品的 risk/aftercare 问题：降级到 complications 共享知识
+        if route in ("risk", "aftercare") and question:
+            main_text = _read_shared_knowledge("complications", question=question)
+            if main_text:
+                faq_text = ""
+                return parse_bullets_from_section(main_text, faq_text, "complication",
+                                                  mode, question=question)
         return []
     elif route == "ingredient" and question:
         # 材料专属路由：当用户问的是某个具体材料（如"玻尿酸"），
@@ -1218,7 +1282,8 @@ def parse_answer(route: str, product: str, mode: str,
 
     if route == "anti_fake":
         return parse_anti_fake(main_text, faq_text, mode)
-    return parse_bullets_from_section(main_text, faq_text, route, mode)
+    return parse_bullets_from_section(main_text, faq_text, route, mode,
+                                      question=question)
 
 
 from search_utils import expand_synonyms as _expand_synonyms
