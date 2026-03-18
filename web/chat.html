@@ -2,8 +2,15 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RAG 智能问答</title>
+  <!-- PWA -->
+  <link rel="manifest" href="/web/manifest.json">
+  <meta name="theme-color" content="#4f6ef7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="RAG问答">
+  <link rel="apple-touch-icon" href="/web/icon-192.png">
   <style>
     :root {
       --primary: #4f6ef7; --primary-dark: #3b5de7; --primary-light: #e8ecff;
@@ -263,6 +270,38 @@
     .mode-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px;
                   background: var(--primary-light); color: var(--primary); font-weight: 500; }
 
+    /* Network offline banner */
+    .offline-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 500;
+                      background: var(--danger); color: #fff; text-align: center;
+                      padding: 6px 16px; font-size: 12px; font-weight: 500;
+                      transform: translateY(-100%); transition: transform .3s ease;
+                      padding-top: calc(6px + env(safe-area-inset-top, 0px)); }
+    .offline-banner.show { transform: translateY(0); }
+
+    /* PWA install banner */
+    .install-banner { position: fixed; bottom: 0; left: 0; right: 0; z-index: 500;
+                      background: var(--card); border-top: 1px solid var(--border);
+                      padding: 12px 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+                      display: flex; align-items: center; gap: 12px;
+                      box-shadow: 0 -4px 16px rgba(0,0,0,.1);
+                      transform: translateY(100%); transition: transform .3s ease; }
+    .install-banner.show { transform: translateY(0); }
+    .install-banner-icon { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; }
+    .install-banner-text { flex: 1; }
+    .install-banner-text h4 { font-size: 13px; margin-bottom: 2px; }
+    .install-banner-text p { font-size: 11px; color: var(--text-secondary); }
+    .install-banner-btn { padding: 8px 16px; background: var(--primary); color: #fff;
+                          border: none; border-radius: 8px; font-size: 13px; cursor: pointer;
+                          font-weight: 500; white-space: nowrap; }
+    .install-banner-close { background: none; border: none; font-size: 18px;
+                            color: var(--text-light); cursor: pointer; padding: 4px; }
+
+    /* ===== iOS safe area ===== */
+    @supports (padding: env(safe-area-inset-top)) {
+      .header { padding-top: env(safe-area-inset-top); height: calc(var(--header-h) + env(safe-area-inset-top)); }
+      .input-area { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+    }
+
     /* ===== Responsive ===== */
     @media (max-width: 768px) {
       .app { max-width: 100%; }
@@ -416,6 +455,20 @@
 <!-- Lightbox -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
   <img id="lightboxImg" src="" alt="">
+</div>
+
+<!-- Offline banner -->
+<div class="offline-banner" id="offlineBanner">网络已断开，部分功能不可用</div>
+
+<!-- PWA install banner -->
+<div class="install-banner" id="installBanner">
+  <img class="install-banner-icon" src="/web/icon-192.png" alt="icon">
+  <div class="install-banner-text">
+    <h4>安装 RAG 问答</h4>
+    <p>添加到主屏幕，随时快速访问</p>
+  </div>
+  <button class="install-banner-btn" id="installBtn" onclick="installPWA()">安装</button>
+  <button class="install-banner-close" onclick="dismissInstall()">&times;</button>
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
@@ -1110,6 +1163,56 @@ $('questionInput').addEventListener('keydown', e => {
   }
 });
 
+// ===== PWA Service Worker registration =====
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    .catch(() => {});  // SW is optional, don't block on failure
+}
+
+// ===== PWA Install prompt =====
+let _deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  _deferredInstall = e;
+  // Don't show if user previously dismissed
+  if (localStorage.getItem('pwa_install_dismissed')) return;
+  setTimeout(() => $('installBanner').classList.add('show'), 3000);
+});
+function installPWA() {
+  if (!_deferredInstall) return;
+  _deferredInstall.prompt();
+  _deferredInstall.userChoice.then(r => {
+    if (r.outcome === 'accepted') toast('应用已安装', 'success');
+    _deferredInstall = null;
+    $('installBanner').classList.remove('show');
+  });
+}
+function dismissInstall() {
+  $('installBanner').classList.remove('show');
+  localStorage.setItem('pwa_install_dismissed', '1');
+}
+// Hide install banner if already in standalone mode
+if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
+  $('installBanner').classList.remove('show');
+}
+
+// ===== Network online/offline sensing =====
+function updateOnlineStatus() {
+  const offline = !navigator.onLine;
+  $('offlineBanner').classList.toggle('show', offline);
+  if (offline) {
+    setStatus('error');
+    $('statusText').textContent = '离线';
+  } else {
+    // Re-check health when coming back online
+    fetch('/health').then(r => r.json()).then(d => {
+      setStatus(d.status === 'ok' ? 'online' : 'error');
+    }).catch(() => setStatus('error'));
+  }
+}
+window.addEventListener('online', updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+
 // ===== Init =====
 // Restore saved settings
 loadSettings();
@@ -1118,6 +1221,9 @@ loadSettings();
 fetch('/health').then(r => r.json()).then(d => {
   setStatus(d.status === 'ok' ? 'online' : 'error');
 }).catch(() => setStatus('error'));
+
+// Check initial online status
+if (!navigator.onLine) updateOnlineStatus();
 
 // Focus input
 $('questionInput').focus();

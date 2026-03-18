@@ -11,6 +11,7 @@ from typing import Optional, Literal, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -345,6 +346,17 @@ def chat_page():
         raise HTTPException(status_code=404, detail="chat.html 不存在")
     return FileResponse(CHAT_PAGE, media_type="text/html",
                         headers={"Cache-Control": "public, max-age=300"})
+
+
+@app.get("/sw.js")
+def service_worker():
+    """Service Worker 必须从根路径提供，以获得全站作用域"""
+    sw_path = BASE_DIR / "web" / "sw.js"
+    if not sw_path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(sw_path, media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache",
+                                 "Service-Worker-Allowed": "/"})
 
 
 def _response_cache_get(key: str):
@@ -2182,3 +2194,9 @@ async def admin_import_knowledge_file(request: "Request"):
         return admin_import_knowledge(import_req)
     finally:
         await form.close()
+
+
+# ===== 静态文件（必须放在所有路由之后，避免拦截 API 路径）=====
+_web_dir = BASE_DIR / "web"
+if _web_dir.is_dir():
+    app.mount("/web", StaticFiles(directory=str(_web_dir)), name="web_static")
