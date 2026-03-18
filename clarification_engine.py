@@ -146,6 +146,24 @@ _CLARIFICATION_RULES: Dict[str, List[Dict[str, str]]] = {
         {"label": "禁忌人群", "query": "哪些人不能做 禁忌", "route": "contraindication"},
     ],
 
+    # === 单字高歧义术语 ===
+    "红": [
+        {"label": "术后红肿（正常反应）", "query": "术后红肿正常吗 多久消退", "route": "aftercare"},
+        {"label": "皮肤泛红/红血丝", "query": "注射后皮肤泛红红血丝 原因处理", "route": "complication"},
+    ],
+    "痒": [
+        {"label": "术后瘙痒（正常反应）", "query": "术后瘙痒正常吗 多久消退", "route": "aftercare"},
+        {"label": "过敏性瘙痒", "query": "注射后过敏瘙痒 处理方法", "route": "complication"},
+    ],
+    "干": [
+        {"label": "术后皮肤干燥护理", "query": "术后皮肤干燥怎么护理", "route": "aftercare"},
+        {"label": "补水保湿方案", "query": "注射后补水保湿 护理方案", "route": "aftercare"},
+    ],
+    "贵": [
+        {"label": "产品价格及性价比", "query": "产品价格 性价比 一次多少钱", "route": "basic"},
+        {"label": "不同产品价格对比", "query": "不同产品价格对比 怎么选择", "route": "comparison"},
+    ],
+
     # === 搭配类模糊查询 ===
     "搭配": [
         {"label": "可搭配的项目", "query": "可以和什么项目搭配 联合方案", "route": "combo"},
@@ -226,9 +244,14 @@ def should_clarify(
     q = question.strip()
     q_len = len(q)
 
-    # 太短（1字）或太长（>15字）不触发
-    if q_len < 2 or q_len > _MAX_QUERY_LEN_FOR_CLARIFY:
+    # 太长（>15字）不触发
+    if q_len > _MAX_QUERY_LEN_FOR_CLARIFY:
         return False
+
+    # 单字查询：只有消歧规则中有匹配时才触发（避免无意义的单字消歧）
+    if q_len == 1:
+        merged = _get_merged_rules()
+        return q.lower() in merged
 
     # 已有明确意图表达 → 不需要消歧
     if _CLEAR_INTENT_PATTERNS.search(q):

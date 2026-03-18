@@ -590,6 +590,13 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         inherited_rt = history_ctx["route"]
         expanded_terms.extend(_ROUTE_EXPANSION.get(inherited_rt, []))
 
+    # 短查询增强：1-2 字查询缺乏上下文时，主动利用同义词扩展补充检索词
+    if len(q) <= 2 and not products and not projects and not context_resolved:
+        from search_utils import expand_synonyms
+        short_expansions = expand_synonyms(q)
+        if short_expansions:
+            expanded_terms.extend(list(short_expansions)[:5])
+
     sub_questions = split_multi_question(q)
     expanded_query = " ".join(uniq([search_q] + expanded_terms))
 
