@@ -1302,7 +1302,7 @@ async function loadUploadProducts() {
     const sel = document.getElementById('upload-product');
     sel.innerHTML = '<option value="">-- 选择已有产品 --</option>'
       + (j.products||[]).map(p => `<option value="${esc(p.product)}">${esc(p.product)}</option>`).join('');
-  } catch(e) {}
+  } catch(e) { toast('上传产品列表加载失败', 'error'); }
 }
 
 function handleFileSelect(e) {
@@ -1416,7 +1416,7 @@ async function createTemplate() {
     toast(`模板创建成功：${pid}`, 'success');
     document.getElementById('template-product').value = '';
     document.getElementById('template-cn-name').value = '';
-  } catch(e) {}
+  } catch(e) { toast('模板创建失败', 'error'); }
 }
 
 // ===== Index =====
@@ -1628,7 +1628,7 @@ async function saveModelConfig() {
     toast(`${purposeLabel} LLM 配置已更新`, 'success');
     document.getElementById('model-api-key').value = '';
     loadModelConfig();
-  } catch(e) {}
+  } catch(e) { toast('LLM 配置保存失败', 'error'); }
 }
 
 async function testModelConnection() {
@@ -1663,7 +1663,7 @@ async function loadConfig() {
     const assigned = new Set(Object.values(CONFIG_GROUPS).flat());
     CONFIG_GROUPS.advanced = Object.keys(configData).filter(k => !assigned.has(k));
     renderConfigTab();
-  } catch(e) {}
+  } catch(e) { toast('参数配置加载失败', 'error'); }
 }
 
 function switchConfigTab(tab) {
@@ -1939,7 +1939,7 @@ async function approveSyn(orig) {
     await api('/admin/synonyms/learned/approve?original='+encodeURIComponent(orig),{method:'POST'});
     toast('已审核通过', 'success');
     loadSynonyms();
-  } catch(e) {}
+  } catch(e) { toast('审核操作失败', 'error'); }
 }
 
 async function deleteSyn(orig) {
@@ -1948,7 +1948,7 @@ async function deleteSyn(orig) {
     await api('/admin/synonyms/learned?original='+encodeURIComponent(orig),{method:'DELETE'});
     toast('已删除', 'success');
     loadSynonyms();
-  } catch(e) {}
+  } catch(e) { toast('删除操作失败', 'error'); }
 }
 
 // --- 批量选择 ---
@@ -1998,7 +1998,7 @@ async function batchApproveSyn() {
     });
     toast(`已批量审核 ${r.approved_count||0} 条`, 'success');
     loadSynonyms();
-  } catch(e) {}
+  } catch(e) { toast('批量审核失败', 'error'); }
 }
 
 async function batchDeleteSyn() {
@@ -2012,7 +2012,7 @@ async function batchDeleteSyn() {
     });
     toast(`已批量删除 ${r.deleted_count||0} 条`, 'success');
     loadSynonyms();
-  } catch(e) {}
+  } catch(e) { toast('批量删除失败', 'error'); }
 }
 
 // --- 运行时刷新 & 导出 ---
@@ -2153,7 +2153,7 @@ async function deleteEffSyn(original) {
     await api('/admin/keywords/synonym/override?original='+encodeURIComponent(original),{method:'DELETE'});
     toast('已删除', 'success');
     loadEffective();
-  } catch(e) {}
+  } catch(e) { toast('删除操作失败', 'error'); }
 }
 
 // ===== 消歧规则管理 =====
@@ -2163,7 +2163,7 @@ async function loadClarifyRules() {
     const j = await api('/admin/keywords/clarification');
     _clarifyData = j.items || [];
     renderClarifyList(_clarifyData);
-  } catch(e) {}
+  } catch(e) { toast('消歧规则加载失败', 'error'); }
 }
 function renderClarifyList(items) {
   const container = document.getElementById('clarify_list');
@@ -2261,7 +2261,7 @@ async function deleteClarifyRule(trigger) {
     await api('/admin/keywords/clarification?trigger='+encodeURIComponent(trigger),{method:'DELETE'});
     toast('已删除', 'success');
     loadClarifyRules();
-  } catch(e) {}
+  } catch(e) { toast('消歧规则删除失败', 'error'); }
 }
 
 // ===== LLM 智能扩充 =====
@@ -2323,7 +2323,7 @@ async function loadLLMExpandLog() {
         <span>生成 <strong>${it.count||0}</strong> 条</span>
       </div>`;
     }).join('');
-  } catch(e) {}
+  } catch(e) { toast('扩充日志加载失败', 'error'); }
 }
 
 // ===== Logs =====
@@ -2365,7 +2365,7 @@ async function loadCurrentLog() {
         ${it.meta ? `<div style="font-size:11px;color:var(--text-secondary)">${esc(JSON.stringify(it.meta).substring(0,200))}</div>` : ''}
       </div>`).join('');
     }
-  } catch(e) {}
+  } catch(e) { toast('日志加载失败', 'error'); }
 }
 
 // ===== Domain / Server Config =====
@@ -2401,7 +2401,7 @@ async function loadDomainPage() {
       urls += `&nbsp;&nbsp;OpenAI 兼容: <code>POST ${proto}://${domain}/v1/chat/completions</code><br>`;
     }
     document.getElementById('access-urls').innerHTML = urls;
-  } catch(e) {}
+  } catch(e) { toast('域名配置加载失败', 'error'); }
 }
 
 function toggleSSLFields() {
@@ -2423,7 +2423,7 @@ async function saveServerConfig() {
     });
     toast('服务器设置已保存（Host/Port 修改需重启生效）', 'success');
     loadDomainPage();
-  } catch(e) {}
+  } catch(e) { toast('服务配置保存失败', 'error'); }
 }
 
 async function saveDomainConfig() {
@@ -2441,7 +2441,7 @@ async function saveDomainConfig() {
     });
     toast('域名配置已保存', 'success');
     loadDomainPage();
-  } catch(e) {}
+  } catch(e) { toast('域名配置保存失败', 'error'); }
 }
 
 async function genNginxConfig() {
@@ -2468,7 +2468,7 @@ async function genNginxConfig() {
       body: JSON.stringify({updates: {nginx_config: j.config}})
     });
     toast('Nginx 配置已生成', 'success');
-  } catch(e) {}
+  } catch(e) { toast('Nginx 配置生成失败', 'error'); }
 }
 
 function copyNginxConfig() {
@@ -2557,7 +2557,7 @@ async function loadServiceStatus() {
     }
     document.getElementById('llm-params').innerHTML = multiHtml;
     loadHealthDetail();
-  } catch(e) {}
+  } catch(e) { toast('服务状态加载失败', 'error'); }
 }
 
 async function embeddingStart() {
@@ -2566,7 +2566,7 @@ async function embeddingStart() {
   try {
     await api('/admin/service/embedding/start', {method:'POST'});
     toast('BGE-M3 模型已加载', 'success');
-  } catch(e) {}
+  } catch(e) { toast('嵌入服务启动失败', 'error'); }
   document.getElementById('btn-emb-start').textContent = '加载模型';
   loadServiceStatus();
 }
@@ -2576,7 +2576,7 @@ async function embeddingStop() {
   try {
     await api('/admin/service/embedding/stop', {method:'POST'});
     toast('BGE-M3 模型已卸载', 'success');
-  } catch(e) {}
+  } catch(e) { toast('嵌入服务停止失败', 'error'); }
   loadServiceStatus();
 }
 
@@ -2592,7 +2592,7 @@ async function llmStart() {
     });
     document.getElementById('llm-api-key').value = '';
     toast('LLM 服务已启动', 'success');
-  } catch(e) {}
+  } catch(e) { toast('LLM 服务启动失败', 'error'); }
   document.getElementById('btn-llm-start').textContent = '启动 LLM';
   loadServiceStatus();
 }
@@ -2602,7 +2602,7 @@ async function llmStop() {
   try {
     await api('/admin/service/llm/stop', {method:'POST'});
     toast('LLM 服务已停止', 'success');
-  } catch(e) {}
+  } catch(e) { toast('LLM 服务停止失败', 'error'); }
   loadServiceStatus();
 }
 
@@ -2648,7 +2648,7 @@ async function loadHealthDetail() {
       html += '</table>';
     }
     document.getElementById('health-detail').innerHTML = html;
-  } catch(e) {}
+  } catch(e) { toast('健康详情加载失败', 'error'); }
 }
 
 // ===== Smart Import =====
