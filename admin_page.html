@@ -1018,7 +1018,6 @@ let currentConfigTab = 'search';
 let configData = {};
 let currentSynTab = 'learned';
 let selectedProvider = '';
-let _skipModelStatusRefresh = false;
 let kbEditingFile = '';
 let kbEditingProduct = '';
 let uploadFiles = [];
@@ -1662,20 +1661,18 @@ function selectProvider(provider) {
   // model_format: LiteLLM proxy support
   const fmtEl = document.getElementById('model-format');
   if (fmtEl) fmtEl.checked = (cfg.model_format === 'litellm');
-  if (!_skipModelStatusRefresh) {
-    document.getElementById('model-test-result').innerHTML = '';
-    // Connection status badge
-    const connEl = document.getElementById('model-connection-status');
-    if (connEl) {
-      if (cfg.provider === provider && cfg.enabled && cfg.client_ready) {
-        connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
-      } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.client_ready) {
-        connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，未验证连接</span>';
-      } else if (cfg.provider === provider && !cfg.enabled) {
-        connEl.innerHTML = '<span class="badge badge-danger" style="font-size:12px;padding:3px 10px">已停用</span>';
-      } else {
-        connEl.innerHTML = '';
-      }
+  document.getElementById('model-test-result').innerHTML = '';
+  // Connection status badge
+  const connEl = document.getElementById('model-connection-status');
+  if (connEl) {
+    if (cfg.provider === provider && cfg.enabled && cfg.client_ready) {
+      connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
+    } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.client_ready) {
+      connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，未验证连接</span>';
+    } else if (cfg.provider === provider && !cfg.enabled) {
+      connEl.innerHTML = '<span class="badge badge-danger" style="font-size:12px;padding:3px 10px">已停用</span>';
+    } else {
+      connEl.innerHTML = '';
     }
   }
 }
@@ -1720,10 +1717,6 @@ async function saveModelConfig() {
     if (connEl) connEl.innerHTML = '<span style="color:var(--primary);font-size:12px">验证连接中...</span>';
     try {
       const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
-      // 刷新配置但跳过状态标签覆盖
-      _skipModelStatusRefresh = true;
-      await loadModelConfig();
-      _skipModelStatusRefresh = false;
       if (r.ok) {
         if (connEl) connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
         document.getElementById('model-test-result').innerHTML =
@@ -1739,14 +1732,15 @@ async function saveModelConfig() {
         toast(`${purposeLabel} LLM 配置已保存，但连接测试失败`, 'warn');
       }
     } catch(te) {
-      _skipModelStatusRefresh = false;
       if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已保存，连接失败</span>';
       document.getElementById('model-test-result').innerHTML =
         `<span class="badge badge-danger">连接测试失败</span>
          <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(te.message)}</span>`;
       toast(`${purposeLabel} LLM 配置已保存，但连接测试失败`, 'warn');
     }
-  } catch(e) { _skipModelStatusRefresh = false; toast('LLM 配置保存失败', 'error'); }
+    // 只刷新底部状态 JSON，不触发 selectProvider 重新渲染
+    refreshModelStatusJson();
+  } catch(e) { toast('LLM 配置保存失败', 'error'); }
 }
 
 async function testModelConnection() {
@@ -1776,10 +1770,6 @@ async function testModelConnection() {
     document.getElementById('model-api-key').value = '';
     // 然后测试连接
     const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
-    // 刷新配置但跳过状态标签覆盖
-    _skipModelStatusRefresh = true;
-    await loadModelConfig();
-    _skipModelStatusRefresh = false;
     if (r.ok) {
       out.innerHTML = `<span class="badge badge-ok">连接成功</span>
         <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
@@ -1790,11 +1780,33 @@ async function testModelConnection() {
         <span style="font-size:12px;color:var(--danger);margin-left:8px">${esc(r.error)}</span>`;
       if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
     }
+    // 只刷新底部状态 JSON，不触发 selectProvider 重新渲染
+    refreshModelStatusJson();
   } catch(e) {
-    _skipModelStatusRefresh = false;
     out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`;
     if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
   }
+}
+
+// 只刷新底部"当前状态"JSON，不触发 selectProvider 重新渲染
+async function refreshModelStatusJson() {
+  try {
+    const j = await api('/admin/llm/configs');
+    _multiLLMCache = j;
+    const configs = j.configs || {};
+    document.getElementById('model-current-status').textContent = JSON.stringify({
+      '对话 LLM': {
+        enabled: configs.chat?.enabled, provider: configs.chat?.provider,
+        model: configs.chat?.model, api_base: configs.chat?.api_base || '(default)',
+        api_key_set: configs.chat?.api_key_set,
+      },
+      '知识库 LLM': {
+        enabled: configs.knowledge?.enabled, provider: configs.knowledge?.provider,
+        model: configs.knowledge?.model, api_base: configs.knowledge?.api_base || '(default)',
+        api_key_set: configs.knowledge?.api_key_set,
+      },
+    }, null, 2);
+  } catch(e) {}
 }
 
 // ===== Search Config =====
