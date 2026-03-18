@@ -899,11 +899,22 @@ def get_llm_status() -> dict:
     import rag_runtime_config as _mod
     try:
         import rag_answer
-        client = getattr(rag_answer, "_openai_client", None)
+        # Check new multi-provider llm_client first, then fall back to legacy singleton
+        client_ready = False
+        try:
+            from llm_client import get_client as _get_multi_client, is_enabled as _is_enabled
+            if _is_enabled("chat") and _get_multi_client("chat") is not None:
+                client_ready = True
+        except ImportError:
+            pass
+        if not client_ready:
+            legacy_client = getattr(rag_answer, "_openai_client", None)
+            if legacy_client is not None:
+                client_ready = True
         checked = getattr(rag_answer, "_openai_client_checked", False)
         return {
             "enabled": _mod.USE_OPENAI,
-            "client_ready": client is not None,
+            "client_ready": client_ready,
             "client_checked": checked,
             "model": _mod.OPENAI_MODEL,
             "api_base": _mod.OPENAI_API_BASE or "",
