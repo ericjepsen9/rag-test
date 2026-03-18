@@ -1049,12 +1049,14 @@ def admin_knowledge_read(product: str, filename: str):
         content = fpath.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         content = fpath.read_text(encoding="utf-8-sig", errors="replace")
+    mtime = fpath.stat().st_mtime
     return {"product": product, "filename": filename, "content": content,
-            "size": len(content)}
+            "size": len(content), "mtime": mtime}
 
 
 class KnowledgeWriteRequest(BaseModel):
     content: str = Field(..., min_length=0, max_length=5_000_000)  # 5MB 上限
+    expected_mtime: Optional[float] = None  # 乐观锁：上次读取时的 mtime
 
 
 @app.put("/admin/knowledge/{product}/{filename}")
@@ -1072,6 +1074,13 @@ def admin_knowledge_write(product: str, filename: str, req: KnowledgeWriteReques
     # 路径遍历防护
     if not fpath.resolve().is_relative_to((KNOWLEDGE_DIR / product).resolve()):
         raise HTTPException(status_code=400, detail="非法路径")
+    # 乐观锁：检测并发编辑冲突
+    if req.expected_mtime is not None and fpath.exists():
+        current_mtime = fpath.stat().st_mtime
+        if abs(current_mtime - req.expected_mtime) > 0.001:
+            raise HTTPException(
+                status_code=409,
+                detail="文件已被其他人修改，请刷新后重试")
     # 原子写入
     tmp = fpath.with_suffix(fpath.suffix + ".tmp")
     try:
@@ -1080,8 +1089,9 @@ def admin_knowledge_write(product: str, filename: str, req: KnowledgeWriteReques
     except Exception as e:
         tmp.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="写入失败，请查看服务器日志")
+    new_mtime = fpath.stat().st_mtime
     return {"ok": True, "product": product, "filename": filename,
-            "size": len(req.content)}
+            "size": len(req.content), "mtime": new_mtime}
 
 
 @app.delete("/admin/knowledge/{product}/{filename}")

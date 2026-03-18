@@ -1171,7 +1171,7 @@ async function loadDashboard() {
         <div class="answer">${esc((it.answer||'').substring(0,150))}</div>
       </div>
     `).join('') || '<p style="color:var(--text-secondary)">暂无日志</p>';
-  } catch(e) { console.error(e); }
+  } catch(e) { console.error(e); toast('仪表盘加载失败', 'error'); }
 }
 
 // ===== Knowledge Base =====
@@ -1183,7 +1183,7 @@ async function loadKBProductList() {
     sel.innerHTML = '<option value="">-- 选择产品 --</option>'
       + (j.products||[]).map(p => `<option value="${esc(p.product)}">${esc(p.product)} (${p.files.length} files)</option>`).join('');
     if (cur) { sel.value = cur; loadKBFiles(); }
-  } catch(e) {}
+  } catch(e) { toast('知识库产品列表加载失败', 'error'); }
 }
 
 async function loadKBFiles() {
@@ -1204,32 +1204,38 @@ async function loadKBFiles() {
         <button class="btn-danger btn-sm" onclick="deleteKBFile('${esc(product)}','${esc(f.name)}')">删除</button>
       </td>
     </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">暂无文件</td></tr>';
-  } catch(e) {}
+  } catch(e) { toast('文件列表加载失败', 'error'); }
 }
 
+let _kbEditMtime = null;  // 记录文件加载时的 mtime，用于并发编辑检测
 async function editKBFile(product, filename) {
   try {
     const j = await api(`/admin/knowledge/${encodeURIComponent(product)}/${encodeURIComponent(filename)}`);
     kbEditingProduct = product;
     kbEditingFile = filename;
+    _kbEditMtime = j.mtime || null;
     document.getElementById('kb-editor').style.display = 'block';
     document.getElementById('kb-editor-title').textContent = `编辑: ${product}/${filename}`;
     document.getElementById('kb-editor-content').value = j.content;
     document.getElementById('kb-editor-hint').textContent = `大小: ${fmtSize(j.size)}`;
-  } catch(e) {}
+  } catch(e) { toast('文件内容加载失败', 'error'); }
 }
 
 async function saveKBFile() {
   if (!kbEditingProduct || !kbEditingFile) return;
   const content = document.getElementById('kb-editor-content').value;
   try {
-    await api(`/admin/knowledge/${encodeURIComponent(kbEditingProduct)}/${encodeURIComponent(kbEditingFile)}`, {
+    const result = await api(`/admin/knowledge/${encodeURIComponent(kbEditingProduct)}/${encodeURIComponent(kbEditingFile)}`, {
       method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({content}),
+      body: JSON.stringify({content, expected_mtime: _kbEditMtime}),
     });
+    _kbEditMtime = result.mtime || null;  // 更新 mtime 以支持连续编辑
     toast('文件保存成功', 'success');
     loadKBFiles();
-  } catch(e) {}
+  } catch(e) {
+    const msg = (e && e.message && e.message.includes('409')) ? '文件已被其他人修改，请刷新后重试' : '文件保存失败';
+    toast(msg, 'error');
+  }
 }
 
 function closeEditor() {
@@ -1243,7 +1249,7 @@ async function deleteKBFile(product, filename) {
     await api(`/admin/knowledge/${encodeURIComponent(product)}/${encodeURIComponent(filename)}`, {method:'DELETE'});
     toast('文件已删除', 'success');
     loadKBFiles();
-  } catch(e) {}
+  } catch(e) { toast('文件删除失败', 'error'); }
 }
 
 async function promptCreateProduct() {
@@ -1256,7 +1262,7 @@ async function promptCreateProduct() {
     });
     toast('产品创建成功', 'success');
     loadKBProductList();
-  } catch(e) {}
+  } catch(e) { toast('产品创建失败', 'error'); }
 }
 
 async function deleteCurrentProduct() {
@@ -1271,7 +1277,7 @@ async function deleteCurrentProduct() {
     document.getElementById('kb-file-list').style.display = 'none';
     document.getElementById('btn-delete-product').style.display = 'none';
     loadKBProductList();
-  } catch(e) {}
+  } catch(e) { toast('产品删除失败', 'error'); }
 }
 
 function createNewFile() {
@@ -1433,7 +1439,7 @@ async function loadIndexStatus() {
       <td>-</td>
       <td><button class="btn-primary btn-sm" onclick="rebuildShared()">重建</button></td>
     </tr>`;
-  } catch(e) {}
+  } catch(e) { toast('索引状态加载失败', 'error'); }
 }
 
 async function rebuildOne(product) {
@@ -1668,6 +1674,10 @@ function switchConfigTab(tab) {
 
 function renderConfigTab() {
   const keys = CONFIG_GROUPS[currentConfigTab] || [];
+  if (keys.length === 0) {
+    document.getElementById('config-content').innerHTML = '<p style="color:var(--text-secondary);padding:16px">此分组暂无配置项</p>';
+    return;
+  }
   const html = '<div class="config-grid">' + keys.map(k => {
     const c = configData[k];
     if (!c) return '';
@@ -1721,7 +1731,7 @@ async function saveAllConfig() {
     const n = Object.keys(r.changed||{}).length;
     toast(n ? `${n} 个参数已更新` : '无变化', n ? 'success' : 'info');
     loadConfig();
-  } catch(e) {}
+  } catch(e) { toast('配置保存失败', 'error'); }
 }
 
 // ===== Synonyms =====
@@ -1781,7 +1791,7 @@ async function loadSynonyms() {
     }
     renderLearnedTable(_synLearnedData);
     renderStaticTable(j.static || []);
-  } catch(e) {}
+  } catch(e) { toast('同义词数据加载失败', 'error'); }
 }
 
 function renderLearnedTable(items) {
@@ -2042,7 +2052,7 @@ async function loadEffective() {
     const j = await api('/admin/keywords/effective');
     _effectiveData = j.items || [];
     renderEffTable(_effectiveData);
-  } catch(e) {}
+  } catch(e) { toast('同义词生效表加载失败', 'error'); }
 }
 function renderEffTable(items) {
   const tbody = document.getElementById('effective_tbody');
@@ -2167,7 +2177,7 @@ function editClarifyRule(trigger) {
   const rule = _clarifyData.find(r => r.trigger === trigger);
   if (!rule) return;
   document.getElementById('clarify-form-trigger').value = trigger;
-  document.getElementById('clarify-form-trigger').disabled = false;
+  document.getElementById('clarify-form-trigger').disabled = true;  // 编辑时禁止修改触发词
   const optsDiv = document.getElementById('clarify-form-options');
   optsDiv.innerHTML = '<label style="font-size:12px;color:#6b7280;display:block;margin-bottom:6px">候选选项（2-4个）</label>';
   for (const opt of (rule.options||[])) {
@@ -2431,8 +2441,8 @@ function copyNginxConfig() {
     navigator.clipboard.writeText(ta.value).then(() => toast('已复制到剪贴板', 'success'), () => toast('复制失败', 'error'));
   } else {
     ta.select();
-    document.execCommand('copy');
-    toast('已复制到剪贴板', 'success');
+    const ok = document.execCommand('copy');
+    toast(ok ? '已复制到剪贴板' : '复制失败，请手动选择复制', ok ? 'success' : 'error');
   }
 }
 
