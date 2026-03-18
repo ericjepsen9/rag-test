@@ -335,7 +335,7 @@
         <textarea id="questionInput" placeholder="输入问题... (Enter 发送, Shift+Enter 换行)"
                   rows="1" oninput="autoResize(this)"></textarea>
       </div>
-      <button class="send-btn" id="sendBtn" onclick="ask()" title="发送">
+      <button class="send-btn" id="sendBtn" onclick="ask().catch(()=>{})" title="发送">
         &#x27A4;
       </button>
     </div>
@@ -428,6 +428,7 @@ const MAX_BUBBLES = 80;
 const MAX_QUESTION = 500;
 let isAsking = false;
 let msgCount = 0;
+let _askAbort = null;  // AbortController for current ask request
 
 // ===== Shortcuts =====
 const $ = id => document.getElementById(id);
@@ -450,6 +451,36 @@ function toggleSettings() {
 function updateModeBadge() {
   const mode = $('setMode').value;
   $('modeBadge').textContent = mode === 'brief' ? '简洁' : '详细';
+  saveSettings();
+}
+
+// ===== Settings persistence =====
+const SETTINGS_KEY = 'rag_chat_settings';
+function saveSettings() {
+  try {
+    const s = {
+      mode: $('setMode').value,
+      debug: $('setDebug').checked,
+      timestamp: $('setTimestamp').checked,
+      latency: $('setLatency').checked,
+      markdown: $('setMarkdown').checked,
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch(_) {}
+}
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.mode) $('setMode').value = s.mode;
+    if (s.debug !== undefined) $('setDebug').checked = s.debug;
+    if (s.timestamp !== undefined) $('setTimestamp').checked = s.timestamp;
+    if (s.latency !== undefined) $('setLatency').checked = s.latency;
+    if (s.markdown !== undefined) $('setMarkdown').checked = s.markdown;
+    updateModeBadge();
+    $('debugExpandBtn').style.display = s.debug ? '' : 'none';
+  } catch(_) {}
 }
 
 // ===== Toast =====
@@ -823,10 +854,11 @@ function addMessage(text, role, opts = {}) {
   const area = $('chatArea');
   area.appendChild(row);
 
-  // Limit DOM size
-  const rows = area.querySelectorAll('.msg-row');
-  while (rows.length > MAX_BUBBLES) {
-    area.removeChild(rows[0]);
+  // Limit DOM size — use live children count, not static NodeList
+  let msgRows = area.querySelectorAll('.msg-row');
+  let excess = msgRows.length - MAX_BUBBLES;
+  for (let i = 0; i < excess; i++) {
+    msgRows[i].remove();
   }
 
   // Scroll to bottom
@@ -867,10 +899,10 @@ function hideTyping() {
 async function ask() {
   const input = $('questionInput');
   const question = input.value.trim();
-  if (!question || isAsking) return;
+  if (!question || isAsking) return Promise.reject(new Error('busy'));
   if (question.length > MAX_QUESTION) {
     toast('问题超过 ' + MAX_QUESTION + ' 字限制', 'error');
-    return;
+    return Promise.reject(new Error('too_long'));
   }
 
   isAsking = true;
@@ -889,11 +921,16 @@ async function ask() {
     history: chatHistory.slice(-MAX_HISTORY),
   };
 
+  // AbortController: timeout + clearChat cancellation
+  _askAbort = new AbortController();
+  const timeoutId = setTimeout(() => _askAbort.abort(), 60000);
+
   try {
     const res = await fetch('/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: _askAbort.signal,
     });
 
     hideTyping();
@@ -927,10 +964,16 @@ async function ask() {
 
   } catch (e) {
     hideTyping();
-    addMessage('请求失败: ' + e.message, 'bot');
-    setStatus('error');
-    toast('请求失败: ' + e.message, 'error');
+    // Don't show error for intentional abort (e.g. clearChat)
+    if (e.name !== 'AbortError') {
+      addMessage('请求失败: ' + e.message, 'bot');
+      setStatus('error');
+      toast('请求失败: ' + e.message, 'error');
+    }
+    throw e;  // Re-throw so callers (e.g. clarification chips) can catch
   } finally {
+    clearTimeout(timeoutId);
+    _askAbort = null;
     isAsking = false;
     $('sendBtn').disabled = false;
     input.focus();
@@ -939,6 +982,12 @@ async function ask() {
 
 // ===== Clear =====
 function clearChat() {
+  // Abort any in-flight request and reset state
+  if (_askAbort) { _askAbort.abort(); _askAbort = null; }
+  isAsking = false;
+  $('sendBtn').disabled = false;
+  hideTyping();
+
   chatHistory = [];
   msgCount = 0;
   const area = $('chatArea');
@@ -971,7 +1020,7 @@ function clearChat() {
 function askTip(el) {
   $('questionInput').value = el.textContent;
   autoResize($('questionInput'));
-  ask();
+  ask().catch(() => {});
 }
 
 // ===== Status =====
@@ -997,10 +1046,14 @@ function toggleAllDebug() {
   document.querySelectorAll('.debug-toggle').forEach(d => { d.open = _allDebugOpen; });
   toast(_allDebugOpen ? '已展开全部调试信息' : '已折叠全部调试信息', 'info');
 }
-// Show/hide debug expand button when debug setting changes
+// Show/hide debug expand button when debug setting changes + persist
 $('setDebug').addEventListener('change', function() {
   $('debugExpandBtn').style.display = this.checked ? '' : 'none';
+  saveSettings();
 });
+$('setTimestamp').addEventListener('change', saveSettings);
+$('setLatency').addEventListener('change', saveSettings);
+$('setMarkdown').addEventListener('change', saveSettings);
 
 // ===== Health check =====
 async function checkHealth() {
@@ -1012,7 +1065,7 @@ async function checkHealth() {
     const data = await res.json();
     const ok = data.status === 'ok';
     let html = '<div style="padding:10px;background:#f8f9fb;border-radius:8px;font-size:12px;line-height:1.8">';
-    html += '<div>状态: <b style="color:' + (ok ? 'var(--success)' : 'var(--warning)') + '">' + data.status + '</b></div>';
+    html += '<div>状态: <b style="color:' + (ok ? 'var(--success)' : 'var(--warning)') + '">' + esc(data.status) + '</b></div>';
     html += '<div>知识库: ' + (data.knowledge_exists ? 'OK' : '缺失') + '</div>';
     html += '<div>共享索引: ' + (data.shared_knowledge_indexed ? 'OK' : '未构建') + '</div>';
     if (data.products) {
@@ -1043,18 +1096,24 @@ function closeLightbox() {
   $('lightboxImg').src = '';
 }
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'Escape') {
+    if ($('lightbox').classList.contains('show')) closeLightbox();
+    else if ($('settingsPanel').classList.contains('show')) toggleSettings();
+  }
 });
 
 // ===== Keyboard =====
 $('questionInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
-    ask();
+    ask().catch(() => {});
   }
 });
 
 // ===== Init =====
+// Restore saved settings
+loadSettings();
+
 // Check health on load
 fetch('/health').then(r => r.json()).then(d => {
   setStatus(d.status === 'ok' ? 'online' : 'error');
