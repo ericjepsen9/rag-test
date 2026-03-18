@@ -1182,6 +1182,9 @@ def parse_answer(route: str, product: str, mode: str,
     if shared_dir_name:
         main_text = _read_shared_knowledge(shared_dir_name, question=question)
         faq_text = ""
+    elif not product:
+        # 非共享路由 + 无产品 → 无法从产品知识库提取，直接返回空
+        return []
     elif route == "ingredient" and question:
         # 材料专属路由：当用户问的是某个具体材料（如"玻尿酸"），
         # 优先从材料专属知识库读取，而非产品的成分章节
@@ -1694,15 +1697,24 @@ def _llm_fallback_answer(question: str, route: str, hits: list) -> str:
         return ""
 
 
-def _static_fallback(hits: list, question: str = "") -> list:
+def _static_fallback(hits: list, question: str = "", product: str = "") -> list:
     """无 LLM 时的静态兜底文案。根据是否有检索结果提供不同的引导。"""
+    # 动态生成产品名列表，避免硬编码单一产品
+    prod_names = [aliases[0] for aliases in PRODUCT_ALIASES.values() if aliases]
+    prod_hint = "／".join(prod_names) if prod_names else "产品"
+
     if hits:
         # 有检索结果但置信度不足——可能是用词不精确
+        # 根据当前产品生成示例
+        if product:
+            example_name = PRODUCT_ALIASES.get(product, [product])[0]
+            example = f"- 使用更具体的术语，如\u201c{example_name}术后护理\u201d而非简单说\u201c做完注意啥\u201d"
+        else:
+            example = f"- 使用更具体的术语，并指明产品名称（{prod_hint}）"
         lines = [
             "抱歉，未能精确匹配到您的问题。可能是表述方式与知识库不同。",
             "您可以尝试：",
-            "- 使用更具体的术语，如\u201c菲罗奥术后护理\u201d而非简单说\u201c做完注意啥\u201d",
-            "- 指明产品名称（菲罗奥/赛洛菲）",
+            example,
             "- 分开提问，每次问一个具体问题",
         ]
         # 如果有低分命中，提示相关主题
@@ -1713,7 +1725,7 @@ def _static_fallback(hits: list, question: str = "") -> list:
     return [
         "该问题超出了当前知识库的覆盖范围。",
         "我可以回答以下方面的问题：",
-        "- 菲罗奥产品：成分、功效、操作方法、术后护理、禁忌人群、防伪鉴别",
+        f"- {prod_hint}等产品：成分、功效、操作方法、术后护理、禁忌人群、防伪鉴别",
         "- 医美项目：水光针、微针、光电（射频/皮秒/IPL）等的原理和流程",
         "- 皮肤问题：松弛、干燥、毛孔、色斑、痘坑、皱纹等改善建议",
         "- 术后管理：并发症处理、疗程规划、联合方案",
@@ -1934,7 +1946,7 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 method = "no_hit"
             _log_knowledge_gap(question, route, rewrite, hits, _log_meta)
             evidence = build_evidence(hits)
-            text = format_structured_answer(route, _static_fallback(hits, question), evidence,
+            text = format_structured_answer(route, _static_fallback(hits, question, product), evidence,
                                             add_risk_note=(route == "risk"))
             log_qa(question, text, rewritten_query=rewrite["expanded"],
                    matched_sources=evidence, hit=False,
