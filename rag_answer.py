@@ -519,9 +519,12 @@ def _detect_special_intent(q: str) -> str:
         return "price"
 
     # 对比意图：需排除产品自身成分对比（如"PCL和透明质酸的作用"属于 ingredient）
+    # 也排除已知产品之间的对比（如"菲罗奥和赛洛菲的区别"），这类问题知识库可回答
     if not any(ic in q for ic in _INTERNAL_COMPARE):
         if any(k in q for k in _COMPARE_KWS_SIMPLE) or _COMPARE_KWS_RE.search(q):
-            return "comparison"
+            # 如果问题中提到了已知产品，说明是产品间对比，走正常检索
+            if not detect_terms(q, PRODUCT_ALIASES):
+                return "comparison"
 
     if any(k in q for k in _LOCATION_KWS):
         return "location"
@@ -2023,11 +2026,18 @@ def _detect_route_with_history(question: str, rewrite: dict) -> str:
 
     # 路由继承策略：
     # 1. 上下文补全后仍为 basic → 继承最近含路由关键词的问题的路由
-    # 2. 用户原始输入很短（≤10字，追问模式）→ 即使没有 context_resolved 也尝试继承
-    raw_input = rewrite.get("raw_input", "")
+    # 2. 用户原始输入是纯追问句（"还有吗""呢""还有别的吗"等）→ 继承历史路由
+    #    注意：仅凭≤10字不足以判定追问，"还能修复吗"虽短但含新意图，不应盲目继承
+    raw_input = rewrite.get("raw_input", "").strip()
+    _is_pure_followup = bool(
+        raw_input and len(raw_input) <= 10
+        and re.search(r'^(还有(别的|其他|吗|呢)?[?？吗呢]*|'
+                      r'然后呢|接下来呢|继续|再说说|还有呢|'
+                      r'[?？]|呢[?？]?)$', raw_input)
+    )
     should_inherit = (
         rewrite.get("context_resolved")
-        or (raw_input and len(raw_input.strip()) <= 10)
+        or _is_pure_followup
     )
 
     if should_inherit:
