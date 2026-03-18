@@ -3,18 +3,36 @@ import re
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from media_router import find_media, invalidate_media_cache
 from rag_answer import answer_question, invalidate_store_cache, get_last_route_product
 from rag_logger import log_error, get_recent_qa, get_recent_misses, get_recent_errors
+
+# ===== 请求限流 =====
+_ASK_RATE_LIMIT = os.environ.get("ASK_RATE_LIMIT", "60/minute")
+_ADMIN_RATE_LIMIT = os.environ.get("ADMIN_RATE_LIMIT", "30/minute")
+limiter = Limiter(key_func=get_remote_address)
+
+# ===== 请求超时控制 =====
+_ASK_TIMEOUT_SEC = int(os.environ.get("ASK_TIMEOUT_SEC", "30"))
+
+# ===== 响应缓存 =====
+_RESPONSE_CACHE: OrderedDict = OrderedDict()
+_RESPONSE_CACHE_MAX = int(os.environ.get("RESPONSE_CACHE_MAX", "200"))
+_RESPONSE_CACHE_TTL = int(os.environ.get("RESPONSE_CACHE_TTL", "300"))  # 秒
+_response_cache_lock = threading.Lock()
 
 # 每产品重建锁，防止并发 rebuild 导致文件损坏
 _rebuild_locks: Dict[str, threading.Lock] = {}
@@ -49,6 +67,16 @@ async def _lifespan(app):
     yield
 
 app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0", lifespan=_lifespan)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"请求过于频繁，请稍后再试。限制: {exc.detail}"},
+    )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -217,11 +245,45 @@ def chat_page():
     return FileResponse(CHAT_PAGE, media_type="text/html")
 
 
+def _response_cache_get(key: str):
+    """从响应缓存获取，返回 None 表示未命中"""
+    with _response_cache_lock:
+        entry = _RESPONSE_CACHE.get(key)
+        if entry is None:
+            return None
+        cached_time, data = entry
+        if time.monotonic() - cached_time > _RESPONSE_CACHE_TTL:
+            _RESPONSE_CACHE.pop(key, None)
+            return None
+        _RESPONSE_CACHE.move_to_end(key)
+        return data
+
+
+def _response_cache_put(key: str, data):
+    """写入响应缓存"""
+    with _response_cache_lock:
+        while len(_RESPONSE_CACHE) >= _RESPONSE_CACHE_MAX:
+            try:
+                _RESPONSE_CACHE.popitem(last=False)
+            except KeyError:
+                break
+        _RESPONSE_CACHE[key] = (time.monotonic(), data)
+
+
 @app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest):
+@limiter.limit(_ASK_RATE_LIMIT)
+def ask(request: Request, req: AskRequest):
     question = _sanitize_input(req.question)
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
+
+    # 响应缓存：相同 question+mode 组合在 TTL 内直接返回
+    cache_key = f"{question}|{req.mode}"
+    cached = _response_cache_get(cache_key)
+    if cached is not None and not req.debug:
+        cached_resp = cached.copy()
+        cached_resp["_cached"] = True
+        return AskResponse(**cached_resp)
 
     t0 = time.monotonic()
     rw = None
@@ -245,7 +307,17 @@ def ask(req: AskRequest):
         rw = rewrite_query(question, history=history)
         resolved_q = rw["original"]  # 上下文补全后的问题
 
-        answer = answer_question(question, req.mode, history=history, rewrite=rw)
+        # 超时控制：使用线程池执行 answer_question，避免无限阻塞
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(answer_question, question, req.mode, history=history, rewrite=rw)
+            try:
+                answer = future.result(timeout=_ASK_TIMEOUT_SEC)
+            except FuturesTimeout:
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                log_error("api_ask_timeout", f"请求超时 ({_ASK_TIMEOUT_SEC}s)",
+                          meta={"question": question[:200], "latency_ms": latency_ms})
+                return AskResponse(ok=False, answer=f"查询处理超时（{_ASK_TIMEOUT_SEC}秒），请简化问题后重试")
         latency_ms = int((time.monotonic() - t0) * 1000)
         # 复用 answer_one 中已计算的 route/product，避免重复检测
         route, product_id = get_last_route_product()
@@ -282,7 +354,7 @@ def ask(req: AskRequest):
                 fallback_option=cl_fb,
             )
 
-        return AskResponse(
+        resp = AskResponse(
             ok=True,
             answer=answer,
             media=media,
@@ -291,6 +363,14 @@ def ask(req: AskRequest):
             needs_clarification=needs_clarification,
             clarification=clarification_data,
         )
+        # 写入响应缓存（仅缓存成功且非 debug 的响应）
+        if not req.debug and not needs_clarification:
+            _response_cache_put(cache_key, {
+                "ok": True, "answer": answer,
+                "media": [m.model_dump() if hasattr(m, 'model_dump') else m.__dict__ for m in media],
+                "latency_ms": latency_ms,
+            })
+        return resp
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
         error_meta: Dict[str, Any] = {

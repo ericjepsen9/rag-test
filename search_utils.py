@@ -362,6 +362,8 @@ def expand_synonyms(query: str) -> str:
     支持部分词反向匹配：查询中的词是同义词表 key 的子串时也触发扩展。
 
     同时包含静态同义词（_SYNONYM_MAP）和已审核的学习同义词。
+
+    词边界保护：短同义词(<=2字)使用分词后的词级匹配，避免"打"匹配到"打折"等无关词。
     """
     _ensure_learned_loaded()
 
@@ -373,8 +375,23 @@ def expand_synonyms(query: str) -> str:
 
     extra = set()
     q_lower = query.lower()
+
+    # 短同义词(<=2字)使用分词级匹配，提高精度
+    # jieba 分词一次，构建 word set 供短词查找
+    jieba = _get_jieba()
+    if jieba is not None:
+        q_words = set(jieba.cut(q_lower))
+    else:
+        q_words = set(x for x in _RE_TERM_SPLIT.split(q_lower) if x)
+
     for term, synonyms in expand_snapshot:
-        if term in q_lower:
+        # 短词(<=2字)：必须是分词后的完整词才触发扩展
+        # 长词(>=3字)：子串匹配即可（长词本身足够具体）
+        if len(term) <= 2:
+            matched = term in q_words
+        else:
+            matched = term in q_lower
+        if matched:
             for syn in synonyms:
                 if syn not in q_lower:
                     extra.add(syn)
@@ -537,7 +554,8 @@ def _extract_terms(query: str) -> List[str]:
 def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
                doc_freqs: Dict[str, int], k1: float = BM25_K1, b: float = BM25_B) -> float:
     """BM25 评分：考虑词频、文档长度、逆文档频率。
-    query_or_terms: 预提取的查询词列表，或查询字符串（自动提取）。"""
+    query_or_terms: 预提取的查询词列表，或查询字符串（自动提取）。
+    短词(1-2字)和高频词(df > 50%文档)会被自动降权，减少噪音匹配。"""
     if isinstance(query_or_terms, str):
         query_or_terms = _extract_terms(query_or_terms)
     dl = len(text)
@@ -555,7 +573,17 @@ def bm25_score(query_or_terms, text: str, avg_dl: float, n_docs: int,
         idf = math.log((effective_n - df + 0.5) / (df + 0.5) + 1.0)
         # TF normalization
         tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1)))
-        score += idf * tf_norm
+        contribution = idf * tf_norm
+        # 短词降权：单字和双字中文 bigram 是噪音高发区
+        # 例如 "打" 会匹配大量文档，降低其对总分的贡献
+        term_len = len(term)
+        if term_len == 1:
+            contribution *= 0.3
+        elif term_len == 2 and _RE_CJK_WORD.match(term):
+            # 双字中文词：如果 DF 极高(>40%文档都包含)，说明是通用词，降权
+            if df > effective_n * 0.4:
+                contribution *= 0.5
+        score += contribution
     return score
 
 

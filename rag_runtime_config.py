@@ -338,7 +338,7 @@ def _safe_int(key: str, default: str) -> int:
 BM25_K1 = _safe_float("RAG_BM25_K1", "1.5")
 BM25_B = _safe_float("RAG_BM25_B", "0.75")
 SIGMOID_SCALE = _safe_float("RAG_SIGMOID_SCALE", "5.0")
-ROUTE_BOOST = _safe_float("RAG_ROUTE_BOOST", "0.12")
+ROUTE_BOOST = _safe_float("RAG_ROUTE_BOOST", "0.25")
 CACHE_MAX_PRODUCTS = 32
 
 # ===== 回答构建 =====
