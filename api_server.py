@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Literal, Dict, Any, List
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -75,8 +75,8 @@ async def _lifespan(app):
         from rag_answer import _search_pool
         _search_pool.shutdown(wait=True, cancel_futures=False)
         print("[INFO] 搜索线程池已关闭")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] 搜索线程池关闭失败: {e}")
 
 app = FastAPI(title="Medical Aesthetics RAG API", version="1.0.0", lifespan=_lifespan)
 app.state.limiter = limiter
@@ -92,10 +92,26 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 app.add_middleware(
     CORSMiddleware,
+    # 生产环境务必设置 CORS_ORIGINS 为具体域名（逗号分隔），如:
+    # CORS_ORIGINS=https://example.com,https://admin.example.com
+    # 默认 "*" 仅用于开发/测试
     allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=False,
 )
+
+
+# ===== 安全响应头中间件 =====
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """为所有响应添加安全头，防止 MIME 嗅探、点击劫持等"""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 MAX_QUESTION_LEN = 500
 MAX_HISTORY_TOTAL_CHARS = 3000  # 防止历史内容过大
@@ -215,6 +231,7 @@ _health_lock = threading.Lock()
 
 @app.get("/health")
 def health():
+    """健康检查：返回各产品索引状态、文档数、embedding模型状态及服务运行时间"""
     global _health_cache, _health_cache_ts
     now = time.monotonic()
     # 快速路径：无锁读取（GIL 保护 dict 引用读取安全性）
@@ -270,8 +287,8 @@ def health():
     try:
         from rag_answer import _model
         embedding_ready = _model is not None
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] embedding 模型状态检查失败: {e}")
 
     result = {
         "status": "ok" if all_indexed else "degraded",
@@ -292,9 +309,11 @@ def health():
 
 @app.get("/chat")
 def chat_page():
+    """对话页面入口"""
     if not CHAT_PAGE.exists():
         raise HTTPException(status_code=404, detail="chat.html 不存在")
-    return FileResponse(CHAT_PAGE, media_type="text/html")
+    return FileResponse(CHAT_PAGE, media_type="text/html",
+                        headers={"Cache-Control": "public, max-age=300"})
 
 
 def _response_cache_get(key: str):
@@ -325,6 +344,7 @@ def _response_cache_put(key: str, data):
 @app.post("/ask", response_model=AskResponse)
 @limiter.limit(_ASK_RATE_LIMIT)
 def ask(request: Request, req: AskRequest):
+    """RAG 问答主接口：接受用户问题，返回基于知识库的回答、相关媒体资源及调试信息"""
     question = _sanitize_input(req.question)
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
@@ -522,6 +542,7 @@ def _build_oai_stream_chunk(content: str, model: str, chunk_id: str, finish: boo
 @app.post("/v1/chat/completions")
 @limiter.limit(_ASK_RATE_LIMIT)
 def oai_chat_completions(request: Request, req: OAIChatRequest):
+    """OpenAI 兼容接口：支持 messages 格式的对话请求，可选流式响应"""
     question, history = _oai_messages_to_question_and_history(req.messages)
     if not question:
         raise HTTPException(status_code=400, detail="No user message found")
@@ -592,6 +613,7 @@ def oai_chat_completions(request: Request, req: OAIChatRequest):
 
 @app.get("/v1/models")
 def oai_models():
+    """OpenAI 兼容模型列表接口"""
     return {
         "object": "list",
         "data": [
@@ -609,9 +631,10 @@ def oai_models():
 
 @app.get("/admin")
 def admin_page():
+    """管理后台页面"""
     if not ADMIN_PAGE.exists():
         raise HTTPException(status_code=404, detail="admin_page.html 不存在")
-    return FileResponse(ADMIN_PAGE)
+    return FileResponse(ADMIN_PAGE, headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.get("/admin/products")
@@ -695,8 +718,8 @@ def _reload_synonym_runtime():
     try:
         from search_utils import reload_learned_synonyms
         reload_learned_synonyms()
-    except Exception:
-        pass
+    except Exception as e:
+        log_error("synonym_reload", repr(e))
 
 
 @app.get("/admin/synonyms/all")
@@ -836,8 +859,8 @@ def admin_keywords_effective():
 
 
 class SynonymOverrideRequest(BaseModel):
-    original: str
-    mapped_to: str
+    original: str = Field(..., min_length=1, max_length=200)
+    mapped_to: str = Field(..., min_length=1, max_length=200)
 
 
 @app.post("/admin/keywords/synonym/override")
@@ -852,11 +875,9 @@ def admin_keyword_synonym_override(req: SynonymOverrideRequest):
 
 
 @app.delete("/admin/keywords/synonym/override")
-def admin_keyword_synonym_delete(original: str):
+def admin_keyword_synonym_delete(original: str = Query(..., min_length=1, max_length=200)):
     """删除一条同义词覆盖（对静态词标记为删除）"""
     from keyword_store import delete_synonym_override
-    if not original or not original.strip():
-        raise HTTPException(status_code=400, detail="original 不能为空")
     result = delete_synonym_override(original.strip())
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
@@ -891,8 +912,8 @@ def admin_clarification_rules():
 
 
 class ClarificationRuleRequest(BaseModel):
-    trigger: str
-    options: List[Dict[str, str]]
+    trigger: str = Field(..., min_length=1, max_length=200)
+    options: List[Dict[str, str]] = Field(..., max_length=10)
 
 
 @app.post("/admin/keywords/clarification")
@@ -906,11 +927,9 @@ def admin_clarification_save(req: ClarificationRuleRequest):
 
 
 @app.delete("/admin/keywords/clarification")
-def admin_clarification_delete(trigger: str):
+def admin_clarification_delete(trigger: str = Query(..., min_length=1, max_length=200)):
     """删除一条自定义消歧规则"""
     from keyword_store import delete_clarification_rule
-    if not trigger or not trigger.strip():
-        raise HTTPException(status_code=400, detail="trigger 不能为空")
     result = delete_clarification_rule(trigger.strip())
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "操作失败"))
@@ -1021,7 +1040,7 @@ def admin_knowledge_read(product: str, filename: str):
 
 
 class KnowledgeWriteRequest(BaseModel):
-    content: str = Field(..., min_length=0)
+    content: str = Field(..., min_length=0, max_length=5_000_000)  # 5MB 上限
 
 
 @app.put("/admin/knowledge/{product}/{filename}")
@@ -1525,8 +1544,8 @@ def admin_cache_stats():
     try:
         from query_rewrite import _llm_rewrite_cache
         llm_cache_stats = _llm_rewrite_cache.stats
-    except Exception:
-        pass
+    except Exception as e:
+        llm_cache_stats = {"error": str(e)}
     return {
         "response_cache": {
             "size": len(_RESPONSE_CACHE),
