@@ -1661,11 +1661,16 @@ function selectProvider(provider) {
   // model_format: LiteLLM proxy support
   const fmtEl = document.getElementById('model-format');
   if (fmtEl) fmtEl.checked = (cfg.model_format === 'litellm');
-  document.getElementById('model-test-result').innerHTML = '';
-  // Connection status badge
+  // 如果已有测试结果（正在测试或已测试完成），不要覆盖 badge 和测试结果
+  const testResultEl = document.getElementById('model-test-result');
   const connEl = document.getElementById('model-connection-status');
+  if (testResultEl && testResultEl.innerHTML.trim()) {
+    // 已有测试结果，跳过覆盖
+    return;
+  }
+  if (testResultEl) testResultEl.innerHTML = '';
+  // Connection status badge
   if (connEl) {
-    console.log('[selectProvider] called with:', provider, 'cfg:', JSON.stringify({provider: cfg.provider, enabled: cfg.enabled, client_ready: cfg.client_ready, api_key_set: cfg.api_key_set}), 'trace:', new Error().stack);
     if (cfg.provider === provider && cfg.enabled && cfg.client_ready) {
       connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
     } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.client_ready) {
