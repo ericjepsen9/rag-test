@@ -605,7 +605,7 @@
 
     <!-- ==================== 模型切换 ==================== -->
     <div class="page" id="page-model">
-      <h1>&#x1f916; 模型切换</h1>
+      <h1>&#x1f916; 模型切换 <span style="font-size:11px;color:#999;font-weight:normal">v3</span></h1>
 
       <!-- 用途切换标签 -->
       <div class="card" style="padding-bottom:0">
@@ -1593,8 +1593,11 @@ async function loadModelConfig() {
       </div>`
     ).join('');
     // If provider already selected or matches current config, show config
-    if (selectedProvider) selectProvider(selectedProvider);
-    else if (cfg.provider) selectProvider(cfg.provider);
+    // 如果 badge 被锁定（刚测试完成），跳过 selectProvider 避免覆盖
+    if (!_testBadgeLocked) {
+      if (selectedProvider) selectProvider(selectedProvider);
+      else if (cfg.provider) selectProvider(cfg.provider);
+    }
   } catch(e) {
     _multiLLMCache = null;  // Clear stale cache on failure
     // Fallback to old API
