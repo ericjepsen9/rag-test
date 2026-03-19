@@ -742,7 +742,7 @@ def admin_page():
     """管理后台页面"""
     if not ADMIN_PAGE.exists():
         raise HTTPException(status_code=404, detail="admin_page.html 不存在")
-    return FileResponse(ADMIN_PAGE, headers={"Cache-Control": "public, max-age=300"})
+    return FileResponse(ADMIN_PAGE, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/admin/products")
