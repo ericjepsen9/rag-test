@@ -1550,11 +1550,11 @@ async function rebuildShared() {
 // ===== Model Switch (Multi-LLM) =====
 let currentLLMPurpose = 'chat';  // 'chat' | 'knowledge'
 let _multiLLMCache = null;       // 缓存从 /admin/llm/configs 获取的数据
-let _testBadgeLocked = false;    // 测试完成后锁定 badge，防止 selectProvider 覆盖
+let _testBadgeLocked = { chat: false, knowledge: false };  // 按用途锁定 badge
 
 function switchLLMPurpose(purpose) {
   currentLLMPurpose = purpose;
-  _testBadgeLocked = false;  // 切换用途时解锁
+  // 每个 purpose 有自己的锁，切换用途不需要解锁
   document.querySelectorAll('#llm-purpose-tabs button').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === purpose);
   });
@@ -1594,7 +1594,7 @@ async function loadModelConfig() {
     ).join('');
     // If provider already selected or matches current config, show config
     // 如果 badge 被锁定（刚测试完成），跳过 selectProvider 避免覆盖
-    if (!_testBadgeLocked) {
+    if (!_testBadgeLocked[currentLLMPurpose]) {
       if (selectedProvider) selectProvider(selectedProvider);
       else if (cfg.provider) selectProvider(cfg.provider);
     }
@@ -1615,7 +1615,7 @@ async function loadModelConfig() {
 
 function selectProvider(provider) {
   // 用户主动切换提供商时解锁 badge
-  if (provider !== selectedProvider) _testBadgeLocked = false;
+  if (provider !== selectedProvider) _testBadgeLocked[currentLLMPurpose] = false;
   selectedProvider = provider;
   document.querySelectorAll('.model-card').forEach(c => {
     c.classList.toggle('selected', c.dataset.provider === provider);
@@ -1671,7 +1671,7 @@ function selectProvider(provider) {
   const testResultEl = document.getElementById('model-test-result');
   const connEl = document.getElementById('model-connection-status');
   // 测试完成后锁定 badge，防止被覆盖
-  if (_testBadgeLocked) return;
+  if (_testBadgeLocked[currentLLMPurpose]) return;
   if (testResultEl) testResultEl.innerHTML = '';
   // Connection status badge
   if (connEl) {
@@ -1727,7 +1727,7 @@ async function saveModelConfig() {
     if (connEl) connEl.innerHTML = '<span style="color:var(--primary);font-size:12px">验证连接中...</span>';
     try {
       const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
-      _testBadgeLocked = true;  // 锁定 badge 防止被覆盖
+      _testBadgeLocked[currentLLMPurpose] = true;  // 锁定 badge 防止被覆盖
       if (r.ok) {
         if (connEl) connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
         document.getElementById('model-test-result').innerHTML =
@@ -1743,7 +1743,7 @@ async function saveModelConfig() {
         toast(`${purposeLabel} LLM 配置已保存，但连接测试失败`, 'warn');
       }
     } catch(te) {
-      _testBadgeLocked = true;  // 即使失败也锁定（显示失败状态）
+      _testBadgeLocked[currentLLMPurpose] = true;  // 即使失败也锁定（显示失败状态）
       if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已保存，连接失败</span>';
       document.getElementById('model-test-result').innerHTML =
         `<span class="badge badge-danger">连接测试失败</span>
@@ -1782,7 +1782,7 @@ async function testModelConnection() {
     document.getElementById('model-api-key').value = '';
     // 然后测试连接
     const r = await api(`/admin/llm/test?purpose=${currentLLMPurpose}`, {method:'POST'});
-    _testBadgeLocked = true;  // 锁定 badge 防止被覆盖
+    _testBadgeLocked[currentLLMPurpose] = true;  // 锁定 badge 防止被覆盖
     if (r.ok) {
       out.innerHTML = `<span class="badge badge-ok">连接成功</span>
         <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">
@@ -1796,7 +1796,7 @@ async function testModelConnection() {
     // 只刷新底部状态 JSON，不触发 selectProvider 重新渲染
     refreshModelStatusJson();
   } catch(e) {
-    _testBadgeLocked = true;
+    _testBadgeLocked[currentLLMPurpose] = true;
     out.innerHTML = `<span class="badge badge-danger">${esc(e.message)}</span>`;
     if (connEl) connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，连接失败</span>';
   }

@@ -244,11 +244,13 @@ def _sync_to_legacy(purpose: str):
 
 
 def sync_from_legacy():
-    """从旧版全局变量同步到 llm_client（旧 API 调用后调用此函数保持一致）。"""
-    from rag_runtime_config import USE_OPENAI, OPENAI_MODEL, OPENAI_API_BASE
+    """从旧版全局变量同步到 llm_client（旧 API 调用后调用此函数保持一致）。
+    注意：不同步 enabled 字段。服务控制（start/stop）是运行时总开关，
+    不应改变模型配置页面的 enabled 状态。enabled 只通过模型配置页面保存来修改。
+    """
+    from rag_runtime_config import OPENAI_MODEL, OPENAI_API_BASE
     cfg = _llm_configs["chat"]
     with _lock:
-        cfg["enabled"] = USE_OPENAI
         cfg["model"] = OPENAI_MODEL
         cfg["api_base"] = OPENAI_API_BASE or ""
         key = os.environ.get("OPENAI_API_KEY", "").strip()
