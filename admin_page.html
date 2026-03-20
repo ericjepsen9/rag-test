@@ -605,7 +605,7 @@
 
     <!-- ==================== 模型切换 ==================== -->
     <div class="page" id="page-model">
-      <h1>&#x1f916; 模型切换 <span style="font-size:11px;color:#999;font-weight:normal">v3</span></h1>
+      <h1>&#x1f916; 模型切换</h1>
 
       <!-- 用途切换标签 -->
       <div class="card" style="padding-bottom:0">
@@ -1039,6 +1039,7 @@ function showPage(page) {
     }
   }
   currentPage = page;
+  _testBadgeLocked = false;  // 切换页面时解锁 badge，重新读取最新状态
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   document.querySelectorAll('.sidebar nav a').forEach(a => {
