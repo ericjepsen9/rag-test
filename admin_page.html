@@ -1039,7 +1039,6 @@ function showPage(page) {
     }
   }
   currentPage = page;
-  _testBadgeLocked = false;  // 切换页面时解锁 badge，重新读取最新状态
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   document.querySelectorAll('.sidebar nav a').forEach(a => {
