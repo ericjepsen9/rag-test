@@ -1673,11 +1673,11 @@ function selectProvider(provider) {
   // 测试完成后锁定 badge，防止被覆盖
   if (_testBadgeLocked[currentLLMPurpose]) return;
   if (testResultEl) testResultEl.innerHTML = '';
-  // Connection status badge
+  // Connection status badge — 基于 connection_verified（持久化状态，不受服务控制影响）
   if (connEl) {
-    if (cfg.provider === provider && cfg.enabled && cfg.client_ready) {
+    if (cfg.provider === provider && cfg.enabled && cfg.connection_verified) {
       connEl.innerHTML = '<span class="badge badge-ok" style="font-size:12px;padding:3px 10px">已连接</span>';
-    } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.client_ready) {
+    } else if (cfg.provider === provider && cfg.enabled && cfg.api_key_set && !cfg.connection_verified) {
       connEl.innerHTML = '<span class="badge badge-warn" style="font-size:12px;padding:3px 10px">已配置，未验证连接</span>';
     } else if (cfg.provider === provider && !cfg.enabled) {
       connEl.innerHTML = '<span class="badge badge-danger" style="font-size:12px;padding:3px 10px">已停用</span>';

@@ -24,6 +24,7 @@ _llm_configs: Dict[str, Dict[str, Any]] = {
         "api_base": "",
         "api_key": "",
         "model_format": "standard",  # "standard" or "litellm" (provider:model_id)
+        "connection_verified": False,  # 测试连接成功后设为 True，配置变更时重置
     },
     "knowledge": {
         "enabled": False,
@@ -32,6 +33,7 @@ _llm_configs: Dict[str, Dict[str, Any]] = {
         "api_base": "",
         "api_key": "",
         "model_format": "standard",  # "standard" or "litellm" (provider:model_id)
+        "connection_verified": False,
     },
 }
 
@@ -75,6 +77,7 @@ def get_llm_config(purpose: str = "chat") -> Dict[str, Any]:
         "api_key_set": bool(cfg["api_key"]),
         "model_format": cfg.get("model_format", "standard"),
         "client_ready": _clients.get(purpose) is not None and _clients_checked.get(purpose, False),
+        "connection_verified": cfg.get("connection_verified", False),
     }
 
 
@@ -122,7 +125,8 @@ def update_llm_config(purpose: str, *,
             cfg["enabled"] = bool(enabled)
         if model_format and model_format in ("standard", "litellm"):
             cfg["model_format"] = model_format
-        # 重置 client 缓存
+        # 配置变更，重置连接验证状态和 client 缓存
+        cfg["connection_verified"] = False
         _clients[purpose] = None
         _clients_checked[purpose] = False
         # 同步到旧版全局变量（在锁内执行，防止并发更新竞争）
@@ -209,6 +213,15 @@ def is_enabled(purpose: str = "chat") -> bool:
     return _llm_configs.get(purpose, _llm_configs["chat"])["enabled"]
 
 
+def mark_connection_verified(purpose: str = "chat", verified: bool = True):
+    """标记指定用途的连接验证状态（测试成功后调用）"""
+    cfg = _llm_configs.get(purpose)
+    if cfg:
+        with _lock:
+            cfg["connection_verified"] = verified
+        _persist_llm_configs()
+
+
 def reset_client(purpose: str = "chat"):
     """重置指定用途的 client 缓存（强制下次调用重新创建）"""
     with _lock:
@@ -283,6 +296,7 @@ def _persist_llm_configs():
             "api_key_set": bool(cfg["api_key"]),
             "api_key_enc": encoded_key,
             "model_format": cfg.get("model_format", "standard"),
+            "connection_verified": cfg.get("connection_verified", False),
         }
     # 用独立的持久化锁序列化文件写入
     with _persist_lock:
@@ -318,6 +332,7 @@ def load_persisted_llm_configs():
                 cfg["model"] = saved.get("model", "")
                 cfg["api_base"] = saved.get("api_base", "")
                 cfg["model_format"] = saved.get("model_format", "standard")
+                cfg["connection_verified"] = saved.get("connection_verified", False)
                 # api_key: 优先从持久化文件恢复，其次从环境变量
                 enc_key = saved.get("api_key_enc", "")
                 if enc_key:

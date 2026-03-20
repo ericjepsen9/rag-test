@@ -1633,6 +1633,9 @@ def admin_llm_test_purpose(purpose: str = "chat"):
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
         reply = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+        # 测试成功，标记连接已验证（持久化，不受服务控制影响）
+        from llm_client import mark_connection_verified
+        mark_connection_verified(purpose, True)
         return {
             "ok": True,
             "purpose": purpose,
@@ -1644,6 +1647,9 @@ def admin_llm_test_purpose(purpose: str = "chat"):
         }
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
+        # 测试失败，标记连接未验证
+        from llm_client import mark_connection_verified
+        mark_connection_verified(purpose, False)
         return JSONResponse(status_code=502,
             content={"ok": False, "error": str(e), "latency_ms": latency_ms})
 
