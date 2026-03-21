@@ -299,6 +299,12 @@
       <a href="#" onclick="showPage('logs')" data-page="logs">
         <span class="icon">&#x1f4cb;</span> 日志查看</a>
     </nav>
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:12px 20px;border-top:1px solid rgba(255,255,255,.06)">
+      <label class="inline-label" style="color:#6b7280;font-size:12px">
+        <input type="checkbox" id="debug-mode-toggle" onchange="toggleDebugMode(this.checked)">
+        调试模式
+      </label>
+    </div>
   </div>
 
   <div class="main">
@@ -1080,6 +1086,18 @@
         <div id="log-content" style="max-height:600px;overflow:auto"></div>
       </div>
     </div>
+    <div id="debug-panel" style="display:none;position:fixed;bottom:0;left:230px;right:0;max-height:40vh;background:#1e2330;color:#e0e4ea;font-family:monospace;font-size:12px;z-index:200;border-top:2px solid var(--primary);overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#161926;border-bottom:1px solid rgba(255,255,255,.1)">
+        <span style="font-weight:600;color:#a5b0ff">API 调试日志 <span id="debug-count" style="color:#6b7280">(0)</span></span>
+        <div style="display:flex;gap:8px">
+          <button class="btn-ghost btn-sm" onclick="copyDebugLog()" style="color:#a5b0ff;border-color:#a5b0ff">复制全部</button>
+          <button class="btn-ghost btn-sm" onclick="exportDebugLog()" style="color:#a5b0ff;border-color:#a5b0ff">导出 JSON</button>
+          <button class="btn-ghost btn-sm" onclick="clearDebugLog()" style="color:#ef4444;border-color:#ef4444">清空</button>
+          <button class="btn-sm" onclick="document.getElementById('debug-panel').style.display='none'" style="color:#6b7280;background:none;border:none;font-size:16px">&times;</button>
+        </div>
+      </div>
+      <div id="debug-log" style="overflow-y:auto;max-height:calc(40vh - 40px);padding:8px 16px"></div>
+    </div>
   </div>
 </div>
 
@@ -1167,7 +1185,64 @@ function _authHeaders(extra = {}) {
   return extra;
 }
 
+window._debugMode = false;
+window._debugEntries = [];
+
+function toggleDebugMode(on) {
+  window._debugMode = on;
+  document.getElementById('debug-panel').style.display = on ? '' : 'none';
+  if (on) toast('调试模式已开启，所有 API 请求将被记录', 'info');
+}
+
+function _recordDebugEntry(entry) {
+  window._debugEntries.push(entry);
+  const count = document.getElementById('debug-count');
+  count.textContent = '(' + window._debugEntries.length + ')';
+
+  const log = document.getElementById('debug-log');
+  const statusColor = entry.ok ? '#22c55e' : '#ef4444';
+  const row = document.createElement('div');
+  row.style.cssText = 'padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);line-height:1.6';
+  row.innerHTML =
+    '<div>' +
+    '<span style="color:#6b7280">' + entry.time.split('T')[1].split('.')[0] + '</span> ' +
+    '<span style="color:#f59e0b;font-weight:600">' + entry.method + '</span> ' +
+    '<span style="color:#a5b0ff">' + esc(entry.url) + '</span> ' +
+    '<span style="color:' + statusColor + ';font-weight:600">' + entry.status + '</span> ' +
+    '<span style="color:#6b7280">' + entry.duration + 'ms</span>' +
+    '</div>' +
+    (entry.requestBody ? '<div style="color:#9ca3b0;margin-top:2px">请求: ' + esc(entry.requestBody.substring(0, 200)) + '</div>' : '') +
+    '<div style="color:#d1d5db;margin-top:2px;max-height:80px;overflow:hidden;cursor:pointer" onclick="this.style.maxHeight=this.style.maxHeight===\'none\'?\'80px\':\'none\'">响应: ' + esc(entry.responseBody.substring(0, 500)) + '</div>';
+  log.insertBefore(row, log.firstChild);
+}
+
+function copyDebugLog() {
+  const text = window._debugEntries.map(e =>
+    '[' + e.time + '] ' + e.method + ' ' + e.url + ' → ' + e.status + ' (' + e.duration + 'ms)\n' +
+    (e.requestBody ? '  REQ: ' + e.requestBody.substring(0, 500) + '\n' : '') +
+    '  RES: ' + e.responseBody.substring(0, 1000)
+  ).join('\n\n');
+  navigator.clipboard.writeText(text).then(() => toast('已复制到剪贴板', 'success'));
+}
+
+function exportDebugLog() {
+  const blob = new Blob([JSON.stringify(window._debugEntries, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'debug_log_' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+  a.click();
+  toast('调试日志已导出', 'success');
+}
+
+function clearDebugLog() {
+  window._debugEntries = [];
+  document.getElementById('debug-log').innerHTML = '';
+  document.getElementById('debug-count').textContent = '(0)';
+}
+
 async function api(url, opts = {}) {
+  const _debugStart = Date.now();
+  const _debugReqBody = opts.body ? (typeof opts.body === 'string' ? opts.body : '[FormData]') : null;
   try {
     // 自动注入鉴权头
     opts.headers = _authHeaders(opts.headers || {});
@@ -1180,6 +1255,18 @@ async function api(url, opts = {}) {
     }
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
+    if (window._debugMode) {
+      _recordDebugEntry({
+        time: new Date().toISOString(),
+        method: (opts.method || 'GET').toUpperCase(),
+        url: url,
+        status: r.status,
+        duration: Date.now() - _debugStart,
+        requestBody: _debugReqBody,
+        responseBody: JSON.stringify(j).substring(0, 3000),
+        ok: r.ok,
+      });
+    }
     return j;
   } catch (e) {
     toast(e.message, 'error');

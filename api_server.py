@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import re
 import threading
@@ -21,6 +22,8 @@ from slowapi.errors import RateLimitExceeded
 from media_router import find_media, invalidate_media_cache
 from rag_answer import answer_question, invalidate_store_cache, get_last_route_product
 from rag_logger import log_error, get_recent_qa, get_recent_misses, get_recent_errors
+
+logger = logging.getLogger("rag-api")
 
 # ===== 请求限流 =====
 _ASK_RATE_LIMIT = os.environ.get("ASK_RATE_LIMIT", "60/minute")
@@ -180,6 +183,44 @@ async def admin_auth_middleware(request: Request, call_next):
                 content={"detail": "管理接口需要鉴权：请设置 ADMIN_API_KEY 并在请求中携带 Authorization: Bearer <key>"},
             )
     return await call_next(request)
+
+
+# ===== 调试日志中间件 =====
+@app.middleware("http")
+async def debug_logging_middleware(request: Request, call_next):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return await call_next(request)
+
+    import time as _time
+    start = _time.time()
+    path = request.url.path
+    method = request.method
+
+    # Log request
+    body_text = ""
+    if method in ("POST", "PUT", "PATCH") and path.startswith("/admin"):
+        try:
+            body = await request.body()
+            body_text = body.decode("utf-8", errors="replace")[:2000]
+            # Need to make body readable again
+            async def receive():
+                return {"type": "http.request", "body": body}
+            request._receive = receive
+        except Exception:
+            pass
+
+    response = await call_next(request)
+    duration = round((_time.time() - start) * 1000, 1)
+
+    if path.startswith("/admin") or path == "/ask" or path == "/health":
+        log_msg = f"{method} {path} → {response.status_code} ({duration}ms)"
+        if request.url.query:
+            log_msg += f"  query: {request.url.query}"
+        if body_text:
+            log_msg += f"\n  body: {body_text[:500]}"
+        logger.debug(log_msg)
+
+    return response
 
 
 # 输入清理：去除 HTML 标签和控制字符，防止注入
@@ -399,6 +440,7 @@ def ask(request: Request, req: AskRequest):
     question = _sanitize_input(req.question)
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
+    logger.debug(f"ask: question={question[:200]}")
 
     # 响应缓存：相同 question+mode+history 组合在 TTL 内直接返回
     history_hash = hashlib.md5(str(req.history or []).encode()).hexdigest()[:8] if req.history else ""
@@ -514,6 +556,7 @@ def ask(request: Request, req: AskRequest):
             needs_clarification=needs_clarification,
             clarification=clarification_data,
         )
+        logger.debug(f"ask: response_length={len(answer)}, latency_ms={latency_ms}")
         # 写入响应缓存（仅缓存成功且非 debug 的响应）
         if not req.debug and not needs_clarification:
             _response_cache_put(cache_key, {
@@ -1501,6 +1544,17 @@ async def admin_upload_zip(request: "Request"):
         await form.close()
 
 
+# ===== 调试模式切换 =====
+
+@app.post("/admin/debug")
+def admin_toggle_debug(request: Request, enable: bool = True):
+    """切换调试模式日志级别"""
+    level = logging.DEBUG if enable else logging.INFO
+    logger.setLevel(level)
+    logging.getLogger().setLevel(level)  # root logger too
+    return {"ok": True, "level": "DEBUG" if enable else "INFO"}
+
+
 # ===== 运行时配置接口 =====
 
 @app.get("/admin/config")
@@ -1946,6 +2000,8 @@ def admin_import_knowledge(request: Request, req: ImportKnowledgeRequest):
     if not raw_text:
         raise HTTPException(status_code=400, detail="文档内容不能为空")
 
+    logger.debug(f"import_knowledge: type={entity_type}, id={entity_id}, content_length={len(raw_text)}, dry_run={getattr(req, 'dry_run', False)}")
+
     # 获取导入锁
     lock_key = f"{entity_type}:{entity_id or '_single'}"
     with _import_locks_guard:
@@ -2380,6 +2436,7 @@ def admin_fetch_url(request: Request, req: FetchUrlRequest):
     # 提取媒体
     media = _extract_article_media(html)
 
+    logger.debug(f"fetch_url: url={url}, content_length={len(text)}, media_count={len(media)}")
     return {"title": title, "content": text, "url": url, "length": len(text), "media": media}
 
 
@@ -2567,6 +2624,7 @@ def admin_save_media(request: Request, req: SaveMediaRequest):
     if not product or not re.match(r'^[\w\-\u4e00-\u9fff]+$', product):
         raise HTTPException(status_code=400, detail="无效的产品ID")
 
+    logger.debug(f"save_media: product={product}, media_count={len(req.media)}")
     product_dir = KNOWLEDGE_DIR / product
     if not product_dir.is_dir():
         product_dir.mkdir(parents=True, exist_ok=True)
