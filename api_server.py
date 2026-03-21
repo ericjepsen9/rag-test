@@ -2330,6 +2330,129 @@ async def admin_import_knowledge_file(request: "Request"):
         await form.close()
 
 
+class FetchUrlRequest(BaseModel):
+    """通过 URL 抓取网页正文"""
+    url: str = Field(..., description="要抓取的网页 URL")
+
+
+@app.post("/admin/fetch_url")
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_fetch_url(request: Request, req: FetchUrlRequest):
+    """抓取网页正文内容，返回提取后的纯文本。
+
+    主要用于抓取微信公众号文章等网页内容。
+    """
+    import requests as http_requests
+    from urllib.parse import urlparse
+
+    url = req.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="请提供完整的 URL（以 http:// 或 https:// 开头）")
+
+    # 安全校验：只允许抓取 HTTP(S) 链接
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="仅支持 HTTP/HTTPS 链接")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Referer": "https://mp.weixin.qq.com/",
+    }
+
+    try:
+        resp = http_requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+        resp.raise_for_status()
+    except http_requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"抓取失败: {e}")
+
+    resp.encoding = resp.apparent_encoding or "utf-8"
+    html = resp.text
+
+    # 提取正文
+    title, text = _extract_article_text(html)
+
+    if not text or len(text.strip()) < 20:
+        raise HTTPException(status_code=422, detail="未能提取到有效正文内容，可能被反爬拦截。请尝试手动复制粘贴。")
+
+    return {"title": title, "content": text, "url": url, "length": len(text)}
+
+
+def _extract_article_text(html: str) -> tuple:
+    """从 HTML 中提取文章标题和正文纯文本。
+
+    优先使用 BeautifulSoup（如已安装），否则用正则做基础提取。
+    """
+    title = ""
+    text = ""
+
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        # 提取标题
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content"):
+            title = og_title["content"]
+        elif soup.title:
+            title = soup.title.get_text(strip=True)
+
+        # 移除不需要的标签
+        for tag in soup.find_all(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+
+        # 微信文章特有结构
+        article = soup.find(id="js_content") or soup.find(class_="rich_media_content")
+        if article:
+            text = article.get_text(separator="\n", strip=True)
+        else:
+            # 通用提取：找最大的文本块
+            body = soup.find("body")
+            if body:
+                text = body.get_text(separator="\n", strip=True)
+
+    except ImportError:
+        # 无 BeautifulSoup，用正则基础提取
+        import re as _re
+
+        # 标题
+        m = _re.search(r'<title[^>]*>(.*?)</title>', html, _re.DOTALL | _re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+
+        # og:title
+        m = _re.search(r'property="og:title"\s+content="([^"]*)"', html)
+        if m:
+            title = m.group(1).strip()
+
+        # 微信正文区域
+        m = _re.search(r'id="js_content"[^>]*>(.*?)</div>\s*</div>', html, _re.DOTALL)
+        if m:
+            raw = m.group(1)
+        else:
+            raw = _re.sub(r'<script[^>]*>.*?</script>', '', html, flags=_re.DOTALL | _re.IGNORECASE)
+            raw = _re.sub(r'<style[^>]*>.*?</style>', '', raw, flags=_re.DOTALL | _re.IGNORECASE)
+
+        # 去除 HTML 标签
+        raw = _re.sub(r'<br\s*/?>', '\n', raw, flags=_re.IGNORECASE)
+        raw = _re.sub(r'<p[^>]*>', '\n', raw, flags=_re.IGNORECASE)
+        raw = _re.sub(r'<[^>]+>', '', raw)
+        # 去除 HTML 实体
+        raw = _re.sub(r'&nbsp;', ' ', raw)
+        raw = _re.sub(r'&[a-zA-Z]+;', '', raw)
+        text = _re.sub(r'\n{3,}', '\n\n', raw).strip()
+
+    # 清理多余空行
+    import re as _re2
+    lines = [l.strip() for l in text.split("\n")]
+    text = _re2.sub(r'\n{3,}', '\n\n', "\n".join(lines)).strip()
+
+    return title, text
+
+
 # ===== 静态文件（必须放在所有路由之后，避免拦截 API 路径）=====
 _web_dir = BASE_DIR / "web"
 if _web_dir.is_dir():
