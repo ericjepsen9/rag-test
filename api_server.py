@@ -2377,7 +2377,10 @@ def admin_fetch_url(request: Request, req: FetchUrlRequest):
     if not text or len(text.strip()) < 20:
         raise HTTPException(status_code=422, detail="未能提取到有效正文内容，可能被反爬拦截。请尝试手动复制粘贴。")
 
-    return {"title": title, "content": text, "url": url, "length": len(text)}
+    # 提取媒体
+    media = _extract_article_media(html)
+
+    return {"title": title, "content": text, "url": url, "length": len(text), "media": media}
 
 
 def _extract_article_text(html: str) -> tuple:
@@ -2451,6 +2454,161 @@ def _extract_article_text(html: str) -> tuple:
     text = _re2.sub(r'\n{3,}', '\n\n', "\n".join(lines)).strip()
 
     return title, text
+
+
+def _extract_article_media(html: str) -> list:
+    """从 HTML 中提取文章的图片和视频链接。"""
+    import re as _re
+    media = []
+    seen = set()
+
+    # --- 图片提取 ---
+    # 微信图片：data-src（懒加载）和 src
+    for attr in ("data-src", "src"):
+        for m in _re.finditer(rf'<img[^>]+{attr}="([^"]+)"', html, _re.IGNORECASE):
+            url = m.group(1).strip()
+            if not url or url in seen:
+                continue
+            # 只保留真实图片链接（排除 data:, icon, emoji 等小图）
+            if url.startswith("data:"):
+                continue
+            if any(skip in url for skip in ["emoji", "icon", "/s?__biz=", "res.wx.qq.com/t/wx_fed"]):
+                continue
+            seen.add(url)
+            # 尝试提取 alt 作为描述
+            alt_m = _re.search(r'alt="([^"]*)"', m.group(0))
+            alt = alt_m.group(1) if alt_m else ""
+            media.append({"type": "image", "url": url, "alt": alt})
+
+    # --- 视频提取 ---
+    # 微信文章视频：mpvideo（iframe 或 data-mpvid）
+    for m in _re.finditer(r'data-mpvid="([^"]+)"', html):
+        vid = m.group(1)
+        if vid and vid not in seen:
+            seen.add(vid)
+            media.append({"type": "video", "url": f"https://mp.weixin.qq.com/mp/readtemplate?t=pages/video_player_tmpl&vid={vid}", "alt": ""})
+
+    # video/source 标签
+    for m in _re.finditer(r'<(?:video|source)[^>]+src="([^"]+)"', html, _re.IGNORECASE):
+        url = m.group(1).strip()
+        if url and url not in seen:
+            seen.add(url)
+            media.append({"type": "video", "url": url, "alt": ""})
+
+    # iframe 嵌入视频（腾讯视频等）
+    for m in _re.finditer(r'<iframe[^>]+src="([^"]*(?:v\.qq\.com|mp\.weixin)[^"]*)"', html, _re.IGNORECASE):
+        url = m.group(1).strip()
+        if url and url not in seen:
+            seen.add(url)
+            media.append({"type": "video", "url": url, "alt": ""})
+
+    return media
+
+
+@app.get("/admin/proxy_media")
+@limiter.limit("120/minute")
+def admin_proxy_media(request: Request, url: str = Query(..., description="要代理的媒体 URL")):
+    """代理微信图片/视频，绕过防盗链（去除 Referer）。
+
+    用于在手机端预览微信公众号文章中的图片。
+    """
+    import requests as http_requests
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="仅支持 HTTP/HTTPS")
+
+    # 安全：只代理已知的图片/视频域名
+    allowed_hosts = {"mmbiz.qpic.cn", "mmecoa.qpic.cn", "mmbiz.qlogo.cn",
+                     "mp.weixin.qq.com", "mpvideo.qpic.cn", "wx1.sinaimg.cn",
+                     "wx2.sinaimg.cn", "wx3.sinaimg.cn", "wx4.sinaimg.cn"}
+    if parsed.hostname not in allowed_hosts:
+        raise HTTPException(status_code=403, detail=f"不允许代理该域名: {parsed.hostname}")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Referer": "",  # 空 Referer 绕过防盗链
+    }
+
+    try:
+        resp = http_requests.get(url, headers=headers, timeout=15, stream=True)
+        resp.raise_for_status()
+    except http_requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"获取媒体失败: {e}")
+
+    content_type = resp.headers.get("content-type", "application/octet-stream")
+
+    def _stream():
+        for chunk in resp.iter_content(chunk_size=65536):
+            yield chunk
+
+    return StreamingResponse(
+        _stream(),
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+
+class SaveMediaRequest(BaseModel):
+    """保存选中的媒体到 media.json"""
+    product: str = Field(..., description="产品ID")
+    media: list = Field(..., description="媒体列表，每项包含 title/type/url/keywords/routes")
+
+
+@app.post("/admin/save_media")
+@limiter.limit(_ADMIN_RATE_LIMIT)
+def admin_save_media(request: Request, req: SaveMediaRequest):
+    """将审核通过的媒体追加到产品的 media.json。"""
+    import json
+
+    product = req.product.strip()
+    if not product or not re.match(r'^[\w\-\u4e00-\u9fff]+$', product):
+        raise HTTPException(status_code=400, detail="无效的产品ID")
+
+    product_dir = KNOWLEDGE_DIR / product
+    if not product_dir.is_dir():
+        product_dir.mkdir(parents=True, exist_ok=True)
+
+    media_file = product_dir / "media.json"
+
+    # 读取现有 media.json
+    existing = []
+    if media_file.exists():
+        try:
+            existing = json.loads(media_file.read_text(encoding="utf-8"))
+            if not isinstance(existing, list):
+                existing = []
+        except Exception:
+            existing = []
+
+    # 去重：按 url 去重
+    existing_urls = {item.get("url") for item in existing if isinstance(item, dict)}
+    added = 0
+    for item in req.media:
+        if not isinstance(item, dict) or not item.get("url"):
+            continue
+        if item["url"] in existing_urls:
+            continue
+        # 标准化格式
+        entry = {
+            "title": item.get("title", ""),
+            "type": item.get("type", "image"),
+            "url": item["url"],
+            "routes": item.get("routes", []),
+            "keywords": item.get("keywords", []),
+        }
+        existing.append(entry)
+        existing_urls.add(item["url"])
+        added += 1
+
+    media_file.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 清除缓存
+    invalidate_media_cache(product)
+
+    return {"ok": True, "added": added, "total": len(existing)}
 
 
 # ===== 静态文件（必须放在所有路由之后，避免拦截 API 路径）=====
