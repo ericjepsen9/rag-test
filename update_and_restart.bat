@@ -7,8 +7,10 @@ setlocal
 set "PROJECT_DIR=C:\Users\ericj\bge-m3-test"
 :: Git 分支名（按需修改）
 set "BRANCH=claude/fix-rag-issues-6Cdyl"
-:: 启动命令（按需修改）
-set "START_CMD=python api_server.py"
+:: 环境变量
+set "ADMIN_API_KEY=123456"
+:: 启动命令
+set "START_CMD=uvicorn api_server:app --host 0.0.0.0 --port 8000"
 :: ========== 配置区结束 ==========
 
 echo.
@@ -25,7 +27,7 @@ cd /d "%PROJECT_DIR%" || (
 
 :: 1. 停止正在运行的项目进程
 echo [1/4] 停止现有进程...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":7860" ^| findstr "LISTENING" 2^>nul') do (
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000" ^| findstr "LISTENING" 2^>nul') do (
     echo       终止进程 PID: %%a
     taskkill /F /PID %%a >nul 2>&1
 )
