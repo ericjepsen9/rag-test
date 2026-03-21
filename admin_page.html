@@ -142,6 +142,36 @@
     .upload-item .name { flex: 1; font-weight: 500; }
     .upload-item .size { color: var(--text-secondary); }
 
+    /* Media review grid (import page) */
+    .import-media-item {
+      position: relative; border-radius: 10px; overflow: hidden;
+      border: 2px solid var(--border); cursor: pointer; transition: all .2s;
+    }
+    .import-media-item:hover { border-color: #a5aef5; }
+    .import-media-item.selected { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,107,240,.2); }
+    .import-media-item img {
+      width: 100%; height: 140px; object-fit: cover; display: block; background: #f0f1f4;
+    }
+    .import-media-item .vid-ph {
+      width: 100%; height: 140px; background: #1e2330; display: flex;
+      align-items: center; justify-content: center; color: #fff; font-size: 36px;
+    }
+    .import-media-item .m-check {
+      position: absolute; top: 8px; right: 8px; width: 26px; height: 26px;
+      border-radius: 50%; background: rgba(0,0,0,.45); color: #fff;
+      display: flex; align-items: center; justify-content: center; font-size: 14px;
+      transition: background .15s;
+    }
+    .import-media-item.selected .m-check { background: var(--primary); }
+    .import-media-item .m-badge {
+      position: absolute; top: 8px; left: 8px; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 600; color: #fff; background: rgba(0,0,0,.55);
+    }
+    .import-media-item .m-label {
+      padding: 6px 10px; font-size: 12px; color: var(--text-secondary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
     /* File editor */
     .editor-wrap { position: relative; }
     .editor-wrap textarea { font-family: 'Menlo', 'Consolas', monospace; font-size: 13px;
@@ -459,6 +489,7 @@
               <div class="tabs" id="import-mode-tabs" style="margin-bottom:0">
                 <button class="active" data-tab="text" onclick="switchImportMode('text')">粘贴文本</button>
                 <button data-tab="file" onclick="switchImportMode('file')">上传文件</button>
+                <button data-tab="url" onclick="switchImportMode('url')">URL 导入</button>
               </div>
             </div>
 
@@ -484,6 +515,20 @@
                 </div>
                 <div id="import-file-info" style="margin-top:8px"></div>
               </div>
+            </div>
+
+            <!-- URL 导入模式 -->
+            <div id="import-url-mode" style="display:none">
+              <div class="form-group">
+                <label>文章链接</label>
+                <div style="display:flex;gap:8px">
+                  <input type="text" id="import-url" style="flex:1" placeholder="粘贴公众号文章链接...">
+                  <button class="btn-success" id="btn-fetch-url" onclick="doFetchArticleUrl()">提取</button>
+                </div>
+                <div class="form-hint">支持微信公众号等网页文章，自动提取正文和媒体</div>
+              </div>
+              <div id="import-url-status" style="margin-top:8px"></div>
+              <!-- 提取到的正文会自动填入粘贴文本的 textarea -->
             </div>
 
             <div class="form-group">
@@ -563,6 +608,36 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- 媒体审查区域（URL 导入时显示） -->
+      <div class="card" id="import-media-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h2 style="margin:0">文章媒体审查 <span id="import-media-count" style="font-weight:400;color:var(--text-secondary);font-size:13px"></span></h2>
+          <div style="display:flex;gap:6px">
+            <button class="btn-ghost btn-sm" onclick="importSelectAllMedia(true)">全选</button>
+            <button class="btn-ghost btn-sm" onclick="importSelectAllMedia(false)">取消全选</button>
+          </div>
+        </div>
+        <div class="form-hint" style="margin-bottom:12px">点击选中要保存到知识库的图片/视频，未选中的将被忽略</div>
+        <div id="import-media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px"></div>
+
+        <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+          <div class="row" style="gap:12px">
+            <div class="col" style="min-width:200px">
+              <label>关键词（逗号分隔）</label>
+              <input type="text" id="import-media-keywords" style="width:100%" placeholder="例：术后护理, 效果对比">
+            </div>
+            <div class="col" style="min-width:200px">
+              <label>路由标签（逗号分隔）</label>
+              <input type="text" id="import-media-routes" style="width:100%" placeholder="例：aftercare, effect">
+            </div>
+            <div style="display:flex;align-items:flex-end">
+              <button class="btn-primary" id="btn-save-import-media" onclick="doSaveImportMedia()">保存选中媒体</button>
+            </div>
+          </div>
+        </div>
+        <div id="import-media-status" style="margin-top:10px"></div>
       </div>
     </div>
 
@@ -2920,8 +2995,132 @@ function switchImportMode(mode) {
   importMode = mode;
   document.getElementById('import-text-mode').style.display = mode === 'text' ? '' : 'none';
   document.getElementById('import-file-mode').style.display = mode === 'file' ? '' : 'none';
+  document.getElementById('import-url-mode').style.display = mode === 'url' ? '' : 'none';
   document.querySelectorAll('#import-mode-tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === mode));
+}
+
+// ===== URL 导入 & 媒体审查 =====
+let importFetchedMedia = [];
+let importSelectedMedia = new Set();
+
+async function doFetchArticleUrl() {
+  const url = document.getElementById('import-url').value.trim();
+  if (!url || !url.startsWith('http')) {
+    document.getElementById('import-url-status').innerHTML = '<span style="color:var(--danger)">请输入完整链接</span>';
+    return;
+  }
+  const btn = document.getElementById('btn-fetch-url');
+  btn.disabled = true; btn.textContent = '提取中...';
+  document.getElementById('import-url-status').innerHTML = '<span style="color:var(--primary)">正在提取文章内容和媒体...</span>';
+
+  try {
+    const result = await api('/admin/fetch_url', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ url }),
+    });
+    btn.disabled = false; btn.textContent = '提取';
+
+    // 填入文本到粘贴文本区域
+    document.getElementById('import-content').value = result.content || '';
+    document.getElementById('import-char-count').textContent = (result.content||'').length;
+    // 自动切换到文本模式以显示提取的内容，但保持 URL 模式的 importMode
+    importMode = 'text';
+
+    // 媒体处理
+    importFetchedMedia = result.media || [];
+    importSelectedMedia.clear();
+
+    let statusMsg = '提取成功！正文 ' + result.length + ' 字';
+    if (importFetchedMedia.length > 0) {
+      statusMsg += '，发现 ' + importFetchedMedia.length + ' 个媒体文件（见下方）';
+      renderImportMediaGrid();
+      document.getElementById('import-media-card').style.display = '';
+    } else {
+      document.getElementById('import-media-card').style.display = 'none';
+      statusMsg += '，未发现媒体';
+    }
+    document.getElementById('import-url-status').innerHTML = '<span style="color:var(--success)">' + esc(statusMsg) + '</span>';
+    toast(statusMsg, 'success');
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '提取';
+    document.getElementById('import-url-status').innerHTML = '<span style="color:var(--danger)">提取失败: ' + esc(e.message) + '<br>可尝试手动复制粘贴文章内容</span>';
+  }
+}
+
+function renderImportMediaGrid() {
+  const grid = document.getElementById('import-media-grid');
+  const imgs = importFetchedMedia.filter(m => m.type === 'image').length;
+  const vids = importFetchedMedia.filter(m => m.type === 'video').length;
+  document.getElementById('import-media-count').textContent =
+    '(' + imgs + ' 张图片' + (vids > 0 ? ', ' + vids + ' 个视频' : '') + ')';
+
+  grid.innerHTML = importFetchedMedia.map((m, i) => {
+    const isImg = m.type === 'image';
+    const proxyUrl = '/admin/proxy_media?url=' + encodeURIComponent(m.url);
+    const sel = importSelectedMedia.has(i) ? ' selected' : '';
+    const check = importSelectedMedia.has(i) ? '&#10003;' : '';
+    const content = isImg
+      ? '<img src="' + proxyUrl + '" loading="lazy" onerror="this.parentElement.innerHTML=\'<div class=vid-ph style=color:#999;font-size:14px>加载失败</div>\'+this.parentElement.innerHTML.slice(this.parentElement.innerHTML.indexOf(\'<span\'))">'
+      : '<div class="vid-ph">&#9654;</div>';
+    return '<div class="import-media-item' + sel + '" onclick="toggleImportMedia(' + i + ')">' +
+      content +
+      '<span class="m-badge">' + (isImg ? '图片' : '视频') + '</span>' +
+      '<span class="m-check">' + check + '</span>' +
+      '<div class="m-label">' + esc(m.alt || (isImg ? '图片 ' + (i+1) : '视频 ' + (i+1))) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function toggleImportMedia(idx) {
+  if (importSelectedMedia.has(idx)) importSelectedMedia.delete(idx);
+  else importSelectedMedia.add(idx);
+  renderImportMediaGrid();
+}
+
+function importSelectAllMedia(select) {
+  if (select) importFetchedMedia.forEach((_, i) => importSelectedMedia.add(i));
+  else importSelectedMedia.clear();
+  renderImportMediaGrid();
+}
+
+async function doSaveImportMedia() {
+  const product = document.getElementById('import-id')?.value.trim() || '';
+  if (!product) { toast('请先填写实体 ID', 'error'); return; }
+  if (importSelectedMedia.size === 0) { toast('请至少选择一个媒体', 'error'); return; }
+
+  const keywords = document.getElementById('import-media-keywords').value.trim()
+    .split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  const routes = document.getElementById('import-media-routes').value.trim()
+    .split(/[,，]/).map(s => s.trim()).filter(Boolean);
+
+  const mediaList = [];
+  importSelectedMedia.forEach(i => {
+    const m = importFetchedMedia[i];
+    mediaList.push({
+      title: m.alt || (m.type === 'image' ? '图片' : '视频'),
+      type: m.type, url: m.url, keywords, routes,
+    });
+  });
+
+  const btn = document.getElementById('btn-save-import-media');
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    const result = await api('/admin/save_media', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ product, media: mediaList }),
+    });
+    btn.disabled = false; btn.textContent = '保存选中媒体';
+    document.getElementById('import-media-status').innerHTML =
+      '<span style="color:var(--success)">保存成功！新增 ' + result.added + ' 个，总计 ' + result.total + ' 个媒体</span>';
+    toast('媒体保存成功', 'success');
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '保存选中媒体';
+    document.getElementById('import-media-status').innerHTML =
+      '<span style="color:var(--danger)">保存失败: ' + esc(e.message) + '</span>';
+  }
 }
 
 function handleImportFile(e) {
