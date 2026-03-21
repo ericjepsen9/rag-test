@@ -1574,11 +1574,15 @@ async function loadModelConfig() {
         enabled: configs.chat?.enabled, provider: configs.chat?.provider,
         model: configs.chat?.model, api_base: configs.chat?.api_base || '(default)',
         api_key_set: configs.chat?.api_key_set,
+        connection_verified: configs.chat?.connection_verified,
+        client_ready: configs.chat?.client_ready,
       },
       '知识库 LLM': {
         enabled: configs.knowledge?.enabled, provider: configs.knowledge?.provider,
         model: configs.knowledge?.model, api_base: configs.knowledge?.api_base || '(default)',
         api_key_set: configs.knowledge?.api_key_set,
+        connection_verified: configs.knowledge?.connection_verified,
+        client_ready: configs.knowledge?.client_ready,
       },
     }, null, 2);
     // Render provider cards
@@ -1800,11 +1804,15 @@ async function refreshModelStatusJson() {
         enabled: configs.chat?.enabled, provider: configs.chat?.provider,
         model: configs.chat?.model, api_base: configs.chat?.api_base || '(default)',
         api_key_set: configs.chat?.api_key_set,
+        connection_verified: configs.chat?.connection_verified,
+        client_ready: configs.chat?.client_ready,
       },
       '知识库 LLM': {
         enabled: configs.knowledge?.enabled, provider: configs.knowledge?.provider,
         model: configs.knowledge?.model, api_base: configs.knowledge?.api_base || '(default)',
         api_key_set: configs.knowledge?.api_key_set,
+        connection_verified: configs.knowledge?.connection_verified,
+        client_ready: configs.knowledge?.client_ready,
       },
     }, null, 2);
   } catch(e) {}
