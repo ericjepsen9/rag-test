@@ -327,6 +327,49 @@ _ALL_ROUTE_KEYWORDS = set()
 for _kws in QUESTION_ROUTES.values():
     _ALL_ROUTE_KEYWORDS.update(kw.lower() for kw in _kws)
 
+# 所有产品/项目别名汇集（小写），用于领域相关性检测
+_ALL_PRODUCT_TERMS = set()
+for _aliases in PRODUCT_ALIASES.values():
+    _ALL_PRODUCT_TERMS.update(a.lower() for a in _aliases)
+for _aliases in PROJECT_ALIASES.values():
+    _ALL_PRODUCT_TERMS.update(a.lower() for a in _aliases)
+for _aliases in PROCEDURE_ALIASES.values():
+    _ALL_PRODUCT_TERMS.update(a.lower() for a in _aliases)
+for _aliases in EQUIPMENT_ALIASES.values():
+    _ALL_PRODUCT_TERMS.update(a.lower() for a in _aliases)
+
+
+def _has_domain_relevance(text: str) -> bool:
+    """检查查询是否包含任何医美领域相关词汇。
+
+    用于拦截与医美完全无关的短查询（如"猪头"、"苹果"等），
+    避免系统对无关查询强行返回知识库内容。
+    """
+    if not text:
+        return False
+    low = text.lower()
+
+    # 1. 包含医美保护词（注射、术后、皮肤等）
+    if _MEDAES_GUARD_PATTERNS.search(text):
+        return True
+
+    # 2. 包含路由关键词
+    for kw in _ALL_ROUTE_KEYWORDS:
+        if kw in low:
+            return True
+
+    # 3. 包含产品/项目/器械名
+    for term in _ALL_PRODUCT_TERMS:
+        if term in low:
+            return True
+
+    # 4. 包含适应症关键词
+    for kw in INDICATION_KEYWORDS:
+        if kw.lower() in low:
+            return True
+
+    return False
+
 # 预计算小写路由关键词，避免 _detect_route_for_expansion / _extract_history_context 每次调用 .lower()
 _QUESTION_ROUTES_LOWER = {
     route: [kw.lower() for kw in keywords]
@@ -552,6 +595,12 @@ def rewrite_query(question: str, history: Optional[List[Dict]] = None,
         _OFFTOPIC_FULL_PATTERNS.search(raw)
         and not _MEDAES_GUARD_PATTERNS.search(raw)
     )
+
+    # 领域无关兜底检测：短查询（≤6字）且不含任何医美领域词汇时也标记为 offtopic
+    # 防止"猪头"、"苹果"等完全无关查询被默认路由到 basic 并返回知识库内容
+    if not is_offtopic and not is_chitchat and len(raw) <= 6:
+        if not _has_domain_relevance(raw):
+            is_offtopic = True
 
     # 清理纠正前缀："不对，我问的是禁忌人群" → "禁忌人群"（在上下文补全之前清理）
     cleaned = _CORRECTION_PREFIX.sub("", raw).strip() if _CORRECTION_PREFIX.search(raw) else raw

@@ -2165,23 +2165,34 @@ def answer_one(question: str, mode: str, rewrite: dict = None,
                 return llm_answer
 
     # ---- 策略2: 规则提取（Fallback）——从知识库文档中按章节规则提取条目 ----
-    body_lines = parse_answer(route, product, mode, question=question)
 
-    # 补充 FAQ 命中：规则提取结果不足或不覆盖问题核心时，用 FAQ 补充
-    # 条件：body_lines < 6 (不足) 或 body_lines 不包含问题中的关键中文字符 (不相关)
-    _need_faq_supplement = len(body_lines) < 6
-    if not _need_faq_supplement and body_lines and question:
-        _q_key_chars = set(c for c in question if '\u4e00' <= c <= '\u9fff')
-        _body_text = "".join(body_lines)
-        _q_coverage = sum(1 for c in _q_key_chars if c in _body_text)
-        _need_faq_supplement = _q_coverage < len(_q_key_chars) * 0.5
-    if hits and _need_faq_supplement:
-        faq_supplement = _extract_faq_from_hits(hits, question, _q_bigrams=_q_bigrams)
-        if faq_supplement:
-            if body_lines:
-                body_lines = faq_supplement + [""] + body_lines
-            else:
-                body_lines = faq_supplement
+    # P3: 绝对分数下限 —— 防止搜索结果相关性极低时仍从知识库提取内容
+    # parse_answer() 按路由从知识文件中提取，不校验查询相关性。
+    # 当最高分低于绝对下限时，说明查询与知识库内容不匹配，应跳过规则提取。
+    _ABSOLUTE_SCORE_FLOOR = 0.35
+    _top_hit_score = max((h.get("hybrid_score") or h.get("score", 0.0) for h in hits), default=0.0) if hits else 0.0
+    _skip_rule_extract = _top_hit_score < _ABSOLUTE_SCORE_FLOOR and not product
+
+    if _skip_rule_extract:
+        body_lines = []
+    else:
+        body_lines = parse_answer(route, product, mode, question=question)
+
+        # 补充 FAQ 命中：规则提取结果不足或不覆盖问题核心时，用 FAQ 补充
+        # 条件：body_lines < 6 (不足) 或 body_lines 不包含问题中的关键中文字符 (不相关)
+        _need_faq_supplement = len(body_lines) < 6
+        if not _need_faq_supplement and body_lines and question:
+            _q_key_chars = set(c for c in question if '\u4e00' <= c <= '\u9fff')
+            _body_text = "".join(body_lines)
+            _q_coverage = sum(1 for c in _q_key_chars if c in _body_text)
+            _need_faq_supplement = _q_coverage < len(_q_key_chars) * 0.5
+        if hits and _need_faq_supplement:
+            faq_supplement = _extract_faq_from_hits(hits, question, _q_bigrams=_q_bigrams)
+            if faq_supplement:
+                if body_lines:
+                    body_lines = faq_supplement + [""] + body_lines
+                else:
+                    body_lines = faq_supplement
 
     # 关联数据补充：从 relations.json 中提取跨实体信息
     relation_lines = relation_enrich(route, product, question)
