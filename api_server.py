@@ -46,6 +46,7 @@ _SHARED_DIR_NAMES = frozenset(SHARED_ENTITY_DIRS.values())
 
 BASE_DIR = Path(__file__).resolve().parent
 ADMIN_PAGE = BASE_DIR / "admin_page.html"
+MOBILE_PAGE = BASE_DIR / "mobile.html"
 CHAT_PAGE = BASE_DIR / "web" / "chat.html"
 
 _startup_time: float = 0.0  # 服务启动时间戳（monotonic）
@@ -743,6 +744,14 @@ def admin_page():
     if not ADMIN_PAGE.exists():
         raise HTTPException(status_code=404, detail="admin_page.html 不存在")
     return FileResponse(ADMIN_PAGE, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/mobile")
+def mobile_page():
+    """手机端知识库快捷导入页面"""
+    if not MOBILE_PAGE.exists():
+        raise HTTPException(status_code=404, detail="mobile.html 不存在")
+    return FileResponse(MOBILE_PAGE, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/admin/products")

@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>知识库快捷导入</title>
+  <style>
+    :root {
+      --primary: #5b6bf0; --primary-dark: #4558e0;
+      --success: #22c55e; --danger: #ef4444; --warning: #f59e0b;
+      --bg: #f4f6f9; --card: #fff; --border: #e2e5ea;
+      --text: #1e2330; --text-sec: #6b7280;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.6;
+      padding: 16px; min-height: 100vh;
+    }
+    .header {
+      text-align: center; padding: 20px 0 16px;
+    }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header p { font-size: 13px; color: var(--text-sec); margin-top: 4px; }
+
+    .card {
+      background: var(--card); border-radius: var(--radius); padding: 20px;
+      margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+    }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .hint { font-size: 12px; color: var(--text-sec); margin-bottom: 10px; }
+
+    input[type="text"], input[type="password"], select, textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 15px; font-family: inherit; background: #fff; color: var(--text);
+      -webkit-appearance: none; appearance: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,107,240,.12);
+    }
+    textarea {
+      min-height: 200px; resize: vertical; line-height: 1.5;
+    }
+    select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%236b7280' stroke-width='1.5'/%3E%3C/svg%3E");
+             background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+
+    .row { display: flex; gap: 12px; margin-bottom: 14px; }
+    .row > * { flex: 1; }
+
+    .btn {
+      display: block; width: 100%; padding: 14px; border: none; border-radius: 10px;
+      font-size: 16px; font-weight: 600; cursor: pointer; text-align: center;
+      transition: all .2s; -webkit-tap-highlight-color: transparent;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-primary:active { transform: scale(.98); }
+    .btn-primary:disabled { background: #a5aef5; cursor: not-allowed; }
+
+    .btn-outline {
+      background: transparent; color: var(--primary); border: 1.5px solid var(--primary);
+      padding: 12px; font-size: 14px; margin-top: 10px;
+    }
+
+    .status {
+      margin-top: 16px; padding: 14px; border-radius: 10px; font-size: 14px;
+      display: none; line-height: 1.6; word-break: break-all;
+    }
+    .status.success { display: block; background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .status.error { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .status.loading { display: block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+    .login-card { max-width: 400px; margin: 60px auto; }
+    .login-card h2 { text-align: center; margin-bottom: 20px; font-size: 18px; }
+
+    .tips { font-size: 12px; color: var(--text-sec); line-height: 1.8; }
+    .tips b { color: var(--text); }
+
+    .hidden { display: none !important; }
+
+    /* 已登录指示 */
+    .auth-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; color: var(--text-sec); margin-bottom: 12px;
+    }
+    .auth-bar .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+                     background: var(--success); margin-right: 4px; vertical-align: middle; }
+    .auth-bar a { color: var(--danger); text-decoration: none; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<!-- ===== 登录界面 ===== -->
+<div id="loginView">
+  <div class="card login-card">
+    <h2>知识库快捷导入</h2>
+    <div style="margin-bottom:16px">
+      <label>管理密钥</label>
+      <input type="password" id="apiKeyInput" placeholder="输入 ADMIN_API_KEY" autocomplete="off">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">登 录</button>
+    <div id="loginStatus" class="status"></div>
+  </div>
+</div>
+
+<!-- ===== 主界面 ===== -->
+<div id="mainView" class="hidden">
+  <div class="header">
+    <h1>知识库快捷导入</h1>
+    <p>粘贴公众号文章内容，一键导入知识库</p>
+  </div>
+
+  <div class="auth-bar">
+    <span><span class="dot"></span>已登录</span>
+    <a href="javascript:void(0)" onclick="doLogout()">退出</a>
+  </div>
+
+  <!-- 步骤说明 -->
+  <div class="card">
+    <div class="tips">
+      <b>使用方法：</b><br>
+      1. 微信打开文章 → 右上角 <b>···</b> → <b>复制链接</b> 或 <b>全选复制</b>正文<br>
+      2. 在下方粘贴内容<br>
+      3. 选择类型和ID，点击提交
+    </div>
+  </div>
+
+  <!-- 输入表单 -->
+  <div class="card">
+    <div style="margin-bottom:14px">
+      <label>文章标题（可选，方便识别）</label>
+      <input type="text" id="titleInput" placeholder="例：XX产品介绍">
+    </div>
+
+    <div class="row">
+      <div>
+        <label>知识类型</label>
+        <select id="typeSelect">
+          <option value="product">产品 (product)</option>
+          <option value="procedure">术式 (procedure)</option>
+          <option value="equipment">设备 (equipment)</option>
+          <option value="material">材料 (material)</option>
+          <option value="anatomy">解剖 (anatomy)</option>
+          <option value="indication">适应症 (indication)</option>
+          <option value="complication">并发症 (complication)</option>
+          <option value="course">课程 (course)</option>
+          <option value="script">话术 (script)</option>
+        </select>
+      </div>
+      <div>
+        <label>实体 ID</label>
+        <input type="text" id="idInput" placeholder="如：product_01">
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <label>文章内容</label>
+      <div class="hint">直接粘贴公众号文章全文即可，系统会自动整理</div>
+      <textarea id="contentArea" placeholder="在此粘贴文章正文内容..."></textarea>
+    </div>
+
+    <div class="row" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="buildCheck" checked style="width:18px;height:18px">
+        <label for="buildCheck" style="margin:0">导入后自动建索引</label>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="dryRunCheck" style="width:18px;height:18px">
+        <label for="dryRunCheck" style="margin:0">仅预览（不写入）</label>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="submitBtn" onclick="doSubmit()">提交导入</button>
+    <button class="btn btn-outline" onclick="clearForm()">清空表单</button>
+  </div>
+
+  <!-- 结果 -->
+  <div id="resultStatus" class="status"></div>
+
+  <!-- 历史 -->
+  <div class="card" id="historyCard" style="display:none">
+    <label>最近导入</label>
+    <div id="historyList" style="font-size:13px;color:var(--text-sec)"></div>
+  </div>
+</div>
+
+<script>
+const API_BASE = location.origin;
+let apiKey = localStorage.getItem('rag_admin_key') || '';
+
+// ===== 登录 =====
+function doLogin() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (!key) { showLoginStatus('请输入密钥', 'error'); return; }
+  // 验证密钥：调一个简单的 admin 接口
+  showLoginStatus('验证中...', 'loading');
+  fetch(API_BASE + '/admin/products', {
+    headers: { 'Authorization': 'Bearer ' + key }
+  }).then(r => {
+    if (r.ok) {
+      apiKey = key;
+      localStorage.setItem('rag_admin_key', key);
+      showMain();
+    } else {
+      showLoginStatus('密钥错误或服务不可用', 'error');
+    }
+  }).catch(() => showLoginStatus('无法连接服务器', 'error'));
+}
+
+function doLogout() {
+  apiKey = '';
+  localStorage.removeItem('rag_admin_key');
+  document.getElementById('loginView').classList.remove('hidden');
+  document.getElementById('mainView').classList.add('hidden');
+  document.getElementById('apiKeyInput').value = '';
+}
+
+function showMain() {
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('mainView').classList.remove('hidden');
+  loadProducts();
+}
+
+function showLoginStatus(msg, type) {
+  const el = document.getElementById('loginStatus');
+  el.className = 'status ' + type;
+  el.textContent = msg;
+}
+
+// ===== 自动登录 =====
+if (apiKey) {
+  fetch(API_BASE + '/admin/products', {
+    headers: { 'Authorization': 'Bearer ' + apiKey }
+  }).then(r => { if (r.ok) showMain(); })
+    .catch(() => {});
+}
+
+// ===== 加载产品列表供选择 =====
+function loadProducts() {
+  fetch(API_BASE + '/admin/products', {
+    headers: { 'Authorization': 'Bearer ' + apiKey }
+  }).then(r => r.json()).then(data => {
+    if (!data.products) return;
+    const dl = document.createElement('datalist');
+    dl.id = 'productList';
+    data.products.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.product;
+      dl.appendChild(opt);
+    });
+    // 移除旧 datalist
+    const old = document.getElementById('productList');
+    if (old) old.remove();
+    document.body.appendChild(dl);
+    document.getElementById('idInput').setAttribute('list', 'productList');
+  }).catch(() => {});
+}
+
+// ===== 提交 =====
+function doSubmit() {
+  const type = document.getElementById('typeSelect').value;
+  const id = document.getElementById('idInput').value.trim();
+  const content = document.getElementById('contentArea').value.trim();
+  const title = document.getElementById('titleInput').value.trim();
+  const build = document.getElementById('buildCheck').checked;
+  const dryRun = document.getElementById('dryRunCheck').checked;
+
+  if (!content || content.length < 10) {
+    showResult('请粘贴文章内容（至少10个字符）', 'error'); return;
+  }
+  if (['product','procedure','equipment','material'].includes(type) && !id) {
+    showResult('该类型需要填写实体 ID', 'error'); return;
+  }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '导入中，请稍候...';
+  showResult('正在调用 LLM 整理文档，可能需要 10-30 秒...', 'loading');
+
+  const fullContent = title ? `【${title}】\n\n${content}` : content;
+
+  fetch(API_BASE + '/admin/import_knowledge', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    },
+    body: JSON.stringify({
+      type: type,
+      id: id,
+      content: fullContent,
+      build: build,
+      dry_run: dryRun
+    })
+  })
+  .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+  .then(({ ok, data }) => {
+    btn.disabled = false;
+    btn.textContent = '提交导入';
+    if (ok) {
+      const msg = dryRun
+        ? '预览成功！\n' + JSON.stringify(data, null, 2)
+        : '导入成功！' + (data.files_written ? '\n写入文件: ' + data.files_written.join(', ') : '');
+      showResult(msg, 'success');
+      addHistory(title || id || type, true);
+    } else {
+      showResult('导入失败: ' + (data.detail || JSON.stringify(data)), 'error');
+    }
+  })
+  .catch(e => {
+    btn.disabled = false;
+    btn.textContent = '提交导入';
+    showResult('请求失败: ' + e.message, 'error');
+  });
+}
+
+function showResult(msg, type) {
+  const el = document.getElementById('resultStatus');
+  el.className = 'status ' + type;
+  el.textContent = msg;
+  el.style.whiteSpace = 'pre-wrap';
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function clearForm() {
+  document.getElementById('titleInput').value = '';
+  document.getElementById('idInput').value = '';
+  document.getElementById('contentArea').value = '';
+  document.getElementById('resultStatus').className = 'status';
+  document.getElementById('resultStatus').style.display = 'none';
+}
+
+// ===== 简易历史记录 =====
+function addHistory(name, success) {
+  const list = JSON.parse(localStorage.getItem('rag_import_history') || '[]');
+  list.unshift({ name, success, time: new Date().toLocaleString('zh-CN') });
+  if (list.length > 10) list.length = 10;
+  localStorage.setItem('rag_import_history', JSON.stringify(list));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = JSON.parse(localStorage.getItem('rag_import_history') || '[]');
+  if (!list.length) return;
+  document.getElementById('historyCard').style.display = '';
+  document.getElementById('historyList').innerHTML = list.map(h =>
+    `<div style="padding:6px 0;border-bottom:1px solid #f0f0f0">
+      ${h.success ? '<span style="color:#22c55e">&#10003;</span>' : '<span style="color:#ef4444">&#10007;</span>'}
+      ${h.name} <span style="float:right;font-size:11px">${h.time}</span>
+    </div>`
+  ).join('');
+}
+renderHistory();
+</script>
+</body>
+</html>
