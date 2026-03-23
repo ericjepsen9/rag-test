@@ -530,8 +530,9 @@
                 <div style="display:flex;gap:8px">
                   <input type="text" id="import-url" style="flex:1" placeholder="粘贴公众号文章链接...">
                   <button class="btn-success" id="btn-fetch-url" onclick="doFetchArticleUrl()">提取</button>
+                  <button class="btn-primary" id="btn-oneclick-import" onclick="doOneClickImport()" title="提取文本 → AI整理 → 保存媒体，全自动完成">一键导入</button>
                 </div>
-                <div class="form-hint">支持微信公众号等网页文章，自动提取正文和媒体</div>
+                <div class="form-hint">支持微信公众号等网页文章，自动提取正文和媒体。「一键导入」= 提取 + AI整理 + 保存媒体</div>
               </div>
               <div id="import-url-status" style="margin-top:8px"></div>
               <!-- 提取到的正文会自动填入粘贴文本的 textarea -->
@@ -3133,6 +3134,142 @@ async function doFetchArticleUrl() {
     btn.disabled = false; btn.textContent = '提取';
     document.getElementById('import-url-status').innerHTML = '<span style="color:var(--danger)">提取失败: ' + esc(e.message) + '<br>可尝试手动复制粘贴文章内容</span>';
   }
+}
+
+async function doOneClickImport() {
+  // 一键导入：提取URL → AI整理 → 自动保存媒体
+  const url = document.getElementById('import-url').value.trim();
+  if (!url || !url.startsWith('http')) {
+    document.getElementById('import-url-status').innerHTML = '<span style="color:var(--danger)">请输入完整链接</span>';
+    return;
+  }
+
+  const entityType = document.getElementById('import-type').value;
+  const entityId = document.getElementById('import-id')?.value.trim() || '';
+  const needId = ['product','procedure','equipment','material'].includes(entityType);
+  if (needId && !entityId) {
+    toast('请先填写实体ID', 'error'); return;
+  }
+
+  const btn = document.getElementById('btn-oneclick-import');
+  const btnFetch = document.getElementById('btn-fetch-url');
+  btn.disabled = true; btnFetch.disabled = true;
+  btn.textContent = '提取中...';
+  document.getElementById('import-url-status').innerHTML = '<span style="color:var(--primary)">一键导入：正在提取文章内容...</span>';
+
+  try {
+    // Step 1: 提取文章
+    const result = await api('/admin/fetch_url', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ url }),
+    });
+
+    document.getElementById('import-content').value = result.content || '';
+    document.getElementById('import-char-count').textContent = (result.content||'').length;
+    switchImportMode('text');
+
+    // 媒体处理：全选所有媒体
+    importFetchedMedia = result.media || [];
+    importSelectedMedia.clear();
+    if (importFetchedMedia.length > 0) {
+      importFetchedMedia.forEach((_, i) => importSelectedMedia.add(i));
+      renderImportMediaGrid();
+      document.getElementById('import-media-card').style.display = '';
+    }
+
+    const content = result.content || '';
+    if (!content || content.length < 10) {
+      throw new Error('提取到的内容太短（少于10字），请检查链接');
+    }
+
+    // Step 2: 自动调用 AI 整理
+    btn.textContent = 'AI整理中...';
+    document.getElementById('import-url-status').innerHTML = '<span style="color:var(--primary)">一键导入：正在 AI 整理文档...</span>';
+
+    importRawText = content;
+    const importResult = await api('/admin/import_knowledge', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({type: entityType, id: entityId, content, build: false, dry_run: true}),
+    });
+
+    // 显示整理结果（复用 doImport 的结果展示逻辑）
+    const resultCard = document.getElementById('import-result-card');
+    resultCard.style.display = '';
+    importPreviewData = importResult;
+
+    document.getElementById('import-result-title').textContent = '审阅整理结果';
+    document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-info">审阅中</span>';
+
+    const files = importResult.files_generated || {};
+    let metaHtml = `<b>类型：</b> ${esc(importResult.type)} &nbsp;|&nbsp; <b>ID：</b> ${esc(importResult.id||'-')} &nbsp;|&nbsp; <b>模型：</b> ${esc(importResult.model||'-')}<br>`;
+    metaHtml += `<b>生成文件：</b> `;
+    const fileList = Object.entries(files).map(([f, sz]) => `${f} (${fmtSize(sz)})`);
+    metaHtml += fileList.length ? fileList.join(', ') : '无';
+    document.getElementById('import-result-meta').innerHTML = metaHtml;
+
+    const aliasHint = document.getElementById('import-alias-hint');
+    if (importResult.alias_hint) {
+      const h = importResult.alias_hint;
+      aliasHint.style.display = '';
+      aliasHint.innerHTML = `<h2 style="margin:0 0 6px;font-size:13px;color:#b36b00">&#x26a0; 别名注册提醒</h2>
+        <div style="font-size:12px;line-height:1.8">
+        请在 <code>rag_runtime_config.py</code> 的 <code>${esc(h.config_key)}</code> 中添加：<br>
+        <code style="background:#fff;padding:4px 8px;border-radius:4px;display:inline-block;margin-top:4px">
+        "${esc(h.entity_id)}": ${esc(JSON.stringify(h.aliases))},
+        </code></div>`;
+    } else {
+      aliasHint.style.display = 'none';
+    }
+
+    if (importResult.preview) {
+      revisionHistory = [JSON.parse(JSON.stringify(importResult.preview))];
+      revisionIndex = 0;
+    }
+
+    const previewSection = document.getElementById('import-preview-section');
+    previewSection.style.display = '';
+    previewEditing = false;
+    document.getElementById('btn-toggle-edit').textContent = '编辑模式';
+    document.getElementById('preview-text').readOnly = true;
+    document.getElementById('preview-text').style.background = '#f5f6fa';
+    switchPreviewTab('main');
+    updateRevisionBar();
+
+    // Step 3: 自动保存媒体（如果有）
+    let mediaMsg = '';
+    if (importFetchedMedia.length > 0 && entityId) {
+      try {
+        const mediaList = [];
+        importSelectedMedia.forEach(i => {
+          const m = importFetchedMedia[i];
+          mediaList.push({
+            title: m.alt || (m.type === 'image' ? '图片' : '视频'),
+            type: m.type, url: m.url, keywords: [], routes: [],
+          });
+        });
+        const mediaResult = await api('/admin/save_media', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ product: entityId, media: mediaList }),
+        });
+        mediaMsg = `，${mediaResult.added} 个媒体已保存`;
+      } catch(e) {
+        mediaMsg = '，媒体保存失败: ' + e.message;
+      }
+    }
+
+    document.getElementById('import-url-status').innerHTML =
+      `<span style="color:var(--success)">一键导入完成！正文 ${result.length} 字，AI已整理${mediaMsg}。请审阅后点击「正式导入」</span>`;
+    toast('一键导入完成，请审阅整理结果后点击「正式导入」', 'success');
+
+  } catch(e) {
+    document.getElementById('import-url-status').innerHTML = '<span style="color:var(--danger)">一键导入失败: ' + esc(e.message) + '</span>';
+    toast('一键导入失败: ' + e.message, 'error');
+  }
+  btn.disabled = false; btnFetch.disabled = false;
+  btn.textContent = '一键导入';
 }
 
 function renderImportMediaGrid() {

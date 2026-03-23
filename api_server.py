@@ -2513,6 +2513,29 @@ def _extract_article_text(html: str) -> tuple:
     return title, text
 
 
+def _upgrade_wechat_image_url(url: str) -> str:
+    """将微信图片 URL 升级为原图质量。
+
+    - /640 → /0  获取原始尺寸
+    - wx_fmt=jpeg → wx_fmt=png  无损格式（如果原图是 png）
+    - 去掉 tp=webp 强制压缩参数
+    """
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    parsed = urlparse(url)
+    if parsed.hostname not in ("mmbiz.qpic.cn", "mmecoa.qpic.cn", "mmbiz.qlogo.cn"):
+        return url
+    # 路径末尾 /640 /320 等缩略尺寸 → /0 (原图)
+    import re as _re
+    path = _re.sub(r'/\d{2,4}$', '/0', parsed.path)
+    # 清理查询参数
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    qs.pop("tp", None)        # 去掉 tp=webp 强制压缩
+    qs.pop("wx_lazy", None)   # 去掉懒加载标记
+    qs.pop("wx_co", None)     # 去掉协同标记
+    new_query = urlencode({k: v[0] for k, v in qs.items()}, safe="")
+    return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, new_query, parsed.fragment))
+
+
 def _extract_article_media(html: str) -> list:
     """从 HTML 中提取文章的图片和视频链接。"""
     import re as _re
@@ -2531,6 +2554,8 @@ def _extract_article_media(html: str) -> list:
                 continue
             if any(skip in url for skip in ["emoji", "icon", "/s?__biz=", "res.wx.qq.com/t/wx_fed"]):
                 continue
+            # 升级为原图质量
+            url = _upgrade_wechat_image_url(url)
             seen.add(url)
             # 尝试提取 alt 作为描述
             alt_m = _re.search(r'alt="([^"]*)"', m.group(0))
