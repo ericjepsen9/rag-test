@@ -2514,11 +2514,12 @@ def _extract_article_text(html: str) -> tuple:
 
 
 def _upgrade_wechat_image_url(url: str) -> str:
-    """将微信图片 URL 升级为原图质量。
+    """将微信图片 URL 升级为无水印原图。
 
+    微信公众号平台在图片分发时自动添加水印，通过以下方式尝试获取原图：
     - /640 → /0  获取原始尺寸
-    - wx_fmt=jpeg → wx_fmt=png  无损格式（如果原图是 png）
-    - 去掉 tp=webp 强制压缩参数
+    - wx_fmt=other  请求原始上传格式，绕过微信图片处理管线（含水印）
+    - 去掉 tp=webp 等压缩参数
     """
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
     parsed = urlparse(url)
@@ -2532,6 +2533,9 @@ def _upgrade_wechat_image_url(url: str) -> str:
     qs.pop("tp", None)        # 去掉 tp=webp 强制压缩
     qs.pop("wx_lazy", None)   # 去掉懒加载标记
     qs.pop("wx_co", None)     # 去掉协同标记
+    qs.pop("wxfrom", None)    # 去掉来源标记
+    # wx_fmt=other 请求原始格式，可能绕过微信水印处理
+    qs["wx_fmt"] = ["other"]
     new_query = urlencode({k: v[0] for k, v in qs.items()}, safe="")
     return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, new_query, parsed.fragment))
 
