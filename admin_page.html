@@ -3109,11 +3109,10 @@ async function doFetchArticleUrl() {
     });
     btn.disabled = false; btn.textContent = '提取';
 
-    // 填入文本到粘贴文本区域
+    // 填入文本到粘贴文本区域并切换到文本模式以显示提取的内容
     document.getElementById('import-content').value = result.content || '';
     document.getElementById('import-char-count').textContent = (result.content||'').length;
-    // 自动切换到文本模式以显示提取的内容，但保持 URL 模式的 importMode
-    importMode = 'text';
+    switchImportMode('text');
 
     // 媒体处理
     importFetchedMedia = result.media || [];

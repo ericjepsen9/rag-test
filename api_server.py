@@ -2586,7 +2586,7 @@ def admin_proxy_media(request: Request, url: str = Query(..., description="要�
     headers = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        "Referer": "",  # 空 Referer 绕过防盗链
+        "Referer": "https://mp.weixin.qq.com/",  # 模拟微信内部访问绕过防盗链
     }
 
     try:
