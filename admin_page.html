@@ -221,15 +221,71 @@
     .model-card .name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
     .model-card .models { font-size: 11px; color: var(--text-secondary); }
 
-    /* Responsive */
+    /* Mobile hamburger button */
+    .mobile-menu-btn {
+      display: none; position: fixed; top: 12px; left: 12px; z-index: 201;
+      width: 40px; height: 40px; border-radius: 10px; border: none;
+      background: var(--sidebar-bg); color: #fff; font-size: 22px;
+      cursor: pointer; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2); -webkit-tap-highlight-color: transparent;
+    }
+    .mobile-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
+      z-index: 99; -webkit-tap-highlight-color: transparent;
+    }
+    .mobile-overlay.show { display: block; }
+
+    /* Responsive — tablet */
     @media (max-width: 768px) {
-      .sidebar { width: 60px; }
-      .sidebar .logo { font-size: 0; padding: 12px; }
-      .sidebar .logo small { display: none; }
-      .sidebar nav a { padding: 12px; justify-content: center; font-size: 0; }
-      .sidebar nav a .icon { font-size: 18px; }
-      .sidebar nav .group-label { display: none; }
-      .main { margin-left: 60px; padding: 16px; }
+      .mobile-menu-btn { display: flex; }
+      .sidebar { transform: translateX(-100%); transition: transform .28s cubic-bezier(.4,0,.2,1);
+                 z-index: 200; box-shadow: none; }
+      .sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,.25); }
+      .main { margin-left: 0; padding: 60px 16px 16px; }
+      h1 { font-size: 18px; margin-bottom: 16px; }
+      .row { flex-direction: column; gap: 12px; }
+      .col { min-width: 0; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .config-grid { grid-template-columns: 1fr; }
+      .form-row { flex-direction: column; gap: 10px; }
+      .table-wrap { max-height: 400px; }
+      table { font-size: 12px; }
+      th, td { padding: 8px 10px; }
+      .card { padding: 16px; }
+      .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
+      .tabs button { white-space: nowrap; padding: 8px 14px; font-size: 12px; flex-shrink: 0; }
+      .upload-zone { padding: 24px 16px; }
+      #import-media-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .editor-wrap textarea { min-height: 280px; }
+      .model-grid { grid-template-columns: 1fr !important; }
+    }
+
+    /* Responsive — small phone */
+    @media (max-width: 480px) {
+      .main { padding: 56px 10px 10px; }
+      h1 { font-size: 16px; margin-bottom: 12px; }
+      .card { padding: 14px 12px; border-radius: 10px; }
+      .stats-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .stat-card { padding: 12px; }
+      .stat-card .num { font-size: 22px; }
+      button, .btn { padding: 10px 14px; font-size: 13px; }
+      .btn-sm { padding: 8px 12px; }
+      input, select, textarea { font-size: 14px; padding: 10px 12px; }
+      table { font-size: 11px; }
+      th, td { padding: 6px 8px; }
+      #import-media-grid { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+      .import-media-item img, .import-media-item .vid-ph { height: 100px; }
+      .toast { min-width: 0; width: calc(100vw - 40px); font-size: 12px; padding: 10px 16px; }
+      .toast-container { right: 10px; left: 10px; }
+    }
+
+    /* Touch-friendly: larger tap targets */
+    @media (pointer: coarse) {
+      button, .btn { min-height: 44px; }
+      .btn-sm { min-height: 36px; }
+      input, select { min-height: 44px; }
+      .sidebar nav a { min-height: 44px; }
+      .inline-label { min-height: 36px; }
     }
 
     /* Scrollbar */
@@ -269,8 +325,11 @@
 </head>
 <body>
 <div class="app">
+  <!-- Mobile hamburger & overlay -->
+  <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleMobileMenu()" aria-label="菜单">&#9776;</button>
+  <div class="mobile-overlay" id="mobileOverlay" onclick="closeMobileMenu()"></div>
   <!-- Sidebar -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <div class="logo">RAG 管理中心<small>Medical Aesthetics</small></div>
     <nav>
       <div class="group-label">知识库</div>
@@ -282,6 +341,8 @@
         <span class="icon">&#x2b06;</span> 上传资料</a>
       <a href="#" onclick="showPage('import')" data-page="import">
         <span class="icon">&#x2728;</span> 智能导入</a>
+      <a href="#" onclick="showPage('quickimport')" data-page="quickimport">
+        <span class="icon">&#x1f4f1;</span> 快捷导入</a>
       <a href="#" onclick="showPage('index')" data-page="index">
         <span class="icon">&#x26a1;</span> 索引构建</a>
       <div class="group-label">配置</div>
@@ -677,6 +738,142 @@
           </div>
         </div>
         <div id="import-media-status" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <!-- ==================== 快捷导入（原 mobile.html） ==================== -->
+    <div class="page" id="page-quickimport">
+      <h1>&#x1f4f1; 快捷导入</h1>
+      <p style="color:var(--text-secondary);margin:-14px 0 18px;font-size:13px">手机端快速导入公众号文章到知识库（原移动端页面功能）</p>
+
+      <!-- 输入方式切换 -->
+      <div class="card">
+        <div class="tabs" id="qi-tabs" style="border-bottom:none;background:#e5e7eb;border-radius:10px;padding:3px;margin-bottom:14px">
+          <button class="active" data-tab="qi-url" onclick="switchQiTab('qi-url')" style="border-radius:8px;border-bottom:none;margin-bottom:0;flex:1;text-align:center">粘贴链接</button>
+          <button data-tab="qi-text" onclick="switchQiTab('qi-text')" style="border-radius:8px;border-bottom:none;margin-bottom:0;flex:1;text-align:center">粘贴正文</button>
+          <button data-tab="qi-bookmark" onclick="switchQiTab('qi-bookmark')" style="border-radius:8px;border-bottom:none;margin-bottom:0;flex:1;text-align:center">书签脚本</button>
+        </div>
+
+        <!-- Tab: 粘贴链接 -->
+        <div id="qi-tab-qi-url" class="qi-tab-content">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.8">
+            <b>步骤：</b>微信文章 → 右上角 <b>···</b> → <b>复制链接</b> → 粘贴到下方
+          </div>
+          <label>文章链接</label>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <input type="url" id="qi-url-input" style="flex:1" placeholder="粘贴公众号文章链接...">
+            <button class="btn-success" id="qi-fetch-btn" onclick="qiFetchUrl()">提取</button>
+          </div>
+          <div id="qi-fetch-status"></div>
+        </div>
+
+        <!-- Tab: 粘贴正文 -->
+        <div id="qi-tab-qi-text" class="qi-tab-content" style="display:none">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.8">
+            <b>步骤：</b>微信文章 → 长按正文 → <b>全选</b> → <b>复制</b> → 粘贴到下方内容区
+          </div>
+        </div>
+
+        <!-- Tab: 书签脚本 -->
+        <div id="qi-tab-qi-bookmark" class="qi-tab-content" style="display:none">
+          <label>Android Chrome 书签脚本安装</label>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px;line-height:1.8">
+            在 Chrome 中打开微信文章后，点书签即可一键提取并跳转到本页面自动填入内容。
+          </div>
+          <div style="display:flex;align-items:flex-start;margin-bottom:12px;font-size:13px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex-shrink:0">1</span>
+            <p>点下方按钮复制书签脚本代码</p>
+          </div>
+          <div id="qi-bookmark-code" style="background:#1e2330;color:#e5e7eb;padding:14px;border-radius:8px;font-size:12px;font-family:monospace;word-break:break-all;line-height:1.6;max-height:120px;overflow-y:auto;margin-bottom:10px"></div>
+          <button class="btn-primary btn-sm" onclick="qiCopyBookmark()" id="qi-copy-bm-btn" style="margin-bottom:16px">复制书签脚本代码</button>
+          <div style="display:flex;align-items:flex-start;margin-bottom:12px;font-size:13px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex-shrink:0">2</span>
+            <p>在 Chrome 中随便收藏一个网页（点右上角 ⋮ → 添加书签）</p>
+          </div>
+          <div style="display:flex;align-items:flex-start;margin-bottom:12px;font-size:13px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex-shrink:0">3</span>
+            <p>打开 Chrome 书签管理（⋮ → 书签），找到刚收藏的书签，点编辑</p>
+          </div>
+          <div style="display:flex;align-items:flex-start;margin-bottom:12px;font-size:13px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex-shrink:0">4</span>
+            <p>将<b>名称</b>改为「导入知识库」，将<b>网址</b>栏清空后粘贴刚才复制的代码，保存</p>
+          </div>
+          <div style="display:flex;align-items:flex-start;margin-bottom:12px;font-size:13px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;margin-right:8px;flex-shrink:0">5</span>
+            <p><b>使用方法：</b>微信文章 → 复制链接 → Chrome 打开 → 地址栏输入「导入」搜索书签 → 点击执行</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 公共表单 -->
+      <div class="card">
+        <div class="form-group">
+          <label>文章标题（可选）</label>
+          <input type="text" id="qi-title" style="width:100%" placeholder="例：XX产品介绍">
+        </div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div style="flex:1;min-width:140px">
+            <label>知识类型</label>
+            <select id="qi-type" style="width:100%">
+              <option value="product">产品 (product)</option>
+              <option value="procedure">术式 (procedure)</option>
+              <option value="equipment">设备 (equipment)</option>
+              <option value="material">材料 (material)</option>
+              <option value="anatomy">解剖 (anatomy)</option>
+              <option value="indication">适应症 (indication)</option>
+              <option value="complication">并发症 (complication)</option>
+              <option value="course">课程 (course)</option>
+              <option value="script">话术 (script)</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:140px">
+            <label>实体 ID</label>
+            <input type="text" id="qi-id" style="width:100%" placeholder="如：product_01">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>文章内容 <span id="qi-content-len" style="font-weight:400;color:var(--text-secondary)"></span></label>
+          <div class="form-hint">文章正文（通过链接提取或手动粘贴）</div>
+          <textarea id="qi-content" rows="10" placeholder="在此粘贴文章正文内容..." oninput="qiUpdateLen()" style="min-height:200px"></textarea>
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:14px;flex-wrap:wrap">
+          <label class="inline-label">
+            <input type="checkbox" id="qi-build" checked style="width:18px;height:18px"> 自动建索引
+          </label>
+          <label class="inline-label">
+            <input type="checkbox" id="qi-dryrun" style="width:18px;height:18px"> 仅预览
+          </label>
+        </div>
+        <button class="btn-primary" id="qi-submit-btn" onclick="qiSubmit()" style="width:100%;padding:12px;font-size:15px">提交导入</button>
+        <button class="btn-ghost" onclick="qiClearForm()" style="width:100%;margin-top:10px;padding:10px;justify-content:center">清空表单</button>
+      </div>
+
+      <!-- 媒体审查 -->
+      <div class="card" id="qi-media-card" style="display:none">
+        <h2>文章媒体审查 <span id="qi-media-count" style="font-weight:400;color:var(--text-secondary);font-size:13px"></span></h2>
+        <div class="form-hint" style="margin-bottom:10px">点击选中要保存到知识库的图片/视频，未选中的将被忽略</div>
+        <div style="margin-bottom:10px">
+          <button class="btn-ghost btn-sm" onclick="qiSelectAllMedia(true)">全选</button>
+          <button class="btn-ghost btn-sm" style="margin-left:6px" onclick="qiSelectAllMedia(false)">取消全选</button>
+        </div>
+        <div id="qi-media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px"></div>
+        <div style="margin-top:14px">
+          <label>关键词（逗号分隔，可选）</label>
+          <input type="text" id="qi-media-keywords" style="width:100%" placeholder="例：术后护理, 效果对比">
+          <label style="margin-top:10px">路由标签（逗号分隔，可选）</label>
+          <input type="text" id="qi-media-routes" style="width:100%" placeholder="例：aftercare, effect">
+        </div>
+        <button class="btn-primary" id="qi-save-media-btn" onclick="qiSaveMedia()" style="width:100%;margin-top:12px;padding:12px">保存选中媒体</button>
+        <div id="qi-media-status" style="margin-top:10px"></div>
+      </div>
+
+      <!-- 结果 -->
+      <div id="qi-result-status" style="margin-top:10px"></div>
+
+      <!-- 历史 -->
+      <div class="card" id="qi-history-card" style="display:none;margin-top:16px">
+        <h2>最近导入</h2>
+        <div id="qi-history-list" style="font-size:13px;color:var(--text-secondary)"></div>
       </div>
     </div>
 
@@ -1170,12 +1367,15 @@ function showPage(page) {
   document.querySelectorAll('.sidebar nav a').forEach(a => {
     a.classList.toggle('active', a.dataset.page === page);
   });
+  // Close mobile menu on navigation
+  closeMobileMenu();
   // Auto-load data
   const loaders = {
     dashboard: loadDashboard,
     knowledge: loadKBProductList,
     upload: loadUploadProducts,
     import: loadImportPage,
+    quickimport: loadQuickImportPage,
     index: loadIndexStatus,
     domain: loadDomainPage,
     services: loadServiceStatus,
@@ -3894,6 +4094,255 @@ function closeImportResult() {
   }
 })();
 loadDashboard();
+
+// ===== Mobile Menu =====
+function toggleMobileMenu() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('mobileOverlay').classList.toggle('show');
+}
+function closeMobileMenu() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('mobileOverlay').classList.remove('show');
+}
+
+// ===== Quick Import Page (原 mobile.html 功能) =====
+let qiFetchedMedia = [];
+let qiSelectedMedia = new Set();
+
+function loadQuickImportPage() {
+  qiGenerateBookmark();
+  qiRenderHistory();
+  qiCheckUrlParams();
+  // Load product list for datalist
+  api('/admin/products').then(data => {
+    if (!data || !data.products) return;
+    let dl = document.getElementById('qi-product-list');
+    if (!dl) { dl = document.createElement('datalist'); dl.id = 'qi-product-list'; document.body.appendChild(dl); }
+    dl.innerHTML = data.products.map(p => '<option value="' + esc(p.product) + '">').join('');
+    document.getElementById('qi-id').setAttribute('list', 'qi-product-list');
+  }).catch(() => {});
+}
+
+function switchQiTab(name) {
+  document.querySelectorAll('#qi-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  document.querySelectorAll('.qi-tab-content').forEach(c => c.style.display = 'none');
+  document.getElementById('qi-tab-' + name).style.display = '';
+}
+
+async function qiFetchUrl() {
+  const url = document.getElementById('qi-url-input').value.trim();
+  if (!url) { qiShowStatus('qi-fetch-status', '请粘贴文章链接', 'error'); return; }
+  if (!url.startsWith('http')) { qiShowStatus('qi-fetch-status', '请输入完整链接（以 http 开头）', 'error'); return; }
+  const btn = document.getElementById('qi-fetch-btn');
+  btn.disabled = true; btn.textContent = '提取中...';
+  qiShowStatus('qi-fetch-status', '正在提取文章内容和媒体...', 'loading');
+  try {
+    const data = await api('/admin/fetch_url', { method: 'POST', body: JSON.stringify({ url }) });
+    btn.disabled = false; btn.textContent = '提取';
+    document.getElementById('qi-title').value = data.title || '';
+    document.getElementById('qi-content').value = data.content || '';
+    qiUpdateLen();
+    qiFetchedMedia = data.media || [];
+    qiSelectedMedia.clear();
+    if (qiFetchedMedia.length > 0) {
+      qiRenderMediaGrid();
+      document.getElementById('qi-media-card').style.display = '';
+      qiShowStatus('qi-fetch-status', '提取成功！正文 ' + (data.length || data.content.length) + ' 字，发现 ' + qiFetchedMedia.length + ' 个媒体文件', 'success');
+    } else {
+      document.getElementById('qi-media-card').style.display = 'none';
+      qiShowStatus('qi-fetch-status', '提取成功！共 ' + (data.length || data.content.length) + ' 字，未发现媒体', 'success');
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '提取';
+    qiShowStatus('qi-fetch-status', '提取失败: ' + e.message, 'error');
+  }
+}
+
+function qiRenderMediaGrid() {
+  const grid = document.getElementById('qi-media-grid');
+  const imgCount = qiFetchedMedia.filter(m => m.type === 'image').length;
+  const vidCount = qiFetchedMedia.filter(m => m.type === 'video').length;
+  document.getElementById('qi-media-count').textContent =
+    '(' + imgCount + ' 张图片' + (vidCount > 0 ? ', ' + vidCount + ' 个视频' : '') + ')';
+  grid.innerHTML = qiFetchedMedia.map((m, i) => {
+    const isImg = m.type === 'image';
+    const proxyUrl = location.origin + '/admin/proxy_media?url=' + encodeURIComponent(m.url);
+    const sel = qiSelectedMedia.has(i) ? ' selected' : '';
+    const checkIcon = qiSelectedMedia.has(i) ? '&#10003;' : '';
+    const content = isImg
+      ? '<img src="' + proxyUrl + '" loading="lazy" style="width:100%;height:120px;object-fit:cover;display:block;background:#f0f1f4">'
+      : '<div style="width:100%;height:120px;background:#1e2330;display:flex;align-items:center;justify-content:center;color:#fff;font-size:32px">&#9654;</div>';
+    return '<div class="import-media-item' + sel + '" onclick="qiToggleMedia(' + i + ')" style="cursor:pointer">' +
+      content +
+      '<span class="m-badge">' + (isImg ? '图片' : '视频') + '</span>' +
+      '<span class="m-check">' + checkIcon + '</span>' +
+      '<div class="m-label">' + esc(m.alt || (isImg ? '图片 ' + (i+1) : '视频 ' + (i+1))) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function qiToggleMedia(idx) {
+  if (qiSelectedMedia.has(idx)) qiSelectedMedia.delete(idx);
+  else qiSelectedMedia.add(idx);
+  qiRenderMediaGrid();
+}
+
+function qiSelectAllMedia(select) {
+  if (select) qiFetchedMedia.forEach((_, i) => qiSelectedMedia.add(i));
+  else qiSelectedMedia.clear();
+  qiRenderMediaGrid();
+}
+
+async function qiSaveMedia() {
+  const product = document.getElementById('qi-id').value.trim();
+  if (!product) { qiShowStatus('qi-media-status', '请先填写实体 ID', 'error'); return; }
+  if (qiSelectedMedia.size === 0) { qiShowStatus('qi-media-status', '请至少选择一个媒体', 'error'); return; }
+  const keywords = document.getElementById('qi-media-keywords').value.trim().split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  const routes = document.getElementById('qi-media-routes').value.trim().split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  const mediaList = [];
+  qiSelectedMedia.forEach(i => {
+    const m = qiFetchedMedia[i];
+    mediaList.push({ title: m.alt || (m.type === 'image' ? '图片' : '视频'), type: m.type, url: m.url, keywords, routes });
+  });
+  const btn = document.getElementById('qi-save-media-btn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    const data = await api('/admin/save_media', { method: 'POST', body: JSON.stringify({ product, media: mediaList }) });
+    btn.disabled = false; btn.textContent = '保存选中媒体';
+    qiShowStatus('qi-media-status', '保存成功！新增 ' + data.added + ' 个，总计 ' + data.total + ' 个媒体', 'success');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '保存选中媒体';
+    qiShowStatus('qi-media-status', '保存失败: ' + e.message, 'error');
+  }
+}
+
+async function qiSubmit() {
+  const type = document.getElementById('qi-type').value;
+  const id = document.getElementById('qi-id').value.trim();
+  const content = document.getElementById('qi-content').value.trim();
+  const title = document.getElementById('qi-title').value.trim();
+  const build = document.getElementById('qi-build').checked;
+  const dryRun = document.getElementById('qi-dryrun').checked;
+  if (!content || content.length < 10) { qiShowStatus('qi-result-status', '请先提取或粘贴文章内容（至少10个字符）', 'error'); return; }
+  if (['product','procedure','equipment','material'].includes(type) && !id) {
+    qiShowStatus('qi-result-status', '该类型需要填写实体 ID', 'error'); return;
+  }
+  const btn = document.getElementById('qi-submit-btn');
+  btn.disabled = true; btn.textContent = '导入中，请稍候...';
+  qiShowStatus('qi-result-status', '正在调用 LLM 整理文档，可能需要 10-30 秒...', 'loading');
+  const fullContent = title ? '\u3010' + title + '\u3011\n\n' + content : content;
+  try {
+    const data = await api('/admin/import_knowledge', {
+      method: 'POST', body: JSON.stringify({ type, id, content: fullContent, build, dry_run: dryRun })
+    });
+    btn.disabled = false; btn.textContent = '提交导入';
+    const msg = dryRun
+      ? '预览成功！\n' + JSON.stringify(data, null, 2)
+      : '导入成功！' + (data.files_written ? '\n写入文件: ' + data.files_written.join(', ') : '');
+    qiShowStatus('qi-result-status', msg, 'success');
+    qiAddHistory(title || id || type, true);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '提交导入';
+    qiShowStatus('qi-result-status', '导入失败: ' + e.message, 'error');
+  }
+}
+
+function qiClearForm() {
+  document.getElementById('qi-title').value = '';
+  document.getElementById('qi-id').value = '';
+  document.getElementById('qi-content').value = '';
+  document.getElementById('qi-url-input').value = '';
+  document.getElementById('qi-fetch-status').innerHTML = '';
+  document.getElementById('qi-result-status').innerHTML = '';
+  document.getElementById('qi-media-card').style.display = 'none';
+  document.getElementById('qi-media-keywords').value = '';
+  document.getElementById('qi-media-routes').value = '';
+  qiFetchedMedia = []; qiSelectedMedia.clear();
+  qiUpdateLen();
+}
+
+function qiUpdateLen() {
+  const len = document.getElementById('qi-content').value.length;
+  document.getElementById('qi-content-len').textContent = len > 0 ? '(' + len + ' 字)' : '';
+}
+
+function qiShowStatus(id, msg, type) {
+  const el = document.getElementById(id);
+  const colors = { success: '#f0fdf4;color:#166534;border:1px solid #bbf7d0', error: '#fef2f2;color:#991b1b;border:1px solid #fecaca', loading: '#eff6ff;color:#1e40af;border:1px solid #bfdbfe' };
+  el.innerHTML = '<div style="padding:12px;border-radius:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:' + (colors[type] || '') + '">' + esc(msg) + '</div>';
+  if (type !== 'loading') el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function qiGenerateBookmark() {
+  const serverUrl = location.origin + '/admin_page';
+  const code = "javascript:void(function(){var t=document.title||'';var c=document.getElementById('js_content');var txt=c?c.innerText:(document.body.innerText||'');var u='" + serverUrl + "?qi_title='+encodeURIComponent(t)+'&qi_content='+encodeURIComponent(txt.substring(0,8000));location.href=u;}())";
+  const el = document.getElementById('qi-bookmark-code');
+  if (el) el.textContent = code;
+}
+
+function qiCopyBookmark() {
+  const code = document.getElementById('qi-bookmark-code').textContent;
+  navigator.clipboard.writeText(code).then(() => {
+    const btn = document.getElementById('qi-copy-bm-btn');
+    btn.textContent = '已复制！';
+    setTimeout(() => { btn.textContent = '复制书签脚本代码'; }, 2000);
+  }).catch(() => {
+    const ta = document.createElement('textarea'); ta.value = code;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    const btn = document.getElementById('qi-copy-bm-btn');
+    btn.textContent = '已复制！';
+    setTimeout(() => { btn.textContent = '复制书签脚本代码'; }, 2000);
+  });
+}
+
+function qiCheckUrlParams() {
+  const params = new URLSearchParams(location.search);
+  const title = params.get('qi_title');
+  const content = params.get('qi_content');
+  if (content) {
+    document.getElementById('qi-title').value = title || '';
+    document.getElementById('qi-content').value = content;
+    qiUpdateLen();
+    switchQiTab('qi-text');
+    qiShowStatus('qi-result-status', '书签脚本已自动填入内容（' + content.length + ' 字），请选择类型和ID后提交', 'success');
+    history.replaceState(null, '', location.pathname);
+    // Auto navigate to quick import page
+    showPage('quickimport');
+  }
+}
+
+function qiAddHistory(name, success) {
+  const list = JSON.parse(localStorage.getItem('rag_qi_history') || '[]');
+  list.unshift({ name, success, time: new Date().toLocaleString('zh-CN') });
+  if (list.length > 10) list.length = 10;
+  localStorage.setItem('rag_qi_history', JSON.stringify(list));
+  qiRenderHistory();
+}
+
+function qiRenderHistory() {
+  const list = JSON.parse(localStorage.getItem('rag_qi_history') || '[]');
+  if (!list.length) { const c = document.getElementById('qi-history-card'); if (c) c.style.display = 'none'; return; }
+  const card = document.getElementById('qi-history-card');
+  if (card) card.style.display = '';
+  const el = document.getElementById('qi-history-list');
+  if (el) el.innerHTML = list.map(h =>
+    '<div style="padding:6px 0;border-bottom:1px solid #f0f1f4">' +
+      (h.success ? '<span style="color:#22c55e">&#10003;</span> ' : '<span style="color:#ef4444">&#10007;</span> ') +
+      esc(h.name) + ' <span style="float:right;font-size:11px">' + esc(h.time) + '</span></div>'
+  ).join('');
+}
+
+// Check for bookmark redirect params on initial load
+(function() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('qi_content')) {
+    // Will be handled after auth check in loadQuickImportPage
+    setTimeout(() => { if (document.getElementById('page-quickimport')) showPage('quickimport'); }, 500);
+  }
+})();
+
 </script>
 </body>
 </html>
