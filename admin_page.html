@@ -496,6 +496,7 @@
                 <button class="active" data-tab="text" onclick="switchImportMode('text')">粘贴文本</button>
                 <button data-tab="file" onclick="switchImportMode('file')">上传文件</button>
                 <button data-tab="url" onclick="switchImportMode('url')">URL 导入</button>
+                <button data-tab="batch" onclick="switchImportMode('batch')">批量URL</button>
               </div>
             </div>
 
@@ -536,6 +537,37 @@
               </div>
               <div id="import-url-status" style="margin-top:8px"></div>
               <!-- 提取到的正文会自动填入粘贴文本的 textarea -->
+            </div>
+
+            <!-- 批量 URL 导入模式 -->
+            <div id="import-batch-mode" style="display:none">
+              <div class="form-group">
+                <label>批量文章链接 <span style="color:#888;font-weight:normal">（每行一个URL）</span></label>
+                <textarea id="batch-urls" rows="8" placeholder="https://mp.weixin.qq.com/s/xxx&#10;https://mp.weixin.qq.com/s/yyy&#10;https://mp.weixin.qq.com/s/zzz&#10;&#10;每行一个链接，系统将逐个自动处理：提取 → AI整理 → 写入知识库"></textarea>
+                <div class="form-hint">
+                  已识别 <span id="batch-url-count">0</span> 个有效链接
+                  <span id="batch-skip-review-hint" style="margin-left:12px">
+                    <label class="inline-label" style="font-weight:normal">
+                      <input type="checkbox" id="batch-skip-review" checked>
+                      跳过审阅直接写入（信任 AI 整理结果）
+                    </label>
+                  </span>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn-primary" id="btn-batch-import" onclick="doBatchImport()">开始批量导入</button>
+                <button class="btn" id="btn-batch-stop" onclick="stopBatchImport()" style="display:none" >停止</button>
+              </div>
+              <div id="batch-progress" style="margin-top:12px;display:none">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px">
+                  <span id="batch-progress-text">处理中 0/0</span>
+                  <span id="batch-progress-pct">0%</span>
+                </div>
+                <div style="background:#e5e7eb;border-radius:6px;height:8px;overflow:hidden">
+                  <div id="batch-progress-bar" style="background:var(--primary);height:100%;width:0%;transition:width 0.3s"></div>
+                </div>
+              </div>
+              <div id="batch-log" style="margin-top:12px;max-height:300px;overflow-y:auto;font-size:12px;line-height:1.8;display:none"></div>
             </div>
 
             <div class="form-group">
@@ -3084,6 +3116,7 @@ function switchImportMode(mode) {
   document.getElementById('import-text-mode').style.display = mode === 'text' ? '' : 'none';
   document.getElementById('import-file-mode').style.display = mode === 'file' ? '' : 'none';
   document.getElementById('import-url-mode').style.display = mode === 'url' ? '' : 'none';
+  document.getElementById('import-batch-mode').style.display = mode === 'batch' ? '' : 'none';
   document.querySelectorAll('#import-mode-tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === mode));
 }
@@ -3249,6 +3282,182 @@ async function doOneClickImport() {
   }
   btn.disabled = false; btnFetch.disabled = false;
   btn.textContent = '一键导入';
+}
+
+// ===== 批量 URL 导入 =====
+let batchRunning = false;
+let batchAbort = false;
+
+document.getElementById('batch-urls')?.addEventListener('input', function() {
+  const count = parseBatchUrls(this.value).length;
+  document.getElementById('batch-url-count').textContent = count;
+});
+
+function parseBatchUrls(text) {
+  return text.split('\n').map(l => l.trim()).filter(l => l.startsWith('http'));
+}
+
+function batchLog(msg, type) {
+  const log = document.getElementById('batch-log');
+  log.style.display = '';
+  const color = type === 'ok' ? 'var(--success)' : type === 'err' ? 'var(--danger)' : type === 'warn' ? '#b36b00' : '#555';
+  log.innerHTML += `<div style="color:${color}">${msg}</div>`;
+  log.scrollTop = log.scrollHeight;
+}
+
+function updateBatchProgress(done, total) {
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('batch-progress-text').textContent = `处理中 ${done}/${total}`;
+  document.getElementById('batch-progress-pct').textContent = `${pct}%`;
+  document.getElementById('batch-progress-bar').style.width = `${pct}%`;
+}
+
+function stopBatchImport() {
+  batchAbort = true;
+  document.getElementById('btn-batch-stop').disabled = true;
+  document.getElementById('btn-batch-stop').textContent = '停止中...';
+}
+
+async function doBatchImport() {
+  const urls = parseBatchUrls(document.getElementById('batch-urls').value);
+  if (urls.length === 0) { toast('请输入至少一个有效URL', 'error'); return; }
+
+  const entityType = document.getElementById('import-type').value;
+  const entityId = document.getElementById('import-id')?.value.trim() || '';
+  const needId = ['product','procedure','equipment','material'].includes(entityType);
+  if (needId && !entityId) { toast('请先填写实体ID', 'error'); return; }
+
+  const skipReview = document.getElementById('batch-skip-review').checked;
+  const buildIndex = document.getElementById('import-build').checked;
+
+  // Reset UI
+  batchRunning = true; batchAbort = false;
+  const btn = document.getElementById('btn-batch-import');
+  const btnStop = document.getElementById('btn-batch-stop');
+  btn.disabled = true; btn.textContent = '处理中...';
+  btnStop.style.display = ''; btnStop.disabled = false; btnStop.textContent = '停止';
+  document.getElementById('batch-progress').style.display = '';
+  document.getElementById('batch-log').innerHTML = '';
+  document.getElementById('batch-log').style.display = '';
+  updateBatchProgress(0, urls.length);
+
+  let successCount = 0, failCount = 0, skipCount = 0;
+
+  for (let i = 0; i < urls.length; i++) {
+    if (batchAbort) { batchLog(`[${i+1}/${urls.length}] 用户停止`, 'warn'); break; }
+
+    const url = urls[i];
+    const shortUrl = url.length > 60 ? url.substring(0, 60) + '...' : url;
+    updateBatchProgress(i, urls.length);
+    batchLog(`[${i+1}/${urls.length}] 提取: ${esc(shortUrl)}`, 'info');
+
+    try {
+      // Step 1: Fetch
+      const fetchResult = await api('/admin/fetch_url', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ url }),
+      });
+
+      const content = fetchResult.content || '';
+      if (!content || content.length < 10) {
+        batchLog(`[${i+1}] 跳过 — 内容太短（${content.length}字）`, 'warn');
+        skipCount++; continue;
+      }
+
+      batchLog(`[${i+1}] 提取成功（${fetchResult.length}字），AI整理中...`, 'info');
+
+      // Step 2: AI organize (dry_run)
+      const importResult = await api('/admin/import_knowledge', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          type: entityType, id: entityId, content,
+          build: false, dry_run: true,
+        }),
+      });
+
+      if (!importResult.preview) {
+        batchLog(`[${i+1}] AI整理无结果，跳过`, 'warn');
+        skipCount++; continue;
+      }
+
+      // Step 3: Auto-commit (if skip review)
+      if (skipReview) {
+        const shouldBuild = buildIndex && (i === urls.length - 1); // only build on last one
+        await api('/admin/import_knowledge/commit', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            type: entityType, id: entityId,
+            content: importResult.preview,
+            build: shouldBuild,
+          }),
+        });
+        const files = importResult.files_generated || {};
+        const mainSz = files['main.txt'] || 0;
+        batchLog(`[${i+1}] 已写入（main ${mainSz}字）${fetchResult.title ? ' — ' + esc(fetchResult.title) : ''}`, 'ok');
+      } else {
+        batchLog(`[${i+1}] AI整理完成，等待人工审阅...`, 'warn');
+        // Show in the right panel for manual review
+        importPreviewData = importResult;
+        importRawText = content;
+        const resultCard = document.getElementById('import-result-card');
+        resultCard.style.display = '';
+        document.getElementById('import-result-title').textContent = `审阅 [${i+1}/${urls.length}]: ${fetchResult.title || shortUrl}`;
+        document.getElementById('import-result-badge').innerHTML = '<span class="badge badge-info">审阅中</span>';
+        if (importResult.preview) {
+          revisionHistory = [JSON.parse(JSON.stringify(importResult.preview))];
+          revisionIndex = 0;
+        }
+        const previewSection = document.getElementById('import-preview-section');
+        previewSection.style.display = '';
+        switchPreviewTab('main');
+        updateRevisionBar();
+        // Wait for user to commit before continuing
+        await new Promise(resolve => {
+          window._batchResolveCommit = resolve;
+        });
+        delete window._batchResolveCommit;
+        batchLog(`[${i+1}] 已确认写入`, 'ok');
+      }
+      successCount++;
+
+    } catch(e) {
+      batchLog(`[${i+1}] 失败: ${esc(e.message)}`, 'err');
+      failCount++;
+    }
+
+    // Small delay between requests to avoid rate limiting
+    if (i < urls.length - 1 && !batchAbort) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  // If skip review was off and we need a final build
+  if (buildIndex && !skipReview && successCount > 0) {
+    batchLog('正在构建索引...', 'info');
+    try {
+      await api('/admin/import_knowledge/commit', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          type: entityType, id: entityId,
+          content: importPreviewData?.preview || {},
+          build: true,
+        }),
+      });
+    } catch(e) { /* index build is best-effort */ }
+  }
+
+  updateBatchProgress(urls.length, urls.length);
+  const summary = `批量导入完成：${successCount} 成功，${failCount} 失败，${skipCount} 跳过`;
+  batchLog(summary, successCount > 0 ? 'ok' : 'warn');
+  toast(summary, successCount > 0 ? 'success' : 'error');
+
+  btn.disabled = false; btn.textContent = '开始批量导入';
+  btnStop.style.display = 'none';
+  batchRunning = false;
 }
 
 function renderImportMediaGrid() {
@@ -3653,6 +3862,11 @@ async function doCommit() {
     document.getElementById('import-result-meta').innerHTML = metaHtml;
 
     toast('知识库导入成功', 'success');
+
+    // 批量模式：通知循环继续处理下一条
+    if (window._batchResolveCommit) {
+      window._batchResolveCommit();
+    }
 
   } catch(e) {
     progress.innerHTML = `<span class="badge badge-danger">导入失败: ${esc(e.message)}</span>`;
